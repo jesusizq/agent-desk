@@ -1,0 +1,3 @@
+#!/bin/sh
+# agent-desk command line; link it into a directory on PATH (e.g. ~/.local/bin).
+exec node "$(dirname "$(readlink -f "$0")")/../src/cli/main.ts" "$@"

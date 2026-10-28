@@ -1,0 +1,15 @@
+{
+  "name": "agent-desk",
+  "publisher": "agent-desk",
+  "displayName": "agent-desk",
+  "description": "Brings the terminal of an AI coding session to the front when the agent-desk page asks for it.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "engines": { "vscode": "^1.95.0" },
+  "extensionKind": ["ui"],
+  "main": "./out/adapters/vscode/src/extension.js",
+  "activationEvents": ["onUri"],
+  "capabilities": { "untrustedWorkspaces": { "supported": true }, "virtualWorkspaces": false },
+  "contributes": {}
+}

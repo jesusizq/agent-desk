@@ -1,0 +1,159 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude wait",
+            "asyncRewake": true,
+            "timeout": 86400
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "h=\"${AGENT_DESK_HOME:-$HOME/.cache/agent-desk}\"; if [ -e \"$h/.permission-open\" ] || [ $(( $(date +%s) - $(stat -c %Y \"$h/.activity\" 2>/dev/null || echo 0) )) -ge 3 ]; then touch \"$h/.activity\" 2>/dev/null; agent-desk-claude hook; fi; true",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "h=\"${AGENT_DESK_HOME:-$HOME/.cache/agent-desk}\"; if [ -e \"$h/.permission-open\" ] || [ $(( $(date +%s) - $(stat -c %Y \"$h/.activity\" 2>/dev/null || echo 0) )) -ge 3 ]; then touch \"$h/.activity\" 2>/dev/null; agent-desk-claude hook; fi; true",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PermissionDenied": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -e \"${AGENT_DESK_HOME:-$HOME/.cache/agent-desk}/.permission-open\" && agent-desk-claude hook || true",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "elicitation_dialog|agent_needs_input",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "agent-desk-claude wait",
+            "asyncRewake": true,
+            "timeout": 86400
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}

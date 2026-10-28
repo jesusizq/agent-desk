@@ -1,0 +1,11 @@
+{
+  "name": "agent-desk",
+  "owner": { "name": "agent-desk" },
+  "plugins": [
+    {
+      "name": "agent-desk",
+      "source": "./",
+      "description": "Reports this machine's Claude Code sessions to agent-desk and delivers answers given there."
+    }
+  ]
+}

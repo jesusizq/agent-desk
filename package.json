@@ -1,0 +1,27 @@
+{
+  "name": "agent-desk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local desk to follow and answer every AI coding session on this machine.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "agent-desk": "bin/agent-desk",
+    "agent-desk-claude": "bin/agent-desk-claude"
+  },
+  "scripts": {
+    "start": "node src/cli/main.ts serve",
+    "check": "tsc -p tsconfig.json && tsc -p tsconfig.web.json && tsc -p adapters/vscode/tsconfig.json --noEmit",
+    "test": "node --test 'test/*.test.ts'",
+    "package:vscode": "node scripts/package-vscode.ts",
+    "demo": "node scripts/demo.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/vscode": "1.95.0",
+    "typescript": "5.9.3"
+  }
+}
