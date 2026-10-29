@@ -1,33 +1,23 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { createDeskServer } from "../src/server/server.ts";
 import type { Store } from "../src/store/store.ts";
-import { addSession, PNG, tempHome, testStore } from "./helpers.ts";
+import { addSession, PNG, serve, tempHome, testStore } from "./helpers.ts";
 
 let store: Store;
 let base: string;
 let port: number;
 let secret: string;
-const server = { close: () => {} };
+let close: () => Promise<void>;
 
 before(async () => {
   store = testStore();
   addSession(store);
   secret = store.secret();
-  // Bind first to learn a free port, then build the server for that port (it checks Host against it).
-  const probe = createDeskServer(store, 0);
-  await new Promise<void>((r) => probe.listen(0, "127.0.0.1", r));
-  port = (probe.address() as AddressInfo).port;
-  await new Promise<void>((r) => probe.close(() => r()));
-  const real = createDeskServer(store, port);
-  await new Promise<void>((r) => real.listen(port, "127.0.0.1", r));
-  server.close = () => real.close();
-  base = `http://127.0.0.1:${port}`;
+  ({ base, port, close } = await serve(store));
 });
-after(() => server.close());
+after(() => close());
 
 const post = (route: string, body: unknown, headers: Record<string, string> = {}) =>
   fetch(base + route, {
@@ -158,12 +148,8 @@ describe("remote access through Tailscale Serve", () => {
     addSession(store);
     const secret = store.secret();
     const remote = { host: "laptop.tail1234.ts.net:8443", user: "dev@example.com" };
-    const probe = createDeskServer(store, 0, remote);
-    await new Promise<void>((r) => probe.listen(0, "127.0.0.1", r));
-    const port = (probe.address() as AddressInfo).port;
-    await new Promise<void>((r) => probe.close(() => r()));
-    const server = createDeskServer(store, port, remote);
-    await new Promise<void>((r) => server.listen(port, "127.0.0.1", r));
+    const server = await serve(store, remote);
+    const { port } = server;
     const http = await import("node:http");
     const call = (method: string, path: string, headers: Record<string, string>, body?: string) =>
       new Promise<number>((resolve, reject) => {
@@ -196,12 +182,8 @@ describe("PIN in front of remote access", () => {
     addSession(store);
     const remote = { host: "laptop.tail1234.ts.net:8443", user: "dev@example.com" };
     const { setPin } = await import("../src/server/remote-unlock.ts");
-    const probe = createDeskServer(store, 0, remote);
-    await new Promise<void>((r) => probe.listen(0, "127.0.0.1", r));
-    const port = (probe.address() as AddressInfo).port;
-    await new Promise<void>((r) => probe.close(() => r()));
-    const server = createDeskServer(store, port, remote);
-    await new Promise<void>((r) => server.listen(port, "127.0.0.1", r));
+    const server = await serve(store, remote);
+    const { port } = server;
     const http = await import("node:http");
     const call = (method: string, path: string, headers: Record<string, string> = {}, body?: string) =>
       new Promise<{ status: number; body: string; cookie?: string; locked?: string }>((resolve, reject) => {

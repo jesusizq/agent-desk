@@ -173,6 +173,28 @@ describe("Claude Code hooks", () => {
     assert.equal(agents[0]?.activity, "Fixed: the button is fixed at the bottom.");
   });
 
+  it("names an agent launched outside the Agent tool (a workflow) after the label Claude Code noted for it", () => {
+    const store = testStore();
+    const projects = tempHome();
+    const transcript = path.join(projects, "cc-1.jsonl");
+    const run = path.join(projects, "cc-1", "subagents", "workflows", "wf_1");
+    fs.mkdirSync(run, { recursive: true });
+    fs.writeFileSync(path.join(run, "agent-a9.meta.json"), JSON.stringify({ agentType: "workflow-subagent", description: "review:aliases batch 4" }));
+    handleHook(event("SubagentStart", { agent_id: "a9", agent_type: "workflow-subagent", transcript_path: transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.goal]), [["review-aliases-batch-4", "review:aliases batch 4"]]);
+
+    // Notes written only after the start: the goal arrives with the stop.
+    handleHook(event("SubagentStart", { agent_id: "a10", agent_type: "workflow-subagent", transcript_path: transcript }), ctx(store));
+    fs.writeFileSync(path.join(run, "agent-a10.meta.json"), JSON.stringify({ description: "verify:aliases" }));
+    handleHook(event("SubagentStop", { agent_id: "a10", agent_type: "workflow-subagent", agent_transcript_path: path.join(run, "agent-a10.jsonl"), last_assistant_message: "Checked." }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").find((a) => a.ref === "a10")?.goal, "verify:aliases");
+
+    fs.writeFileSync(path.join(run, "agent-a11.meta.json"), "{broken");
+    const out = handleHook(event("SubagentStart", { agent_id: "a11", agent_type: "workflow-subagent", transcript_path: transcript }), ctx(store));
+    assert.match(out.stderr ?? "", /cannot read the sub-agent's label/, "a broken note is reported, and the agent still recorded");
+    assert.ok(store.listAgents("cc-1").some((a) => a.ref === "a11"));
+  });
+
   it("treats an agent started again with the same id as the same agent", () => {
     const store = testStore();
     handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: "t1", tool_input: { description: "Seal timings", subagent_type: "general-purpose" } }), ctx(store));

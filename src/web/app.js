@@ -258,12 +258,13 @@ function shape() {
 
 /**
  * Runs a DOM update as a view transition, so cards move, enter and leave instead of jumping. Not
- * while the developer types (a transition briefly freezes the page) or prefers reduced motion.
+ * while the developer types or has a window open (a transition briefly freezes the page, and a
+ * click on the window would be lost), or prefers reduced motion.
  * @param {() => void} update
  */
 function animate(update) {
   const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "");
-  if (typing || !document.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) return update();
+  if (typing || document.querySelector("dialog[open]") || !document.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) return update();
   // A transition cut short by a newer one rejects `ready`; its update has run all the same.
   document.startViewTransition(update).ready.catch(() => {});
 }
@@ -330,8 +331,8 @@ function notify(title, body, tag, open) {
   };
 }
 
-// In one column (a phone, a narrow window) the large card sits above the queue, maybe off screen.
-const ONE_COLUMN = matchMedia("(max-width: 1100px)");
+// In one column (a phone) the large card sits above the queue, maybe off screen. Same query as style.css.
+const ONE_COLUMN = matchMedia("(max-width: 700px), (max-height: 500px)");
 /** @param {ScrollLogicalPosition} [block] */
 function revealNext(block = "nearest") {
   if (ONE_COLUMN.matches) document.querySelector(".next")?.scrollIntoView({ block });
@@ -783,6 +784,12 @@ function agentDot(a) {
   mark.title = [a.name, TEXT.state[a.state], a.activity].filter(Boolean).join(" · ");
   return a.state === "working" ? h("span", { class: "live" }, mark) : mark;
 }
+/** The session itself at work, before its agents' dots. */
+function sessionDot() {
+  const mark = dot("working");
+  mark.title = TEXT.sessionWorking;
+  return h("span", { class: "live" }, mark);
+}
 /** What an agent does now: who it waits for, its latest tool call, or what kind of agent it is. @param {Agent} a */
 function agentDoing(a) {
   const waits = waitingOn(a);
@@ -816,6 +823,8 @@ function sessionCard(s) {
   // What is done needs nothing: active agents get a dot each, finished ones a count.
   const active = as.filter((a) => a.state !== "done");
   const done = as.length - active.length;
+  // The session's own turn counts too: with every agent done, it still shows it is working.
+  const working = s.state === "working";
   const open = () => openSession(s.id);
   return h(
     "div",
@@ -836,7 +845,7 @@ function sessionCard(s) {
       h("span", { class: "sname", title: label(s) }, tagIcon(color(s.project.name)), ui.project === null ? [h("span", { class: "sproj" }, s.project.name), h("span", { class: "sep" }, "›")] : null, h("b", {}, sessionName(s))),
       ctx !== undefined ? h("span", { class: "ctx" }, bar(ctx), `${Math.round(ctx)}%`) : null,
     ),
-    h("div", { class: "sline" }, active.length || needs || done ? h("span", { class: "adots" }, needs ? dot("needs") : null, active.map(agentDot), done ? h("span", { class: "faint done-count" }, TEXT.doneCount(done)) : null) : null, needs ? (s.activity ? h("div", { class: "quiet-line", title: s.activity }, s.activity) : null) : quietLine(s)),
+    h("div", { class: "sline" }, active.length || needs || working || done ? h("span", { class: "adots" }, needs ? dot("needs") : working ? sessionDot() : null, active.map(agentDot), done ? h("span", { class: "faint done-count" }, TEXT.doneCount(done)) : null) : null, needs ? (s.activity ? h("div", { class: "quiet-line", title: s.activity }, s.activity) : null) : quietLine(s)),
     trouble.length ? h("div", { class: "strouble" }, dot(trouble[0]?.st ?? "failed"), trouble.map((t) => TEXT.trouble[t.st](t.n)).join(" · ")) : null,
     m?.suggestion ? h("span", { class: "chip warn", title: TEXT.suggest[m.suggestion.reason](ctx ?? 0) }, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
   );

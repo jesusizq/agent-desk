@@ -382,8 +382,16 @@ h1.title { font: 650 19px var(--sans); letter-spacing: -.01em; margin: 0; }
 .tl-axis span { position: absolute; transform: translateX(-50%); }
 .tl-now { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--accent); border-radius: 1px; }
 
-@media (max-width: 1100px) {
-  /* One column: the document scrolls (iOS collapses its bars and scrolls to top on a tap of the clock). */
+@media (max-width: 900px) {
+  /* A narrow window keeps two columns: the header drops its labels and the projects scroll sideways. */
+  #views .lbl, #theme .lbl { display: none; }
+  #projects { overflow-x: auto; scrollbar-width: none; min-width: 0; flex: 0 1 auto; }
+  #projects button { white-space: nowrap; flex: none; }
+  .search { width: 150px; min-width: 90px; }
+}
+
+@media (max-width: 700px), (max-height: 500px) {
+  /* One column (a phone): the document scrolls (iOS collapses its bars and scrolls to top on a tap of the clock). */
   html, body { height: auto; min-height: 100%; }
   body { overflow: visible; }
   html:has(dialog[open]) { overflow: hidden; }

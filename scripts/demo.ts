@@ -8,7 +8,9 @@ const home = process.argv[2];
 if (!home || !path.isAbsolute(home)) throw new Error("usage: node scripts/demo.ts <absolute path of an empty directory>");
 if (fs.existsSync(home) && fs.readdirSync(home).length > 0) throw new Error(`${home} is not empty; the demo only writes into a new store`);
 
-const store = new Store(home);
+// A clock that never repeats a millisecond, so what the demo adds first is always the oldest.
+let last = 0;
+const store = new Store(home, () => new Date((last = Math.max(Date.now(), last + 1))));
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
 // Real screenshots of a sample shop page, kept with this script.
 const IMAGES = path.join(import.meta.dirname, "demo-images");

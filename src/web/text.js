@@ -124,6 +124,7 @@ export const TEXT = {
   /** @param {string} t */
   tookFor: (t) => `took ${t}`,
   state: { needs: "Needs you", working: "Working", waiting: "Waiting on its job", blocked: "Blocked", idle: "Idle", done: "Done", failed: "Failed" },
+  sessionWorking: "The session is working",
   failedAgent: "failed",
   /** @param {string} t */
   idleSince: (t) => `idle since ${t}`,

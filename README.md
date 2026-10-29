@@ -182,8 +182,12 @@ For anything the desk cannot do, open the session's terminal from an SSH app suc
 ```sh
 npm ci          # type-checking tools only
 npm run check   # strict type checks: Node code, the page (JSDoc), the VS Code extension
-npm test        # node --test: store, server, CLI, Claude Code adapter
+npm test        # node --test: store, server, CLI, Claude Code adapter, the page in headless Chrome
 ```
+
+The page tests drive Chrome through its DevTools protocol, with no test dependency. They use
+`google-chrome` or `chromium` from `PATH`, or the browser in `AGENT_DESK_CHROME`; without one they
+are skipped, except in CI, where they fail.
 
 The server moves what is older than 60 days (closed questions, results with their images, finished
 sessions) to `archive/` in the store, at start and every 6 hours.
