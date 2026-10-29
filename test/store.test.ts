@@ -164,7 +164,7 @@ describe("questions", () => {
     const store = testStore();
     addSession(store);
     const q = store.ask({ sessionId: "s1", kind: "question", text: "Delete it?" });
-    assert.throws(() => store.answerFromDesk(q.id, "yes"), /not waiting for an answer/);
+    assert.throws(() => store.answerFromDesk(q.id, "yes"), /not taking answers/);
     assert.equal(store.getQuestion(q.id)?.status, "open");
     assert.deepEqual(fs.existsSync(store.paths.sessionInbox("s1")) ? fs.readdirSync(store.paths.sessionInbox("s1")) : [], []);
   });

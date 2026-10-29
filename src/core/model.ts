@@ -1,5 +1,5 @@
 // Validators that read protocol records back from untrusted files and input.
-import { compact, fields, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
+import { bool, compact, fields, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
 import { id } from "./ids.ts";
 import {
   AGENT_STATES,
@@ -46,6 +46,7 @@ export function readSession(value: unknown, where = "session"): Session {
     process: optional(f.process, `${where}.process`, readProcess),
     terminal: optional(f.terminal, `${where}.terminal`, label),
     tmux: optional(f.tmux, `${where}.tmux`, readTmux),
+    takesMessagesWhileWorking: optional(f.takesMessagesWhileWorking, `${where}.takesMessagesWhileWorking`, bool),
     activity: optional(f.activity, `${where}.activity`, line),
     lastMessage: optional(f.lastMessage, `${where}.lastMessage`, readMessage),
     readAt: optional(f.readAt, `${where}.readAt`, isoTime),

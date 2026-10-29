@@ -97,6 +97,18 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("!document.getElementById('session').open");
   });
 
+  it("writes to a session while it works, when its adapter delivers mid-turn", async () => {
+    store.upsertSession({ id: "mid-turn", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "release notes", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "release notes");
+    await page.click("#session .chat-footer textarea");
+    assert.equal(await page.eval<string>("document.querySelector('#session .chat-footer textarea').placeholder"), "Write to it while it works…");
+    await page.type("and push it when the tests pass");
+    await page.click("#session .chat-footer .primary");
+    await page.waitFor("document.querySelector('#toasts')?.textContent.includes('release notes')");
+    assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"]);
+  });
+
   it("closes only the zoom with Escape, then the result", async () => {
     const page = await open();
     await page.click(".rtile", "Three pay button variants");

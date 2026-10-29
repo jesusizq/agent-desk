@@ -55,6 +55,16 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "h=\"${AGENT_DESK_HOME:-$HOME/.cache/agent-desk}\"; if [ -e \"$h/.inbox-pending\" ]; then exec agent-desk-claude deliver; fi",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [

@@ -72,6 +72,8 @@ export const TEXT = {
   options: "Options",
   answerPlaceholder: "Type your answer or pick an option…",
   replyPlaceholder: "Type your next instruction…",
+  workingPlaceholder: "Write to it while it works…",
+  sendHintWorking: "It reaches this session at its next step, exactly as written, as if typed in its terminal.",
   send: "Send to the session",
   sendShort: "Send",
   sendKeys: "Ctrl+Enter sends.",

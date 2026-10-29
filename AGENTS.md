@@ -21,7 +21,9 @@ agent updates, and answering means finding the right terminal and scrolling back
   on the desk (an option or free text, delivered at once and verbatim to the session that asked,
   while that session is waiting; a permission prompt is allowed or denied with a reason) or in the
   terminal, which one click brings to the front; the provider's own dialogs are answered there. Once
-  answered, the question leaves the list and goes to the history with the answer given.
+  answered, the question leaves the list and goes to the history with the answer given. A session at
+  work can be written to from the desk too: the message reaches it at its next step, as what the
+  developer types in its terminal mid-turn does.
 - **Results with pictures.** What finished, with its summary and its screenshots shown inline
   (not as links), and the place to see it live (a local URL) when there is one.
 - **Work in progress.** Per session: the agents running, what each one does, its branch and commit,

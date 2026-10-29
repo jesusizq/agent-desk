@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { handleHook, type HookContext, readablePrompt, readHookInput, splitLastParagraph, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
+import { deliverWhileWorking, handleHook, type HookContext, readablePrompt, readHookInput, splitLastParagraph, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import type { Store } from "../src/store/store.ts";
 import { tempHome, testStore } from "./helpers.ts";
@@ -339,10 +339,30 @@ describe("answers from the desk", () => {
     assert.equal(item?.answer?.via, "desk");
   });
 
+  it("hands a message sent while the session works to its next step, not to a sub-agent's", () => {
+    const store = testStore();
+    const live = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
+    handleHook(event("SessionStart", { source: "startup" }), live);
+    handleHook(event("UserPromptSubmit", { prompt: "Fix the checkout" }), live);
+    assert.equal(store.getSession("cc-1")?.takesMessagesWhileWorking, true);
+    store.messageFromDesk("cc-1", "and push it when the tests pass");
+    assert.ok(fs.existsSync(store.paths.inboxMarker), "the hook after each tool call finds work to do");
+    assert.deepEqual(store.getSession("cc-1")?.sentWhileWorking?.map((m) => m.text), ["and push it when the tests pass"]);
+
+    // Typed in the terminal mid-turn: the desk message is not overtaken, both reach the session.
+    handleHook(event("UserPromptSubmit", { prompt: "also run lint" }), live);
+    assert.deepEqual(deliverWhileWorking(event("PostToolUse", { tool_name: "Bash", agent_id: "a-1" }), store), { code: 0 }, "a sub-agent's step leaves it");
+    const out = deliverWhileWorking(event("PostToolUse", { tool_name: "Bash" }), store);
+    const context = JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
+    assert.match(context, /^Message from agent-desk[\s\S]*Verbatim:\nand push it when the tests pass$/);
+    assert.ok(!fs.existsSync(store.paths.inboxMarker), "nothing left: the hook goes quiet");
+    assert.deepEqual(deliverWhileWorking(event("PostToolUse", { tool_name: "Bash" }), store), { code: 0 }, "delivered once");
+  });
+
   it("refuses a reply while the session is not listening, leaving nothing open", () => {
     const store = testStore();
     handleHook(event("Stop", { last_assistant_message: "Done." }), ctx(store));
-    assert.throws(() => store.messageFromDesk("cc-1", "next"), /not waiting/);
+    assert.throws(() => store.messageFromDesk("cc-1", "next"), /not taking messages/);
     assert.deepEqual(store.openQuestions(), []);
   });
 

@@ -489,9 +489,9 @@ function answerForm(q) {
 
 /**
  * Text box (and option buttons) whose content is sent verbatim to a listening session.
- * Drafts survive re-renders. @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder]
+ * Drafts survive re-renders. @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder] @param {string} [hint]
  */
-function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder) {
+function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint) {
   const box = /** @type {HTMLTextAreaElement} */ (h("textarea", { "data-key": key, placeholder, "aria-label": placeholder }));
   box.value = ui.drafts.get(key) ?? "";
   const send = () => {
@@ -534,7 +534,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     { class: "answer" },
     opts.length ? h("div", { class: "opts" }, opts) : null,
     box,
-    h("div", { class: "row" }, h("button", { class: "primary", title: TEXT.send, onclick: send, disabled: ui.sending.has(key) }, icon("send"), TEXT.sendShort), h("span", { class: "faint send-hint" }, h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), TEXT.sendHint)),
+    h("div", { class: "row" }, h("button", { class: "primary", title: TEXT.send, onclick: send, disabled: ui.sending.has(key) }, icon("send"), TEXT.sendShort), h("span", { class: "faint send-hint" }, h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), hint)),
   );
 }
 
@@ -1211,7 +1211,9 @@ function chat(s) {
   const list = fetched && fetched.length ? fetched : s.lastMessage ? [{ id: "last", sessionId: s.id, from: /** @type {const} */ ("session"), text: s.lastMessage.text, at: s.lastMessage.at }] : [];
   const whileWorking = new Set((s.sentWhileWorking ?? []).map((w) => w.text));
   const asking = data.questions.find((q) => q.status === "open" && q.sessionId === s.id);
-  const canReply = s.state === "waiting" && data.listening.includes(s.id) && !asking;
+  // At work, a session whose adapter delivers mid-turn gets the message at its next step.
+  const midTurn = s.state === "working" && s.takesMessagesWhileWorking === true && isLive(s);
+  const canReply = !asking && ((s.state === "waiting" && data.listening.includes(s.id)) || midTurn);
   return [
     h(
       "div",
@@ -1231,7 +1233,7 @@ function chat(s) {
             answerForm(asking),
           )
         : canReply
-          ? replyBox(`message-${s.id}`, [], `/api/sessions/${s.id}/message`, s.id)
+          ? replyBox(`message-${s.id}`, [], `/api/sessions/${s.id}/message`, s.id, midTurn ? TEXT.workingPlaceholder : undefined, midTurn ? TEXT.sendHintWorking : undefined)
           : h("div", { class: "faint" }, s.state === "working" ? TEXT.conversation.working : TEXT.notListening),
     ),
   ];

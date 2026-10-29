@@ -10,7 +10,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 
 | Path | Record | Written by |
 | --- | --- | --- |
-| `sessions/<session>.json` | `Session`: provider label, project, title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity, last message of the turn | adapter hooks |
+| `sessions/<session>.json` | `Session`: provider label, project, title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity, last message of the turn, whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
 | `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer and how it was given (`terminal`, `desk`), interpretation | hooks, `agent-desk ask`, the page |
 | `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity, branch, commit, `after` (agents it builds on), times | hooks, `agent-desk agent` |
 | `results/<result>.json` | `Result`: title, summary, status, local URL, image ids, before/after pair, assumptions, taste decisions, checks | `agent-desk result` |
@@ -19,6 +19,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `metrics/<session>.json` | what the session's status line shows; every field optional | status-line wrapper, hooks |
 | `inbox/<session>/<question>.json` | an answer given on the page, waiting for the session; an unreadable one is set aside as `.<name>.rejected` | the page |
 | `inbox/<session>/.listener.<pid>.json` | a process waiting for that session's answers | the adapter's waiter |
+| `.inbox-pending` | present while any inbox holds an entry, so a hook that runs on every tool call tests one file | the store |
 | `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message and each answer of the developer (typed or from the desk), the latest 200 per session | hooks, the page |
 | `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, size on disk, whether merged into the main branch and commits ahead; total and the day's starting total | `agent-desk scan`, started by adapters at the end of a turn |
 | `seen.json` | when the developer last marked everything as seen | the page |
@@ -62,24 +63,28 @@ The adapter records the session's own process (`process.pid` with its start time
 provider's own dialogs, and turns that end with a question. A turn that ends with a report is kept
 as the session's last message and shown quietly on its card ("Finished · waiting for your next
 instruction"); the session panel always shows it in full, also after its item was dismissed, and can
-reply to it while the session listens.
+reply to it while the session takes messages (see below).
 
 ## Answers from the page
 
-The page shows an answer box for a question only while a live listener exists for its session, and
-the server refuses an answer otherwise, so an answer never waits in an inbox for a later, unrelated
-turn. A permission prompt gets one while the adapter's permission hook waits for it; its entry in
-the inbox is taken only by that hook.
+The page shows an answer box for a session only while it takes messages, and the server refuses
+one otherwise, so a message never waits in an inbox for a later, unrelated turn. A session takes
+them while a live listener exists for it (it waits), or while it works if its record says
+`takesMessagesWhileWorking` and its process is alive. A permission prompt gets a box while the
+adapter's permission hook waits for it; its entry in the inbox is taken only by that hook.
 
-If the developer types in the terminal before the waiter has taken an answer, the adapter withdraws
-it from the inbox and records the typed text as the answer; when the session ends, the question is
-dismissed.
+If the developer types in the terminal while the session waits, before the waiter has taken an
+answer, the adapter withdraws it from the inbox and records the typed text as the answer; typed while
+it works, both reach the session. When the session ends, the question is dismissed.
 
 1. The page posts the text; the server closes the question with `via: "desk"` and writes
    `inbox/<session>/<question>.json` with the question and the answer, unchanged.
 2. The waiter claims it and hands it to the session in the provider's own way (Claude Code: exit
    code 2 of an `asyncRewake` hook started at the end of each turn and when the session starts,
-   which wakes the model with the text).
+   which wakes the model with the text). While the session works, Claude Code's adapter claims it
+   after the session's next tool call instead (`agent-desk-claude deliver`, a `PostToolUse` hook that
+   runs only while `.inbox-pending` exists) and returns it as `additionalContext`; a message left
+   when the turn ends goes to the waiter.
 
 ## CLI
 
@@ -111,7 +116,7 @@ The server binds 127.0.0.1 and refuses any request whose `Host` is not `127.0.0.
 | `GET /images/<id>` | a stored image, served with `Content-Security-Policy: default-src 'none'; sandbox` |
 | `POST /api/questions/<id>/answer` `{ "text": "…" }` | answer from the page |
 | `POST /api/questions/<id>/dismiss` | close without answering |
-| `POST /api/sessions/<id>/message` `{ "text": "…" }` | reply to a waiting session that asked nothing; kept in the history against its last message |
+| `POST /api/sessions/<id>/message` `{ "text": "…" }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
 | `POST /api/results/<id>/seen`, `POST /api/seen` | mark one result, or everything, as seen |
 
 Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header

@@ -18,4 +18,6 @@ If the developer wrote to you while you were working, end the turn with one line
 you applied it.
 
 An answer given on the page reaches you as a message starting with "Answer from agent-desk": it is the
-developer's reply to your last question.
+developer's reply to your last question. While you work, the developer may also write to you from the
+page: it arrives after a tool call as context starting with "Message from agent-desk". Treat it as if
+they had typed it in the terminal.

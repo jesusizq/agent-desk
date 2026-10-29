@@ -171,6 +171,11 @@ export class Page {
     for (const type of ["mousePressed", "mouseReleased"]) await this.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
   }
 
+  /** Types text into the focused element, as a keyboard would. */
+  async type(text: string): Promise<void> {
+    await this.send("Input.insertText", { text });
+  }
+
   /** A real key press. */
   async press(key: "Escape" | "Enter" | "ArrowLeft" | "ArrowRight"): Promise<void> {
     const code = { Escape: 27, Enter: 13, ArrowLeft: 37, ArrowRight: 39 }[key];

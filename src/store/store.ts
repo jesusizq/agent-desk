@@ -251,15 +251,16 @@ export class Store {
 
   /**
    * Closes an open question with the developer's answer and puts it in the session's inbox,
-   * exactly as typed. Refused unless the session is listening right now, so an answer never waits
-   * in an inbox to reach a later, unrelated turn. If the inbox write fails the question is reopened.
+   * exactly as typed. Refused unless the session takes it now (`acceptsMessages`), so an answer
+   * never waits in an inbox to reach a later, unrelated turn. If the inbox write fails the question
+   * is reopened.
    */
   answerFromDesk(questionId: string, text: string): Question {
     if (text.trim() === "") throw new InputError("the answer is empty");
     let before: Question | undefined;
     const answered = this.changeQuestion(questionId, (q) => {
       if (q.status !== "open") throw new InputError(`question ${questionId} is already ${q.status}`);
-      if (!this.isListening(q.sessionId)) throw new InputError("the session is not waiting for an answer from the desk right now; answer in its terminal");
+      if (!this.acceptsMessages(q.sessionId)) throw new InputError("the session is not taking answers from the desk right now; answer in its terminal");
       before = q;
       const at = this.stamp();
       return { ...q, status: "answered", closedAt: at, answer: { text, at, via: "desk" } };
@@ -268,6 +269,7 @@ export class Store {
     this.addMessage({ sessionId: answered.sessionId, from: "developer", text, via: "desk" });
     try {
       writeJson(this.paths.inboxEntry(answered.sessionId, questionId), entry);
+      this.syncInboxMarker();
     } catch (error) {
       const original = before;
       try {
@@ -281,14 +283,19 @@ export class Store {
   }
 
   /**
-   * A message to a waiting session that asked nothing (a reply to its last report). It is kept in
-   * the history as an answered item whose text is that last message.
+   * A message to a session that asked nothing: a reply to its last report while it waits, or a
+   * message while it works, which it receives at its next step. It is kept in the history as an
+   * answered item whose text is that last report.
    */
   messageFromDesk(sessionId: string, text: string): Question {
     const session = this.getSession(sessionId);
     if (!session) throw new InputError(`no session ${sessionId} in the store`);
     if (text.trim() === "") throw new InputError("the message is empty");
-    if (!this.isListening(sessionId)) throw new InputError("the session is not waiting for a message from the desk right now; write in its terminal");
+    if (!this.acceptsMessages(sessionId)) throw new InputError("the session is not taking messages from the desk right now; write in its terminal");
+    if (session.state === "working") {
+      const at = this.stamp();
+      this.updateSession(sessionId, (s) => ({ ...s, sentWhileWorking: [...(s.sentWhileWorking ?? []), { text: text.length > 2000 ? `${text.slice(0, 1999)}…` : text, at }].slice(-10) }));
+    }
     const said = session.lastMessage?.text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).at(-1) ?? "(no message)";
     const item = this.ask({ sessionId, kind: "waiting", text: said.length > 600 ? `…${said.slice(-600)}` : said });
     try {
@@ -332,7 +339,18 @@ export class Store {
       }
     }
     for (const c of claimed) fs.rmSync(c.claim);
+    if (claimed.length > 0) this.syncInboxMarker();
     return taken.sort((a, b) => a.at.localeCompare(b.at));
+  }
+
+  /** Creates or removes `paths.inboxMarker` to match the inboxes, under a lock so no update is lost. */
+  syncInboxMarker(): void {
+    const marker = this.paths.inboxMarker;
+    withLock(marker, () => {
+      const pending = this.subdirs(this.paths.inboxDir).some((dir) => listJson(dir).length > 0);
+      if (pending) fs.writeFileSync(marker, "", { mode: 0o600 });
+      else fs.rmSync(marker, { force: true });
+    });
   }
 
   /**
@@ -390,6 +408,16 @@ export class Store {
 
   isListening(sessionId: string, problems?: string[]): boolean {
     return this.listeners(sessionId, problems).length > 0;
+  }
+
+  /**
+   * The session takes a message from the desk now: something listens for it (it waits), or it works
+   * and its adapter hands messages over at its next step.
+   */
+  acceptsMessages(sessionId: string, problems?: string[]): boolean {
+    if (this.isListening(sessionId, problems)) return true;
+    const s = this.getSession(sessionId);
+    return s?.state === "working" && s.takesMessagesWhileWorking === true && (s.process === undefined || isAlive(s.process.pid, s.process.start));
   }
 
   // ── Agents ──────────────────────────────────────────────────────────────

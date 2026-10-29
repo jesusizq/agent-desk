@@ -55,8 +55,9 @@ show, and it takes the developer to the right terminal in one click.
 - **Needs you.** Open questions and permission prompts from every session, oldest first, each with
   its project and session and a "Go to session" link that brings its terminal to the front.
   Pending approvals (rules files, deletions) are questions too. A waiting session can be answered on
-  the desk (an option or free text, delivered at once), and a permission prompt allowed or denied
-  there while the provider's permission hook waits for it.
+  the desk (an option or free text, delivered at once), a session at work written to (delivered at
+  its next step), and a permission prompt allowed or denied there while the provider's permission
+  hook waits for it.
 - **Results.** Summary, inline screenshots with side-by-side comparison and zoom, and the local URL to
   see the result live.
 - **Running.** Per session: agents, their goal, current activity, branch and commit, elapsed time,
@@ -100,8 +101,9 @@ show, and it takes the developer to the right terminal in one click.
   verbatim. The adapter waits for it while the session waits for input and hands it over in the
   provider's own way: for Claude Code, a background hook (`asyncRewake`), started when the session
   starts and at the end of each turn, that wakes the model with the answer, at no token cost while
-  waiting. The desk offers an answer box only while
-  such a waiter runs.
+  waiting. The desk offers an answer box only while such a waiter runs, or while the session works if
+  its adapter delivers mid-turn: for Claude Code, a hook after each tool call of the session (not of
+  its sub-agents) hands the message over as context the model reads before its next step.
 - **Session control.** Terminal commands such as `/compact` are executed by the terminal, not by the
   model, so an answer cannot trigger them. Sessions that run inside `tmux` record their pane; the
   desk sends them keys from a fixed list (`/compact`, Escape, Enter, 1–5), after a confirming second

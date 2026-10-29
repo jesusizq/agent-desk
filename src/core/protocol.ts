@@ -31,6 +31,11 @@ export type Session = {
    * editor extension finds its terminal among them, since the session no longer descends from it).
    */
   tmux?: { socket: string; pane: string; clients: number[] };
+  /**
+   * Its adapter hands it messages from the desk while it works, at its next step (as a provider
+   * does with what the developer types mid-turn); otherwise only while it waits.
+   */
+  takesMessagesWhileWorking?: boolean;
   /** What the session is doing now, sampled from its tool calls (e.g. "Edit: src/app.ts"). */
   activity?: string;
   /** The session's last message at the end of a turn: shown quietly unless it asks something. */

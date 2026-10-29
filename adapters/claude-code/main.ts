@@ -5,7 +5,7 @@ import { sessionProcess } from "../../src/core/proc.ts";
 import { tmuxLocation } from "../../src/core/tmux.ts";
 import { storeHome } from "../../src/store/paths.ts";
 import { Store } from "../../src/store/store.ts";
-import { handleHook, type HookOutput, readHookInput, waitForAnswer, waitForPermission } from "./hooks.ts";
+import { deliverWhileWorking, handleHook, type HookOutput, readHookInput, waitForAnswer, waitForPermission } from "./hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "./statusline.ts";
 
 const WAIT_POLL_MS = 500;
@@ -55,6 +55,10 @@ async function main(argv: string[]): Promise<void> {
     finish(out);
   }
 
+  if (command === "deliver") {
+    finish(deliverWhileWorking(readHookInput(input), store));
+  }
+
   if (command === "wait") {
     const { sessionId } = readHookInput(input);
     const stop = new AbortController();
@@ -89,7 +93,7 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  process.stderr.write("usage: agent-desk-claude hook | wait | statusline [-- <status-line command>]  (input on stdin)\n");
+  process.stderr.write("usage: agent-desk-claude hook | wait | deliver | statusline [-- <status-line command>]  (input on stdin)\n");
   process.exit(2);
 }
 

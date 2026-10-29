@@ -77,6 +77,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // Without a title from Claude Code, the first thing asked of the session names it. A prompt
       // that arrives while the session works is kept, to show later whether that turn took it in.
       const at = new Date().toISOString();
+      const wasWorking = store.getSession(sid)?.state === "working";
       store.updateSession(sid, (s) =>
         compact({
           ...s,
@@ -86,8 +87,9 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
         }),
       );
       store.addMessage({ sessionId: sid, from: "developer", text: readablePrompt(prompt), via: "terminal" });
-      // An answer given on the page but not yet delivered is overtaken by what was typed.
-      store.withdrawInbox(sid, prompt);
+      // An answer given on the page but not yet delivered is overtaken by what was typed; a message
+      // sent from the page while the session works still reaches it, at its next step.
+      if (!wasWorking) store.withdrawInbox(sid, prompt);
       store.closeOpen(sid, { answer: prompt, problems });
       syncPermissionMarker(store, problems);
       return { code: 0 };
@@ -160,6 +162,7 @@ function register(input: Common, ctx: HookContext): void {
       project: { name: path.basename(dir) || dir, dir },
       title: title || undefined,
       process: proc,
+      takesMessagesWhileWorking: true, // deliverWhileWorking, after each tool call
       // Inside tmux the terminal is the one attached to it, looked up only with the pane; the other
       // events keep what was found then.
       terminal: (terminal === "tmux" ? tmux && outerTerminal(tmux.clients) : terminal) || undefined,
@@ -491,6 +494,20 @@ export async function waitForPermission(sessionId: string, questionId: string, s
 }
 
 /** The answer goes to Claude exactly as the developer typed it, framed so it is read as their reply. */
+/**
+ * Runs after each tool call while some inbox holds a message (hooks.json tests the store's marker
+ * first): hands the session's messages from the desk to Claude at this step, as context it reads
+ * before going on. A sub-agent's tool call leaves them for the session itself.
+ */
+export function deliverWhileWorking(input: Common, store: Store): HookOutput {
+  if (typeof input.raw.agent_id === "string" && input.raw.agent_id !== "") return { code: 0 };
+  // Permission answers belong to the PermissionRequest hook waiting for them.
+  const entries = store.takeInbox(input.sessionId, (qid) => store.getQuestion(qid)?.kind !== "permission");
+  if (entries.length === 0) return { code: 0 };
+  const additionalContext = entries.map((e) => `Message from agent-desk: the developer wrote this to you on the desk page while you worked. Act on it as if they had typed it in the terminal now. Verbatim:\n${e.answer}`).join("\n\n");
+  return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } }) };
+}
+
 export function deliveryText(entry: { question: string; answer: string }): string {
   const question = entry.question.length > 300 ? `${entry.question.slice(0, 299)}…` : entry.question;
   return `Answer from agent-desk (the developer replied on the desk page instead of the terminal).\nYour question: ${question}\nTheir answer, verbatim:\n${entry.answer}`;
