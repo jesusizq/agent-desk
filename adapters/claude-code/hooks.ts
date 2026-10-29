@@ -104,7 +104,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // The tool ran or was refused: any permission prompt of this session is settled.
       store.closeOpen(sid, { kinds: ["permission"], problems });
       syncPermissionMarker(store, problems);
-      if (input.event !== "PermissionDenied") recordActivity(input, ctx);
+      if (input.event !== "PermissionDenied") recordActivity(input, ctx, problems);
       return { code: 0 };
 
     case "Notification": {
@@ -226,13 +226,14 @@ function titleFrom(prompt: string): string {
 }
 
 /** What a tool call says about the session or sub-agent that made it. */
-function recordActivity(input: Common, ctx: HookContext): void {
+function recordActivity(input: Common, ctx: HookContext, problems: string[]): void {
   const what = describeTool(input.raw.tool_name, input.raw.tool_input, ctx.env.CLAUDE_PROJECT_DIR || input.cwd);
   const agentId = typeof input.raw.agent_id === "string" ? input.raw.agent_id : "";
   if (agentId === "") {
     ctx.store.updateSession(input.sessionId, (s) => (s.state === "ended" ? s : { ...s, activity: bounded(what, 200) }));
     return;
   }
+  settlePairing(input, ctx, agentId, subagentMeta(input, agentId), problems);
   const agent = ctx.store.listAgents(input.sessionId).find((a) => a.ref === agentId);
   if (agent && agent.state === "working") ctx.store.upsertAgent(input.sessionId, agent.name, { activity: bounded(what, 200) });
 }
@@ -275,9 +276,10 @@ function describeTool(tool: unknown, input: unknown, projectDir?: string): strin
 }
 
 // ── Sub-agents ──────────────────────────────────────────────────────────
-// Claude Code does not link SubagentStart's agent_id to the Agent tool call that launched it. An agent
-// is named after the description given to the Agent tool; SubagentStart pairs with the oldest launch
-// of the same agent type not yet paired. Two launches of one type at the same instant may swap ids.
+// SubagentStart's input does not name the Agent tool call that launched it, and Claude Code writes its
+// notes on the sub-agent (label and Agent call) only after that hook. An agent is named after the
+// description given to the Agent tool; SubagentStart pairs with the oldest unpaired launch of its type,
+// and the agent's first tool call or its stop corrects the pairing from the notes (settlePairing).
 
 const PENDING = "tool:";
 
@@ -310,21 +312,40 @@ function startAgent(input: Common, ctx: HookContext, problems: string[]): void {
     ctx.store.upsertAgent(input.sessionId, pending.name, { ref: agentId, state: "working" });
     return;
   }
-  // Launched by something other than the Agent tool (a workflow): its label is in Claude Code's notes.
-  const goal = launchLabel(subagentMeta(input, agentId), problems);
+  // Launched by something other than the Agent tool (a workflow): its label, when already noted, is its goal.
+  const goal = launchNotes(subagentMeta(input, agentId), problems).description;
   const name = freeName(ctx.store, input.sessionId, slug(goal || type || "agent"));
   ctx.store.upsertAgent(input.sessionId, name, compact({ type: type || undefined, ref: agentId, goal, state: "working" as const }));
 }
 
 function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
   const agentId = text(input.raw.agent_id ?? "", "hook input.agent_id", 200);
+  const transcript = optional(input.raw.agent_transcript_path, "hook input.agent_transcript_path", (v, w) => text(v, w, 4096));
+  const meta = transcript?.endsWith(".jsonl") ? transcript.replace(/\.jsonl$/, ".meta.json") : subagentMeta(input, agentId);
+  settlePairing(input, ctx, agentId, meta, problems);
   const agents = ctx.store.listAgents(input.sessionId).filter((a) => a.ref === agentId);
   const last = firstLine(text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000));
-  const transcript = optional(input.raw.agent_transcript_path, "hook input.agent_transcript_path", (v, w) => text(v, w, 4096));
-  // The notes may not have been written yet when the agent started.
-  const goal = agents.some((a) => !a.goal) && transcript?.endsWith(".jsonl") ? launchLabel(transcript.replace(/\.jsonl$/, ".meta.json"), problems) : undefined;
+  // The notes were not written yet when the agent started.
+  const goal = agents.some((a) => !a.goal) ? launchNotes(meta, problems).description : undefined;
   // Usually one; more only where an older adapter recorded a restarted agent twice.
   for (const agent of agents) ctx.store.upsertAgent(input.sessionId, agent.name, compact({ state: "done" as const, activity: last || undefined, goal: agent.goal ? undefined : goal }));
+}
+
+/**
+ * Launches of one type that start together may be paired the wrong way round. Once Claude Code has
+ * noted the sub-agent's label, the agent recorded under its id is checked against it and, when they
+ * differ, trades id and state with the launch that carries that label.
+ */
+function settlePairing(input: Common, ctx: HookContext, agentId: string, metaFile: string | undefined, problems: string[]): void {
+  const label = launchNotes(metaFile, problems).description;
+  if (!label) return;
+  const agents = ctx.store.listAgents(input.sessionId);
+  const held = agents.find((a) => a.ref === agentId);
+  if (!held?.goal || held.goal === label) return;
+  const owner = agents.find((a) => a.goal === label && a.type === held.type && a.ref !== agentId);
+  if (!owner) return;
+  ctx.store.upsertAgent(input.sessionId, owner.name, compact({ ref: agentId, state: held.state, activity: held.activity }));
+  ctx.store.upsertAgent(input.sessionId, held.name, compact({ ref: owner.ref, state: owner.state, activity: owner.activity }));
 }
 
 /**
@@ -334,6 +355,7 @@ function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
 function subagentMeta(input: Common, agentId: string): string | undefined {
   const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
   if (!transcript?.endsWith(".jsonl") || !/^[\w-]+$/.test(agentId)) return undefined;
+  if (path.basename(transcript) === `agent-${agentId}.jsonl`) return transcript.replace(/\.jsonl$/, ".meta.json");
   const dir = path.join(transcript.slice(0, -".jsonl".length), "subagents");
   const file = `agent-${agentId}.meta.json`;
   if (fs.existsSync(path.join(dir, file))) return path.join(dir, file);
@@ -342,22 +364,22 @@ function subagentMeta(input: Common, agentId: string): string | undefined {
   return runs.map((run) => path.join(workflows, run, file)).find((f) => fs.existsSync(f));
 }
 
-/** The label a sub-agent was launched with (its `description`), when its notes have one. */
-function launchLabel(metaFile: string | undefined, problems: string[]): string | undefined {
-  if (!metaFile) return undefined;
+/** What Claude Code noted on a sub-agent's launch: its label (`description`). */
+function launchNotes(metaFile: string | undefined, problems: string[]): { description?: string } {
+  if (!metaFile) return {};
   let raw: string;
   try {
     raw = fs.readFileSync(metaFile, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; // not written (yet): the agent just has no goal
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {}; // not written (yet): nothing noted
     throw error;
   }
   try {
     const f = fields(JSON.parse(raw), metaFile);
-    return optional(f.description, `${metaFile}.description`, (v, w) => text(v, w, 2000))?.trim() || undefined;
+    return compact({ description: optional(f.description, `${metaFile}.description`, (v, w) => text(v, w, 2000))?.trim() || undefined });
   } catch (error) {
-    problems.push(`cannot read the sub-agent's label in ${metaFile}: ${(error as Error).message}`);
-    return undefined;
+    problems.push(`cannot read the sub-agent's notes in ${metaFile}: ${(error as Error).message}`);
+    return {};
   }
 }
 

@@ -191,8 +191,39 @@ describe("Claude Code hooks", () => {
 
     fs.writeFileSync(path.join(run, "agent-a11.meta.json"), "{broken");
     const out = handleHook(event("SubagentStart", { agent_id: "a11", agent_type: "workflow-subagent", transcript_path: transcript }), ctx(store));
-    assert.match(out.stderr ?? "", /cannot read the sub-agent's label/, "a broken note is reported, and the agent still recorded");
+    assert.match(out.stderr ?? "", /cannot read the sub-agent's notes/, "a broken note is reported, and the agent still recorded");
     assert.ok(store.listAgents("cc-1").some((a) => a.ref === "a11"));
+  });
+
+  it("corrects launches of one type paired the wrong way round, once Claude Code has noted their labels", () => {
+    const store = testStore();
+    const projects = tempHome();
+    const transcript = path.join(projects, "cc-1.jsonl");
+    const dir = path.join(projects, "cc-1", "subagents");
+    for (const [tool, description] of [["toolu_a", "Alpha check"], ["toolu_b", "Beta check"]]) {
+      handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: tool, tool_input: { description, subagent_type: "general-purpose" } }), ctx(store));
+    }
+    // Both start before Claude Code writes its notes: the first start (Beta's) takes Alpha's launch.
+    handleHook(event("SubagentStart", { agent_id: "b", agent_type: "general-purpose", transcript_path: transcript }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a", agent_type: "general-purpose", transcript_path: transcript }), ctx(store));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "agent-a.meta.json"), JSON.stringify({ description: "Alpha check" }));
+    fs.writeFileSync(path.join(dir, "agent-b.meta.json"), JSON.stringify({ description: "Beta check" }));
+    // Alpha's first tool call settles both.
+    handleHook(event("PostToolUse", { tool_name: "Bash", tool_input: { command: "echo alpha" }, agent_id: "a", transcript_path: transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.goal, a.ref]), [["Alpha check", "a"], ["Beta check", "b"]]);
+    assert.equal(store.listAgents("cc-1")[0]?.activity, "Bash: echo alpha");
+
+    // Paired wrong and stopped before any tool call: the stop settles it.
+    handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: "toolu_c", tool_input: { description: "Gamma check", subagent_type: "general-purpose" } }), ctx(store));
+    handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: "toolu_d", tool_input: { description: "Delta check", subagent_type: "general-purpose" } }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "d", agent_type: "general-purpose", transcript_path: transcript }), ctx(store));
+    fs.writeFileSync(path.join(dir, "agent-d.meta.json"), JSON.stringify({ description: "Delta check" }));
+    handleHook(event("SubagentStop", { agent_id: "d", agent_type: "general-purpose", agent_transcript_path: path.join(dir, "agent-d.jsonl"), last_assistant_message: "delta" }), ctx(store));
+    const byGoal = new Map(store.listAgents("cc-1").map((a) => [a.goal, a]));
+    assert.deepEqual([byGoal.get("Delta check")?.ref, byGoal.get("Delta check")?.state], ["d", "done"]);
+    // Gamma waits for its own start again, as an unpaired launch.
+    assert.deepEqual([byGoal.get("Gamma check")?.ref?.startsWith("tool:"), byGoal.get("Gamma check")?.state], [true, "working"]);
   });
 
   it("treats an agent started again with the same id as the same agent", () => {

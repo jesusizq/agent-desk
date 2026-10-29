@@ -57,12 +57,14 @@ button in the session panel.
 
 ## Limits
 
-- Claude Code does not link a `SubagentStart` to the Agent call that launched it. The adapter pairs
-  each start with the oldest unpaired launch of the same agent type; two launches of one type at the
-  same instant may swap names.
-- The `.meta.json` notes of a sub-agent are Claude Code's internal files, not a documented interface:
-  if they move or change shape, agents launched outside the Agent tool lose their goal and keep
-  their type as name.
+- `SubagentStart` does not name the Agent call that launched it, and Claude Code writes its notes on
+  the sub-agent (`<session>/subagents/…/agent-<id>.meta.json`, with the launch's `description`) only
+  after that hook. The adapter pairs each start with the oldest unpaired launch of the same type, and
+  corrects the pairing from the notes at the agent's first recorded tool call or at its stop. Until
+  then, launches of one type started together may show each other's names (verified 2026-10-29 with
+  three agents launched in one message).
+- Those notes are Claude Code's internal files, not a documented interface: if they move or change
+  shape, the correction stops and agents launched outside the Agent tool lose their goal.
 - Whether Claude Code shows the terminal's permission dialog while the `PermissionRequest` hook
   waits, or only after it returns, is not documented and not yet verified here. If it waits, the
   dialog appears only after an answer on the desk or the 590 s wait.
