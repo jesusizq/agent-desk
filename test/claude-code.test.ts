@@ -276,6 +276,27 @@ describe("Claude Code hooks", () => {
     assert.equal(last, "Ok?");
     assert.ok(before.startsWith("…") && before.length <= 8001);
   });
+
+  it("keeps a closing list of several decisions whole as the question", () => {
+    const decisions = [
+      "Done: the upload test passed 60 of 60 under load.",
+      "",
+      "Three things are left for you to decide:",
+      `1. Shall I push this fix? It will start a new seal, with the right Node. ${"x".repeat(150)}`,
+      `2. API errors in production are logged only in debug mode. Shall I log them always? ${"y".repeat(250)}`,
+      "3. Your ~/.bashrc has two problems, and it is your file, so I leave it alone:",
+      `   - Node 20 first: line 119 puts Node 20.11 before everything. ${"z".repeat(120)}`,
+      `   - A token in plain text: your GitLab token is there. ${"w".repeat(120)}`,
+    ].join("\n");
+    const { last, before } = splitLastParagraph(decisions);
+    assert.ok(last.startsWith("Three things are left for you to decide:\n1. Shall I push this fix?"), last.slice(0, 80));
+    assert.equal(before, "Done: the upload test passed 60 of 60 under load.");
+
+    const long = Array.from({ length: 40 }, (_, i) => `${i + 1}. Option ${i + 1}: ${"v".repeat(80)}?`).join("\n");
+    const split = splitLastParagraph(long);
+    assert.ok(split.last.length <= 2000 && /^\d+\. Option/.test(split.last), "cut between lines, never mid-word");
+    assert.equal(`${split.before}\n${split.last}`, long, "what does not fit goes to the context, nothing is lost");
+  });
 });
 
 describe("answers from the desk", () => {

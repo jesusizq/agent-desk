@@ -62,6 +62,31 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor(`!${card}.querySelector('.st-working')`);
   });
 
+  it("shows a closing list of decisions whole, titled by the line that introduces it", async () => {
+    const decisions = [
+      "Three things are left for you to decide:",
+      "1. Shall I push this fix?",
+      "2. Shall I log API errors always?",
+      "3. Your ~/.bashrc has two problems:",
+      "   - Node 20 first.",
+      "   - A token in plain text.",
+    ].join("\n");
+    store.ask({ sessionId: "demo-pagos", kind: "waiting", text: decisions });
+    const page = await open();
+    await page.click(".qrow", "Three things are left for you to decide");
+    await page.waitFor("document.querySelector('.next')?.textContent.includes('Shall I push this fix?')");
+    assert.equal(await page.eval<string>("document.querySelector('.next .qtext').textContent"), "Three things are left for you to decide:");
+    assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.next ol > li')].map((li) => li.firstChild.textContent)"), ["Shall I push this fix?", "Shall I log API errors always?", "Your ~/.bashrc has two problems:"]);
+  });
+
+  it("numbers a list shown from its third item from 3", async () => {
+    store.ask({ sessionId: "demo-pagos", kind: "waiting", text: "3. Shall I rotate the token?\n4. Shall I remove line 119?" });
+    const page = await open();
+    await page.click(".qrow", "Shall I rotate the token?");
+    await page.waitFor("document.querySelector('.next ol')");
+    assert.equal(await page.eval<string>("document.querySelector('.next ol').getAttribute('start')"), "3");
+  });
+
   it("opens a session from its card, shows the turn at work, and closes with Escape", async () => {
     const page = await open();
     await page.click(".scard", "checkout redesign");

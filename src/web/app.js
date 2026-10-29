@@ -548,10 +548,14 @@ function questionText(text) {
   return [h("div", { class: "qtext" }, md(headline(text))), h("div", { class: "qctx md qfull" }, mdBlocks(text))];
 }
 
-/** The line of a question that asks (or its first line), without list markers. @param {string} text */
+/** The line of a question that asks (the line introducing a list of them, or its first line), without list markers. @param {string} text */
 function headline(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  const asking = (lines.find((l) => /[?¿]/.test(l)) ?? lines[0] ?? "").replace(/^(?:[-*•]|\d+[.)])\s+/, "");
+  const item = /^(?:[-*•]|\d+[.)])\s+/;
+  // Several questions in a list: the line that introduces them names them all.
+  const first = lines.findIndex((l) => item.test(l));
+  const intro = first > 0 && lines.filter((l) => item.test(l) && /[?¿]/.test(l)).length > 1 && /:$/.test(lines[first - 1] ?? "") ? lines[first - 1] : undefined;
+  const asking = (intro ?? lines.find((l) => /[?¿]/.test(l)) ?? lines[0] ?? "").replace(item, "");
   return asking.length > 240 ? `${asking.slice(0, 239)}…` : asking;
 }
 

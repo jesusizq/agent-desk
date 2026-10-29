@@ -27,7 +27,8 @@ export type HookContext = {
 /** Hook input fields every event carries. */
 type Common = { sessionId: string; event: string; cwd: string; permissionMode?: string; raw: Fields };
 
-const LAST_TEXT_MAX = 600;
+// A closing list of decisions is one paragraph: room for several, each with a line or two.
+const LAST_TEXT_MAX = 2000;
 const CONTEXT_MAX = 8000;
 
 export function readHookInput(json: string): Common {
@@ -238,11 +239,23 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   if (agent && agent.state === "working") ctx.store.upsertAgent(input.sessionId, agent.name, { activity: bounded(what, 200) });
 }
 
-/** The last paragraph is usually the question; what precedes it is context, trimmed from the start. */
+/**
+ * The last paragraph is usually the question; what precedes it is context, trimmed from the start.
+ * A last paragraph too long to show large is cut between lines, and its first lines join the context:
+ * nothing of it is lost.
+ */
 export function splitLastParagraph(message: string): { last: string; before: string } {
   const paragraphs = message.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
   const lastRaw = paragraphs.pop() ?? message;
-  const last = lastRaw.length > LAST_TEXT_MAX ? `…${lastRaw.slice(-LAST_TEXT_MAX)}` : lastRaw;
+  let last = lastRaw;
+  if (last.length > LAST_TEXT_MAX) {
+    const lines = lastRaw.split("\n");
+    let kept = lines.length - 1;
+    while (kept > 0 && lines.slice(kept - 1).join("\n").length <= LAST_TEXT_MAX) kept--;
+    last = lines.slice(kept).join("\n");
+    if (last.length > LAST_TEXT_MAX) last = `…${last.slice(-LAST_TEXT_MAX)}`; // one line longer than the limit
+    else if (kept > 0) paragraphs.push(lines.slice(0, kept).join("\n"));
+  }
   const rest = paragraphs.join("\n\n");
   const before = rest.length > CONTEXT_MAX ? `…${rest.slice(-CONTEXT_MAX)}` : rest;
   return { last, before };

@@ -127,21 +127,22 @@ export function mdBlocks(text) {
       );
       continue;
     }
-    const item = /^(\s*)(?:[-*•]|\d+[.)])\s+(.*)$/.exec(line);
+    const item = /^(\s*)(?:[-*•]|(\d+)[.)])\s+(.*)$/.exec(line);
     if (item) {
       flush();
       const indent = (item[1] ?? "").replace(/\t/g, "  ").length;
       while (lists.length && (lists.at(-1)?.indent ?? 0) > indent) lists.pop();
       let top = lists.at(-1);
       if (!top || top.indent < indent) {
-        const list = h(/^\s*\d/.test(line) ? "ol" : "ul", {});
+        // A numbered list keeps its first number: a list shown from its third item starts at 3.
+        const list = item[2] ? h("ol", Number(item[2]) > 1 ? { start: Number(item[2]) } : {}) : h("ul", {});
         const parentItem = top?.list.lastElementChild;
         if (parentItem) parentItem.append(list);
         else out.push(list);
         top = { indent, list };
         lists.push(top);
       }
-      top.list.append(h("li", {}, md(item[2] ?? "")));
+      top.list.append(h("li", {}, md(item[3] ?? "")));
       continue;
     }
     if (line.trim() === "") {
