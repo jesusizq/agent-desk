@@ -108,7 +108,7 @@ export function mdBlocks(text) {
       lists = [];
       const code = [];
       while (++i < lines.length && !/^\s*```/.test(lines[i] ?? "")) code.push(lines[i]);
-      out.push(h("pre", {}, code.join("\n")));
+      out.push(h("pre", { "data-copy": true }, code.join("\n")));
       continue;
     }
     if (/^\s*\|.*\|\s*$/.test(line)) {
@@ -168,10 +168,10 @@ export function mdBlocks(text) {
   return out;
 }
 
-/** Inline marks of session text: **bold** and `code`. @param {string} text */
+/** Inline marks of session text: **bold** and `code`. Code, like a ``` block, is marked as copyable. @param {string} text */
 export function md(text) {
   return text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g).map((part) =>
-    part.startsWith("**") && part.length > 4 ? h("b", {}, part.slice(2, -2)) : part.startsWith("`") && part.length > 2 ? h("code", {}, part.slice(1, -1)) : part,
+    part.startsWith("**") && part.length > 4 ? h("b", {}, part.slice(2, -2)) : part.startsWith("`") && part.length > 2 ? h("code", { "data-copy": true }, part.slice(1, -1)) : part,
   );
 }
 

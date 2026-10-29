@@ -439,6 +439,8 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 .md li > ul, .md li > ol { margin-top: 4px; }
 .md pre { margin: 0; white-space: pre-wrap; font: 12.5px/1.5 var(--mono); color: var(--text); padding: 8px 10px; border-radius: 7px;
   background: var(--surface-2); border: 1px solid var(--border); }
+[data-copy] { cursor: copy; }
+[data-copy]:hover { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
 .md .md-h { margin-top: 6px; color: var(--accent); }
 .md-table { overflow-x: auto; }
 .md table { border-collapse: collapse; font-size: .95em; display: block; max-width: 100%; overflow-x: auto; }

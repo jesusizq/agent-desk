@@ -156,11 +156,21 @@ function toast(msg) {
 }
 /** @param {string} text */
 function copy(text) {
+  const lines = text.split("\n");
+  const shown = (lines[0] ?? "").length > 80 || lines.length > 1 ? `${(lines[0] ?? "").slice(0, 79)}…` : text;
   navigator.clipboard.writeText(text).then(
-    () => toast(TEXT.copied(text)),
+    () => toast(TEXT.copied(shown)),
     (/** @type {Error} */ e) => toast(e.message),
   );
 }
+// A command or path in session text is copied with a click, before the card around it opens;
+// a click that ends a text selection leaves the selection alone.
+document.addEventListener("click", (e) => {
+  const code = e.target instanceof Element ? e.target.closest("[data-copy]") : null;
+  if (!code || !document.getSelection()?.isCollapsed) return;
+  e.stopPropagation();
+  copy(code.textContent ?? "");
+}, true);
 const LOCAL_URL = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?=[:/]|$)/;
 /**
  * A link to a local preview. From another device localhost is that device, so the preview is only

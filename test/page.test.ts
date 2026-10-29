@@ -87,6 +87,22 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<string>("document.querySelector('.next ol').getAttribute('start')"), "3");
   });
 
+  it("copies a command of the session's text with a click", async () => {
+    const asked = store.ask({ sessionId: "demo-pagos", kind: "waiting", text: "Shall I free the disk?" });
+    store.addContext(asked.id, "Run this, then `git worktree prune`:\n\n```\n! rm -rf build\n```");
+    await browser.send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
+    const page = await open();
+    // Opening the question runs a view transition, which takes the clicks until it ends.
+    await page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    await page.click(".qrow", "Shall I free the disk?");
+    await page.click(".next pre[data-copy]");
+    await page.waitFor("document.querySelector('.toast')?.textContent.startsWith('Copied: ! rm -rf build')");
+    assert.equal(await page.eval<string>("navigator.clipboard.readText()"), "! rm -rf build");
+    await page.click(".next code[data-copy]", "git worktree prune");
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent === 'Copied: git worktree prune')");
+    assert.equal(await page.eval<string>("navigator.clipboard.readText()"), "git worktree prune");
+  });
+
   it("opens a session from its card, shows the turn at work, and closes with Escape", async () => {
     const page = await open();
     await page.click(".scard", "checkout redesign");
