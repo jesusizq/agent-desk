@@ -99,7 +99,9 @@ export const TEXT = {
   conversation: {
     whileWorking: "sent while it worked",
     openQuestion: "See it on the desk",
-    working: "It is working. What you write in its terminal or answer on the desk will appear here.",
+    working: "Its reply appears here when the turn ends. To write to it while it works, use its terminal.",
+    /** @param {string} t */
+    workingFor: (t) => (t && t !== NOW ? `Working for ${t}` : "Working"),
     session: "Session",
     you: "You",
     youDesk: "You, from the desk",

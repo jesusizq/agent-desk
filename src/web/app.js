@@ -1213,6 +1213,7 @@ function chat(s) {
       "div",
       { class: "conversation chat" },
       !fetched ? h("div", { class: "faint" }, "…") : list.length ? conversationView(list, whileWorking) : h("div", { class: "faint" }, TEXT.conversation.none),
+      s.state === "working" ? workingNow(s, list) : null,
     ),
     h(
       "div",
@@ -1230,6 +1231,20 @@ function chat(s) {
           : h("div", { class: "faint" }, s.state === "working" ? TEXT.conversation.working : TEXT.notListening),
     ),
   ];
+}
+
+/**
+ * The turn in progress, last in the conversation: how long it has worked since the developer's last
+ * message and what it does now, so a session at work never looks finished. @param {Session} s @param {{ from: string, at: string }[]} list
+ */
+function workingNow(s, list) {
+  const since = list.findLast((m) => m.from === "developer")?.at;
+  return h(
+    "div",
+    { class: "msg from-session working-now" },
+    h("div", { class: "msg-meta" }, h("span", { class: "live" }, dot("working")), " ", TEXT.conversation.workingFor(since ? ago(since) : "")),
+    s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
+  );
 }
 
 /** Closes the session panel and shows the question large on the desk. @param {string} questionId */

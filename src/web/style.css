@@ -504,6 +504,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .msg { max-width: 92%; padding: 8px 11px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); font-size: 13px; }
 .msg.from-developer { align-self: flex-end; background: color-mix(in srgb, var(--accent) 9%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 25%, var(--border)); }
 .msg-meta { font-size: 11px; color: var(--faint); margin-bottom: 3px; }
+.msg.working-now { border-style: dashed; color: var(--muted); }
+.msg.working-now .adoing { font: 12px var(--mono); }
 
 /* ---------- Phones and touch: portrait (narrow) and landscape (short); desktop rules above stay as they are ---------- */
 .seg[hidden] { display: none; }

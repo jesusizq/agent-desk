@@ -62,10 +62,12 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor(`!${card}.querySelector('.st-working')`);
   });
 
-  it("opens a session from its card and closes it with Escape", async () => {
+  it("opens a session from its card, shows the turn at work, and closes with Escape", async () => {
     const page = await open();
-    await page.click(".scard");
+    await page.click(".scard", "checkout redesign");
     await page.waitFor("document.getElementById('session').open");
+    await page.waitFor("document.querySelector('#session .working-now')?.textContent.includes('Edit: src/checkout/OrderSummary.tsx')");
+    assert.match(await page.eval<string>("document.querySelector('#session .working-now').textContent"), /^\s*Working/);
     await page.press("Escape");
     await page.waitFor("!document.getElementById('session').open");
   });
