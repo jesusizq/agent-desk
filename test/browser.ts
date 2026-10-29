@@ -7,6 +7,8 @@ import * as path from "node:path";
 
 const CANDIDATES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
 const WAIT_MS = 5000;
+// A runner's first Chrome start, with a cold disk, takes several seconds.
+const LAUNCH_MS = 30_000;
 
 /** The Chrome to run, or null when this machine has none (the page tests are then skipped, never in CI). */
 export function findChrome(): string | null {
@@ -47,25 +49,30 @@ export class Browser {
     const args = ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", "--mute-audio"];
     if (process.env.CI) args.push("--no-sandbox");
     const proc = spawn(chrome, [...args, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
-    const url = await new Promise<string>((resolve, reject) => {
-      let err = "";
-      const timer = setTimeout(() => reject(new Error(`${chrome} did not open its DevTools port in ${WAIT_MS} ms:\n${err}`)), WAIT_MS);
-      proc.stderr?.on("data", (chunk: Buffer) => {
-        err += chunk.toString();
-        const found = /DevTools listening on (ws:\/\/\S+)/.exec(err);
-        if (found?.[1]) {
-          clearTimeout(timer);
-          resolve(found[1]);
-        }
+    let err = "";
+    proc.stderr?.on("data", (chunk: Buffer) => (err += chunk.toString()));
+    try {
+      // Chrome writes its port and path to DevToolsActivePort in the profile once it listens.
+      const portFile = path.join(profile, "DevToolsActivePort");
+      const end = Date.now() + LAUNCH_MS;
+      while (!fs.existsSync(portFile) || fs.readFileSync(portFile, "utf8").split("\n").length < 2) {
+        if (proc.exitCode !== null) throw new Error(`${chrome} exited with ${proc.exitCode}:\n${err}`);
+        if (Date.now() > end) throw new Error(`${chrome} did not open its DevTools port in ${LAUNCH_MS} ms:\n${err}`);
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const [port, wsPath] = fs.readFileSync(portFile, "utf8").split("\n");
+      const url = `ws://127.0.0.1:${port}${wsPath}`;
+      const ws = new WebSocket(url);
+      await new Promise((resolve, reject) => {
+        ws.addEventListener("open", resolve, { once: true });
+        ws.addEventListener("error", () => reject(new Error(`cannot connect to ${url}`)), { once: true });
       });
-      proc.on("exit", (code) => reject(new Error(`${chrome} exited with ${code}:\n${err}`)));
-    });
-    const ws = new WebSocket(url);
-    await new Promise((resolve, reject) => {
-      ws.addEventListener("open", resolve, { once: true });
-      ws.addEventListener("error", () => reject(new Error(`cannot connect to ${url}`)), { once: true });
-    });
-    return new Browser(proc, ws, profile);
+      return new Browser(proc, ws, profile);
+    } catch (error) {
+      // A Chrome left running would keep the test process alive.
+      proc.kill("SIGKILL");
+      throw error;
+    }
   }
 
   send<T = unknown>(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<T> {
@@ -87,8 +94,10 @@ export class Browser {
   async close(): Promise<void> {
     // A graceful close, so Chrome's helper processes are done with the profile before it is removed.
     const exited = new Promise((resolve) => this.proc.once("exit", resolve));
-    await this.send("Browser.close").catch(() => this.proc.kill()); // the socket may close before the reply
+    await Promise.race([this.send("Browser.close"), exited]).catch(() => {}); // the socket may close before the reply
+    const killer = setTimeout(() => this.proc.kill("SIGKILL"), WAIT_MS);
     await exited;
+    clearTimeout(killer);
     this.ws.close();
     fs.rmSync(this.profile, { recursive: true, force: true });
   }

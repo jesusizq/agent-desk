@@ -15,7 +15,7 @@
   "scripts": {
     "start": "node src/cli/main.ts serve",
     "check": "tsc -p tsconfig.json && tsc -p tsconfig.web.json && tsc -p adapters/vscode/tsconfig.json --noEmit",
-    "test": "node --test 'test/*.test.ts'",
+    "test": "node --test --test-timeout=120000 'test/*.test.ts'",
     "package:vscode": "node scripts/package-vscode.ts",
     "demo": "node scripts/demo.ts"
   },
