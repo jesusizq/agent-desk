@@ -1,0 +1,14 @@
+#!/bin/sh
+# Runs a TypeScript entry with a Node that strips types (22.18 or later): the one on PATH when it is
+# recent enough, else the newest one nvm installed. A hook runs with its session's PATH, which may
+# hold an older Node set by a project.
+recent() {
+  v=$("$1" --version 2>/dev/null) || return 1
+  v=${v#v}; major=${v%%.*}; rest=${v#*.}; minor=${rest%%.*}
+  [ "$major" -gt 22 ] || { [ "$major" -eq 22 ] && [ "$minor" -ge 18 ]; }
+}
+for node in "$(command -v node)" $(ls -d "${NVM_DIR:-$HOME/.nvm}"/versions/node/v*/bin/node 2>/dev/null | sort -rV); do
+  if [ -n "$node" ] && recent "$node"; then exec "$node" "$@"; fi
+done
+echo "agent-desk needs Node.js 22.18 or later, and the one on PATH is $(node --version 2>/dev/null || echo missing); install a newer one (nvm install 22) or put it on PATH" >&2
+exit 1

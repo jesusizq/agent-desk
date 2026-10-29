@@ -1,3 +1,4 @@
 #!/bin/sh
 # Claude Code adapter entry, called by the agent-desk plugin's hooks and by the status line.
-exec node "$(dirname "$(readlink -f "$0")")/../adapters/claude-code/main.ts" "$@"
+here="$(dirname "$(readlink -f "$0")")"
+exec "$here/run-ts" "$here/../adapters/claude-code/main.ts" "$@"
