@@ -120,11 +120,11 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       return { code: 0 };
 
     case "SubagentStart":
-      startAgent(input, ctx);
+      startAgent(input, ctx, problems);
       return { code: 0 };
 
     case "SubagentStop":
-      stopAgent(input, ctx);
+      stopAgent(input, ctx, problems);
       return { code: 0 };
 
     case "Stop":
@@ -295,7 +295,7 @@ function launchAgent(input: Common, ctx: HookContext): void {
   }));
 }
 
-function startAgent(input: Common, ctx: HookContext): void {
+function startAgent(input: Common, ctx: HookContext, problems: string[]): void {
   const agentId = text(input.raw.agent_id ?? "", "hook input.agent_id", 200);
   const type = text(input.raw.agent_type ?? "", "hook input.agent_type", 200);
   if (agentId === "") throw new InputError("SubagentStart without agent_id");
@@ -310,16 +310,55 @@ function startAgent(input: Common, ctx: HookContext): void {
     ctx.store.upsertAgent(input.sessionId, pending.name, { ref: agentId, state: "working" });
     return;
   }
-  const name = freeName(ctx.store, input.sessionId, slug(type || "agent"));
-  ctx.store.upsertAgent(input.sessionId, name, compact({ type: type || undefined, ref: agentId, state: "working" as const }));
+  // Launched by something other than the Agent tool (a workflow): its label is in Claude Code's notes.
+  const goal = launchLabel(subagentMeta(input, agentId), problems);
+  const name = freeName(ctx.store, input.sessionId, slug(goal || type || "agent"));
+  ctx.store.upsertAgent(input.sessionId, name, compact({ type: type || undefined, ref: agentId, goal, state: "working" as const }));
 }
 
-function stopAgent(input: Common, ctx: HookContext): void {
+function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
   const agentId = text(input.raw.agent_id ?? "", "hook input.agent_id", 200);
   const agents = ctx.store.listAgents(input.sessionId).filter((a) => a.ref === agentId);
   const last = firstLine(text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000));
+  const transcript = optional(input.raw.agent_transcript_path, "hook input.agent_transcript_path", (v, w) => text(v, w, 4096));
+  // The notes may not have been written yet when the agent started.
+  const goal = agents.some((a) => !a.goal) && transcript?.endsWith(".jsonl") ? launchLabel(transcript.replace(/\.jsonl$/, ".meta.json"), problems) : undefined;
   // Usually one; more only where an older adapter recorded a restarted agent twice.
-  for (const agent of agents) ctx.store.upsertAgent(input.sessionId, agent.name, compact({ state: "done" as const, activity: last || undefined }));
+  for (const agent of agents) ctx.store.upsertAgent(input.sessionId, agent.name, compact({ state: "done" as const, activity: last || undefined, goal: agent.goal ? undefined : goal }));
+}
+
+/**
+ * Where Claude Code keeps its notes on a sub-agent: beside the session's transcript, in
+ * `<session>/subagents/agent-<id>.meta.json`, or one folder down per workflow run.
+ */
+function subagentMeta(input: Common, agentId: string): string | undefined {
+  const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
+  if (!transcript?.endsWith(".jsonl") || !/^[\w-]+$/.test(agentId)) return undefined;
+  const dir = path.join(transcript.slice(0, -".jsonl".length), "subagents");
+  const file = `agent-${agentId}.meta.json`;
+  if (fs.existsSync(path.join(dir, file))) return path.join(dir, file);
+  const workflows = path.join(dir, "workflows");
+  const runs = fs.existsSync(workflows) ? fs.readdirSync(workflows) : [];
+  return runs.map((run) => path.join(workflows, run, file)).find((f) => fs.existsSync(f));
+}
+
+/** The label a sub-agent was launched with (its `description`), when its notes have one. */
+function launchLabel(metaFile: string | undefined, problems: string[]): string | undefined {
+  if (!metaFile) return undefined;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(metaFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; // not written (yet): the agent just has no goal
+    throw error;
+  }
+  try {
+    const f = fields(JSON.parse(raw), metaFile);
+    return optional(f.description, `${metaFile}.description`, (v, w) => text(v, w, 2000))?.trim() || undefined;
+  } catch (error) {
+    problems.push(`cannot read the sub-agent's label in ${metaFile}: ${(error as Error).message}`);
+    return undefined;
+  }
 }
 
 /** `base`, or `base-2`, `base-3`… when an earlier agent of the session already has that name. */

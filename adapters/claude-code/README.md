@@ -16,7 +16,7 @@ answers given on the page back to the session that asked.
 | `PermissionRequest` | a permission item with the tool and its command or path, and options Allow and Deny; the hook then waits (up to 590 s) for a choice on the desk and returns it as Claude Code's decision ("Allow" allows; any other text denies and is given to Claude as the reason). If the prompt is settled in the terminal first, it returns no decision |
 | `PostToolUse`, `PostToolUseFailure`, `PermissionDenied` | settle the session's permission items, and record what the session or the sub-agent that made the call is doing ("Edit: src/app.ts"). They start the adapter while `.permission-open` exists in the store and otherwise at most once every 3 s across all sessions (`.activity` stamp), so ordinary tool calls cost no process |
 | `Notification` (`elicitation_dialog`, `agent_needs_input`) | a question with the notification's text |
-| `PreToolUse` (`Agent`, `Task`), `SubagentStart`, `SubagentStop` | one agent per launch, whose goal is the description given to the Agent tool, done when it stops |
+| `PreToolUse` (`Agent`, `Task`), `SubagentStart`, `SubagentStop` | one agent per launch, whose goal is the description given to the Agent tool (for agents launched otherwise, such as a workflow's, the label Claude Code notes in `<session>/subagents/…/agent-<id>.meta.json`), done when it stops |
 | `SessionEnd` | the session ends; what was still open is dismissed |
 
 Every event also refreshes the session's permission mode in its metrics.
@@ -60,6 +60,9 @@ button in the session panel.
 - Claude Code does not link a `SubagentStart` to the Agent call that launched it. The adapter pairs
   each start with the oldest unpaired launch of the same agent type; two launches of one type at the
   same instant may swap names.
+- The `.meta.json` notes of a sub-agent are Claude Code's internal files, not a documented interface:
+  if they move or change shape, agents launched outside the Agent tool lose their goal and keep
+  their type as name.
 - Whether Claude Code shows the terminal's permission dialog while the `PermissionRequest` hook
   waits, or only after it returns, is not documented and not yet verified here. If it waits, the
   dialog appears only after an answer on the desk or the 590 s wait.
