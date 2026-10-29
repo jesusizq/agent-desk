@@ -125,7 +125,9 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   }
 
   if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
-  if (!writeAllowed(req, access, secret)) return sendJson(res, 403, { error: "forbidden" });
+  // A device already unlocked may still show an old PIN page (a phone restoring a tab): nothing to do.
+  if (route === "/api/unlock" && isRemote(req, access)) return sendJson(res, 200, { unlocked: true });
+  if (!writeAllowed(req, access, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
   if (route === "/api/seen") return sendJson(res, 200, store.markAllSeen());
   const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read)$/.exec(route);
   const action = m ? ACTIONS[`${m[1]}/${m[3]}`] : undefined;
@@ -148,7 +150,7 @@ async function locked(route: string, access: Access, unlock: RemoteUnlock, req: 
     return sendJson(res, 401, { error: "locked: enter the PIN" });
   }
   if (req.method !== "POST" || route !== "/api/unlock") return sendJson(res, 401, { error: "locked: enter the PIN" });
-  if (!originAllowed(req, access)) return sendJson(res, 403, { error: "forbidden" });
+  if (!originAllowed(req, access)) return sendJson(res, 403, { error: `forbidden: the PIN is accepted only from https://${access.remote?.host ?? "?"}, this came from ${req.headers.origin ?? "no origin"}` });
   try {
     const cookie = unlock.unlock(fields(await readBody(req), "body").pin);
     return sendJson(res, 200, { unlocked: true }, { "Set-Cookie": cookie });

@@ -234,6 +234,8 @@ describe("PIN in front of remote access", () => {
       assert.match(ok.cookie ?? "", /HttpOnly; Secure; SameSite=Strict/);
       const cookie = (ok.cookie ?? "").split(";")[0] ?? "";
       assert.equal((await call("GET", "/api/state", { Cookie: cookie })).status, 200);
+      const again = await call("POST", "/api/unlock", { Cookie: cookie, Origin: `https://${remote.host}`, "Content-Type": "application/json" }, '{"pin":"000000"}');
+      assert.equal(again.status, 200, "an unlocked device sending the PIN again (an old PIN page) is told it is unlocked");
       assert.ok((await call("GET", "/", { Cookie: cookie })).body.includes(store.secret()), "unlocked, the device gets the desk");
       assert.equal((await call("GET", "/api/state", { Cookie: cookie.replace(/.$/, "x") })).status, 401, "a tampered cookie does not unlock");
 
