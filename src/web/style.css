@@ -34,8 +34,7 @@ header.top { display: flex; align-items: center; gap: 10px; padding: 8px 14px; b
   border-bottom: 1px solid var(--border); flex: none; }
 .brand { display: flex; align-items: center; gap: 8px; font: 650 15px var(--sans); margin-right: 6px; white-space: nowrap; }
 .search[hidden] { display: none; }
-.logo { width: 26px; height: 26px; border-radius: 7px; background: var(--text); color: var(--bg); display: grid;
-  place-items: center; font: 750 12px var(--mono); }
+.logo { width: 26px; height: 26px; display: block; }
 .seg { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; background: var(--surface); flex: none; }
 .seg button { border: 0; background: none; padding: 5px 12px; font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .seg button + button { border-left: 1px solid var(--border); }
@@ -770,3 +769,4 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .alerts-menu label.off { cursor: default; color: var(--muted); }
 .alerts-menu small { grid-column: 2; color: var(--faint); font-size: 12px; line-height: 1.35; }
 .ppart .back { align-self: flex-start; margin-bottom: 4px; }
+.done-count { font-size: 11.5px; margin-left: 4px; white-space: nowrap; }

@@ -56,6 +56,7 @@ const ui = {
   /** @type {number | undefined} a redraw of the panel put off while it is scrolled */ panelLater: undefined,
   /** @type {Set<string>} */ sending: new Set(),
   offline: false,
+  /** @type {string | null} when the desk shown was saved on this device, while the computer does not answer */ savedAt: null,
   loaded: false,
   /** @type {string | null} the session shown in the side panel */ panelSession: null,
   /** @type {string | null} what the panel's session had said when its conversation was fetched */ panelHeard: null,
@@ -205,22 +206,35 @@ let etag = "";
 /** @type {string | null} */
 let loadedBuild = null;
 let latestRequest = 0;
+const SAVED_AT = "X-Agent-Desk-Saved-At";
 async function refresh() {
   const request = ++latestRequest;
+  /** @type {string | null} */
+  let savedAt = null;
   /** @type {DeskState | null} */
   let next = null;
   try {
     const res = await fetch("/api/state", { headers: etag ? { "If-None-Match": etag } : {} });
+    savedAt = res.headers.get(SAVED_AT);
     if (res.status !== 304) {
       if (!res.ok) throw new Error(`${res.status}`);
       next = /** @type {DeskState} */ (await res.json());
-      if (request === latestRequest) etag = res.headers.get("ETag") ?? "";
+      if (request === latestRequest && !savedAt) etag = res.headers.get("ETag") ?? "";
     }
   } catch {
     if (request === latestRequest) setOffline(true); // shown in the strip; polling continues
     return;
   }
   if (request !== latestRequest) return; // a newer request answers instead; this one may be stale
+  ui.savedAt = savedAt;
+  if (savedAt) {
+    // The computer does not answer and the device shows the desk it saved (sw.js): read only.
+    if (next) {
+      data = { ...next, listening: [] };
+      ui.loaded = true;
+    }
+    return setOffline(true, true);
+  }
   if (next) {
     if (loadedBuild === null) loadedBuild = next.build;
     else if (next.build !== loadedBuild) return location.reload(); // the desk restarted, maybe with new code
@@ -432,7 +446,7 @@ function renderStrip() {
     .filter(/** @returns {x is { s: Session, c: number }} */ (x) => x.c !== undefined && x.c >= CONTEXT_WARN);
   fill(
     byId("strip"),
-    ui.offline ? h("span", { class: "err" }, TEXT.offline) : null,
+    ui.offline ? h("span", { class: "err" }, ui.savedAt ? TEXT.offlineSaved(hm(ui.savedAt)) : TEXT.offline) : null,
     h("span", { class: "muted" }, summary),
     fresh.length ? h("button", { class: "linkish", onclick: () => run(post("/api/seen")) }, TEXT.markSeen) : null,
     h("span", { class: "spacer" }),
@@ -799,6 +813,9 @@ function sessionCard(s) {
   const m = metricsOf(s.id);
   const ctx = m?.contextPercent;
   const trouble = /** @type {const} */ (["failed", "blocked", "idle"]).map((st) => ({ st, n: as.filter((a) => a.state === st).length })).filter((t) => t.n);
+  // What is done needs nothing: active agents get a dot each, finished ones a count.
+  const active = as.filter((a) => a.state !== "done");
+  const done = as.length - active.length;
   const open = () => openSession(s.id);
   return h(
     "div",
@@ -819,7 +836,7 @@ function sessionCard(s) {
       h("span", { class: "sname", title: label(s) }, tagIcon(color(s.project.name)), ui.project === null ? [h("span", { class: "sproj" }, s.project.name), h("span", { class: "sep" }, "›")] : null, h("b", {}, sessionName(s))),
       ctx !== undefined ? h("span", { class: "ctx" }, bar(ctx), `${Math.round(ctx)}%`) : null,
     ),
-    h("div", { class: "sline" }, as.length || needs ? h("span", { class: "adots" }, needs ? dot("needs") : null, as.map(agentDot)) : null, needs ? (s.activity ? h("div", { class: "quiet-line", title: s.activity }, s.activity) : null) : quietLine(s)),
+    h("div", { class: "sline" }, active.length || needs || done ? h("span", { class: "adots" }, needs ? dot("needs") : null, active.map(agentDot), done ? h("span", { class: "faint done-count" }, TEXT.doneCount(done)) : null) : null, needs ? (s.activity ? h("div", { class: "quiet-line", title: s.activity }, s.activity) : null) : quietLine(s)),
     trouble.length ? h("div", { class: "strouble" }, dot(trouble[0]?.st ?? "failed"), trouble.map((t) => TEXT.trouble[t.st](t.n)).join(" · ")) : null,
     m?.suggestion ? h("span", { class: "chip warn", title: TEXT.suggest[m.suggestion.reason](ctx ?? 0) }, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
   );
@@ -1834,6 +1851,9 @@ function route() {
   if (r) openResult(r, { markSeen: false });
 }
 addEventListener("hashchange", route);
+// The device keeps the last desk it saw, shown when the computer is off or asleep (sw.js). Some
+// browsers (third-party ones on iOS) have no service workers: the desk works there without it.
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((/** @type {Error} */ e) => toast(TEXT.pageError(e.message)));
 applyTheme();
 render();
 await refresh();

@@ -204,13 +204,14 @@ describe("PIN in front of remote access", () => {
     await new Promise<void>((r) => server.listen(port, "127.0.0.1", r));
     const http = await import("node:http");
     const call = (method: string, path: string, headers: Record<string, string> = {}, body?: string) =>
-      new Promise<{ status: number; body: string; cookie?: string }>((resolve, reject) => {
+      new Promise<{ status: number; body: string; cookie?: string; locked?: string }>((resolve, reject) => {
         const req = http.request(
           { host: "127.0.0.1", port, method, path, headers: { Host: remote.host, "Tailscale-User-Login": remote.user, ...headers } },
           (res) => {
             let text = "";
             res.on("data", (d: Buffer) => (text += d));
-            res.on("end", () => resolve({ status: res.statusCode ?? 0, body: text, ...(res.headers["set-cookie"]?.[0] ? { cookie: res.headers["set-cookie"][0] } : {}) }));
+            const locked = res.headers["x-agent-desk-locked"];
+            res.on("end", () => resolve({ status: res.statusCode ?? 0, body: text, ...(res.headers["set-cookie"]?.[0] ? { cookie: res.headers["set-cookie"][0] } : {}), ...(typeof locked === "string" ? { locked } : {}) }));
           },
         );
         req.on("error", reject);
@@ -221,7 +222,8 @@ describe("PIN in front of remote access", () => {
       const page = await call("GET", "/");
       assert.equal(page.status, 200);
       assert.ok(page.body.includes("unlock.js") && !page.body.includes(store.secret()), "the PIN page carries no secret");
-      for (const asset of ["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css"]) assert.equal((await call("GET", asset)).status, 200, `the PIN page loads ${asset}`);
+      for (const asset of ["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/manifest.webmanifest", "/apple-touch-icon.png"]) assert.equal((await call("GET", asset)).status, 200, `the PIN page loads ${asset}`);
+      assert.equal(page.locked, "1", "a locked answer is marked, so the device never keeps it as the desk");
       assert.equal((await call("GET", "/app.js")).status, 401, "but not the desk itself");
       assert.equal((await call("GET", "/api/state")).status, 401);
       assert.match((await unlock("123456")).body, /no PIN is set/);

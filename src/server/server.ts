@@ -22,10 +22,17 @@ const STATIC: Record<string, string> = {
   "/style.css": "text/css; charset=utf-8",
   "/favicon.svg": "image/svg+xml",
   "/unlock.js": "text/javascript; charset=utf-8",
+  "/sw.js": "text/javascript; charset=utf-8",
+  "/manifest.webmanifest": "application/manifest+json",
+  "/apple-touch-icon.png": "image/png",
+  "/icon-192.png": "image/png",
+  "/icon-512.png": "image/png",
 };
 const BODY_LIMIT = 64 * 1024;
 /** What the PIN page may load before the device is unlocked. */
-const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/favicon.svg"]);
+const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/favicon.svg", "/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png"]);
+/** Marks what a locked device gets, so the device never keeps the PIN page as the desk (sw.js). */
+const LOCKED = { "X-Agent-Desk-Locked": "1" };
 const LOW_DISK_RATIO = 0.1;
 
 const BUILD = new Date().toISOString();
@@ -144,12 +151,12 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
 /** A remote device that has not unlocked yet gets the PIN page and its assets, and nothing else. */
 async function locked(route: string, access: Access, unlock: RemoteUnlock, req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method === "GET" || req.method === "HEAD") {
-    if (route === "/") return send(res, 200, fs.readFileSync(path.join(WEB_DIR, "unlock.html")), "text/html; charset=utf-8");
+    if (route === "/") return send(res, 200, fs.readFileSync(path.join(WEB_DIR, "unlock.html")), "text/html; charset=utf-8", LOCKED);
     const type = UNLOCK_ASSETS.has(route) ? STATIC[route] : undefined;
-    if (type) return send(res, 200, fs.readFileSync(path.join(WEB_DIR, route.slice(1))), type);
-    return sendJson(res, 401, { error: "locked: enter the PIN" });
+    if (type) return send(res, 200, fs.readFileSync(path.join(WEB_DIR, route.slice(1))), type, LOCKED);
+    return sendJson(res, 401, { error: "locked: enter the PIN" }, LOCKED);
   }
-  if (req.method !== "POST" || route !== "/api/unlock") return sendJson(res, 401, { error: "locked: enter the PIN" });
+  if (req.method !== "POST" || route !== "/api/unlock") return sendJson(res, 401, { error: "locked: enter the PIN" }, LOCKED);
   if (!originAllowed(req, access)) return sendJson(res, 403, { error: `forbidden: the PIN is accepted only from https://${access.remote?.host ?? "?"}, this came from ${req.headers.origin ?? "no origin"}` });
   try {
     const cookie = unlock.unlock(fields(await readBody(req), "body").pin);

@@ -162,6 +162,10 @@ export const TEXT = {
     cleanupNote: "The desk never removes anything: paste them in a terminal if you agree.",
   },
   offline: "No connection to the desk: is \"agent-desk serve\" still running?",
+  /** @param {string} at */
+  offlineSaved: (at) => `The computer is not answering (off or asleep). This is the desk as it was at ${at}; answers need the computer.`,
+  /** @param {number} n */
+  doneCount: (n) => `${n} done`,
   /** @param {string} m */
   pageError: (m) => `Page error: ${m}`,
   backToConversation: "← Conversation",
