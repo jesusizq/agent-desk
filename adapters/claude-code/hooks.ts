@@ -211,7 +211,9 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   const asked = store.openQuestions(sid, problems);
   if (asked.length > 0) {
     // The model asked through the CLI: the message it ended the turn with explains the question.
-    for (const q of asked) if (q.kind === "question") store.addContext(q.id, /[?¿]/.test(last) ? before : bounded(message, CONTEXT_MAX));
+    // Its last paragraph is left out only when it repeats the question; anything more it says stays.
+    const whole = [before, last].filter(Boolean).join("\n\n");
+    for (const q of asked) if (q.kind === "question") store.addContext(q.id, sameWords(last, q.text) ? before : whole);
     return;
   }
   // Only a turn that ends asking something needs the developer; a report waits quietly on the session.
@@ -222,6 +224,11 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
 const MESSAGE_MAX = 8000;
 const SENT_KEPT = 10;
 const bounded = (value: string, max: number) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
+/** The same text once Markdown marks, case, spacing and punctuation are set aside. */
+const sameWords = (a: string, b: string) => {
+  const words = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return words(a) === words(b);
+};
 
 /** Prompts Claude Code itself submits (background task notifications), not typed by the developer. */
 export function fromClaudeCode(prompt: string): boolean {

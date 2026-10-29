@@ -149,6 +149,15 @@ describe("Claude Code hooks", () => {
     assert.equal(store.openQuestions("cc-1")[0]?.context, "The chart is ready:\n\n- 12 months\n- one value each", "the turn's message explains the question");
   });
 
+  it("keeps a last paragraph that says more than the question asked through the CLI", () => {
+    const store = testStore();
+    handleHook(event("UserPromptSubmit", { prompt: "go" }), ctx(store));
+    store.ask({ sessionId: "cc-1", kind: "question", text: "Which improvements do I make?", options: ["1", "2"] });
+    const message = "Two improvements:\n\n1. A cheat sheet\n2. A glossary\n\nI would do both. Which ones? I touch nothing until you say.";
+    handleHook(event("Stop", { last_assistant_message: message }), ctx(store));
+    assert.equal(store.openQuestions("cc-1")[0]?.context, message, "the recommendation in the last paragraph is not lost");
+  });
+
   it("opens a permission prompt with the tool and settles it when the tool runs", () => {
     const store = testStore();
     handleHook(event("PermissionRequest", { tool_name: "Bash", tool_input: { command: "npm test" } }), ctx(store));
