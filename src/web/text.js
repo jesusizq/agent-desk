@@ -104,6 +104,8 @@ export const TEXT = {
     working: "Its reply appears here when the turn ends. To write to it while it works, use its terminal.",
     /** @param {string} t */
     workingFor: (t) => (t && t !== NOW ? `Working for ${t}` : "Working"),
+    /** @param {number} n */
+    agentsAtWork: (n) => `Its turn ended; ${n === 1 ? "1 agent is" : `${n} agents are`} still at work`,
     session: "Session",
     you: "You",
     youDesk: "You, from the desk",

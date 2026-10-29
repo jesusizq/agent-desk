@@ -93,6 +93,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("document.getElementById('session').open");
     await page.waitFor("document.querySelector('#session .working-now')?.textContent.includes('Edit: src/checkout/OrderSummary.tsx')");
     assert.match(await page.eval<string>("document.querySelector('#session .working-now').textContent"), /^\s*Working/);
+    const agents = await page.eval<string[]>("[...document.querySelectorAll('#session .working-now .agoal')].map((g) => g.textContent)");
+    assert.ok(agents.includes("Order summary beside the cart"), "its agents at work are listed under it");
+    assert.ok(!agents.includes("Three pay button variants"), "finished ones are not");
     await page.press("Escape");
     await page.waitFor("!document.getElementById('session').open");
   });

@@ -1004,7 +1004,11 @@ function sessionDetails(s, m) {
  */
 function agentList(s) {
   const rows = sessionAgents(s.id);
-  if (!rows.length) return h("div", { class: "faint" }, TEXT.noAgents);
+  return rows.length ? agentRows(rows) : h("div", { class: "faint" }, TEXT.noAgents);
+}
+
+/** One row per agent: its goal, what it was asked, what it does now, and for how long. @param {Agent[]} rows */
+function agentRows(rows) {
   /** @param {Agent} a */
   const tip = (a) => [a.branch && `${a.branch}${a.commit ? ` @ ${a.commit}` : ""}`, a.tokens !== undefined && TEXT.tokens(a.tokens)].filter(Boolean).join(" · ");
   return h(
@@ -1219,7 +1223,7 @@ function chat(s) {
       "div",
       { class: "conversation chat" },
       !fetched ? h("div", { class: "faint" }, "…") : list.length ? conversationView(list, whileWorking) : h("div", { class: "faint" }, TEXT.conversation.none),
-      s.state === "working" ? workingNow(s, list) : null,
+      workingNow(s, list),
     ),
     h(
       "div",
@@ -1240,16 +1244,22 @@ function chat(s) {
 }
 
 /**
- * The turn in progress, last in the conversation: how long it has worked since the developer's last
- * message and what it does now, so a session at work never looks finished. @param {Session} s @param {{ from: string, at: string }[]} list
+ * The work in progress, last in the conversation: how long the turn has run since the developer's
+ * last message, what it does now and its agents that have not finished, so a session at work (or
+ * whose agents still run after its turn) never looks finished.
+ * @param {Session} s @param {{ from: string, at: string }[]} list
  */
 function workingNow(s, list) {
+  const agents = sessionAgents(s.id).filter((a) => a.state !== "done");
+  const turn = s.state === "working";
+  if (!turn && !agents.some((a) => a.state === "working" || a.state === "waiting")) return null;
   const since = list.findLast((m) => m.from === "developer")?.at;
   return h(
     "div",
     { class: "msg from-session working-now" },
-    h("div", { class: "msg-meta" }, h("span", { class: "live" }, dot("working")), " ", TEXT.conversation.workingFor(since ? ago(since) : "")),
-    s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
+    h("div", { class: "msg-meta" }, h("span", { class: "live" }, dot("working")), " ", turn ? TEXT.conversation.workingFor(since ? ago(since) : "") : TEXT.conversation.agentsAtWork(agents.length)),
+    turn && s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
+    agents.length ? agentRows(agents) : null,
   );
 }
 
