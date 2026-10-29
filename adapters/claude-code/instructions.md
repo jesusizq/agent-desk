@@ -4,6 +4,8 @@ command (Bash) only for what hooks cannot know, and keep it to one call each:
 
 - Ending a turn with a question that has clear choices: first run
   `agent-desk ask "<question>" --option "<A>" --option "<B>"`, then ask it in your reply as usual.
+  A question asked with the AskUserQuestion tool is shown and answered on the page by itself: do not
+  also run `agent-desk ask` for it.
 - Work ready for review, especially visual: `agent-desk result "<title>" --summary "<1-2 sentences>"
   --image <png>::<caption> [--compare 0,1] [--url http://localhost:PORT/...] [--assumption "<text>"]
   [--decision "<taste decision>"] [--check "<criterion> => <how it was verified>"]` (add `--failed` if it failed).

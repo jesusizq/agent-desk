@@ -5,7 +5,7 @@ import { sessionProcess } from "../../src/core/proc.ts";
 import { tmuxLocation } from "../../src/core/tmux.ts";
 import { storeHome } from "../../src/store/paths.ts";
 import { Store } from "../../src/store/store.ts";
-import { deliverWhileWorking, handleHook, type HookOutput, readHookInput, waitForAnswer, waitForPermission } from "./hooks.ts";
+import { deliverWhileWorking, handleHook, type HookOutput, readHookInput, waitForAnswer, waitForDialog, waitForPermission } from "./hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "./statusline.ts";
 
 const WAIT_POLL_MS = 500;
@@ -46,10 +46,11 @@ async function main(argv: string[]): Promise<void> {
   if (command === "hook") {
     const hook = readHookInput(input);
     const out = handleHook(hook, { store, env: process.env, sessionProcess: () => sessionProcess(), startScan, tmuxLocation: () => tmuxLocation(process.env) });
-    if (hook.event === "PermissionRequest" && out.questionId) {
+    if (hook.event === "PermissionRequest" && (out.questionId || out.dialog)) {
       const stop = new AbortController();
       for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(signal, () => stop.abort());
-      const decided = await waitForPermission(hook.sessionId, out.questionId, store, { pollMs: PERMISSION_POLL_MS, armWithinMs: 0, deadline: Date.now() + PERMISSION_WAIT_MS, signal: stop.signal });
+      const wait = { pollMs: PERMISSION_POLL_MS, armWithinMs: 0, deadline: Date.now() + PERMISSION_WAIT_MS, signal: stop.signal };
+      const decided = out.dialog ? await waitForDialog(hook.sessionId, out.dialog, store, wait) : await waitForPermission(hook.sessionId, out.questionId ?? "", store, wait);
       finish({ ...decided, ...(out.stderr ? { stderr: out.stderr } : {}) });
     }
     finish(out);

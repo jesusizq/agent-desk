@@ -20,7 +20,9 @@ agent updates, and answering means finding the right terminal and scrolling back
   project, session and options; the oldest is shown large as the next thing to do. It is answered
   on the desk (an option or free text, delivered at once and verbatim to the session that asked,
   while that session is waiting; a permission prompt is allowed or denied with a reason) or in the
-  terminal, which one click brings to the front; the provider's own dialogs are answered there. Once
+  terminal, which one click brings to the front. The provider's own dialogs are answered there,
+  except a dialog that asks the developer to choose (Claude Code's AskUserQuestion), shown on the
+  desk as its questions and answered from either place. Once
   answered, the question leaves the list and goes to the history with the answer given. A session at
   work can be written to from the desk too: the message reaches it at its next step, as what the
   developer types in its terminal mid-turn does.

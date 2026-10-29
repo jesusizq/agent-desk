@@ -99,6 +99,7 @@ export function readQuestion(value: unknown, where = "question"): Question {
     answer: optional(f.answer, `${where}.answer`, readAnswer),
     interpretation: optional(f.interpretation, `${where}.interpretation`, text),
     closedAt: optional(f.closedAt, `${where}.closedAt`, isoTime),
+    dialog: optional(f.dialog, `${where}.dialog`, bool),
   });
 }
 

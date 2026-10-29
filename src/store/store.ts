@@ -162,7 +162,7 @@ export class Store {
     return undefined;
   }
 
-  ask(input: { sessionId: string; kind: QuestionKind; text: string; context?: string; options?: string[] }): Question {
+  ask(input: { sessionId: string; kind: QuestionKind; text: string; context?: string; options?: string[]; dialog?: boolean }): Question {
     this.requireSession(input.sessionId);
     const question = readQuestion({
       id: newId("q"),
@@ -173,6 +173,7 @@ export class Store {
       options: input.options ?? [],
       askedAt: this.stamp(),
       status: "open",
+      dialog: input.dialog || undefined,
     });
     writeJson(this.paths.question(question.id, "open"), question);
     return question;
@@ -211,11 +212,12 @@ export class Store {
    */
   closeOpen(
     sessionId: string,
-    how: { answer?: string; kinds?: readonly QuestionKind[]; status?: "answered" | "dismissed"; problems?: string[] },
+    how: { answer?: string; kinds?: readonly QuestionKind[]; which?: (q: Question) => boolean; status?: "answered" | "dismissed"; problems?: string[] },
   ): Question[] {
     const closed: Question[] = [];
     for (const q of this.openQuestions(sessionId, how.problems)) {
       if (how.kinds && !how.kinds.includes(q.kind)) continue;
+      if (how.which && !how.which(q)) continue;
       closed.push(
         this.changeQuestion(q.id, (cur) => {
           if (cur.status !== "open") return cur;

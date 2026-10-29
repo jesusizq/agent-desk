@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { deliverWhileWorking, handleHook, type HookContext, readablePrompt, readHookInput, splitLastParagraph, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
+import { deliverWhileWorking, handleHook, type HookContext, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import type { Store } from "../src/store/store.ts";
 import { tempHome, testStore } from "./helpers.ts";
@@ -364,6 +364,42 @@ describe("answers from the desk", () => {
     handleHook(event("Stop", { last_assistant_message: "Done." }), ctx(store));
     assert.throws(() => store.messageFromDesk("cc-1", "next"), /not taking messages/);
     assert.deepEqual(store.openQuestions(), []);
+  });
+
+  it("shows Claude Code's choice dialog as its questions and answers it from the desk", async () => {
+    const store = testStore();
+    handleHook(event("SessionStart", { source: "startup" }), ctx(store));
+    store.ask({ sessionId: "cc-1", kind: "question", text: "Which layout?", options: ["A", "B"] }); // the model also used agent-desk ask
+    const questions = [
+      { question: "Which layout?", header: "Layout", options: [{ label: "A", description: "Sidebar" }, { label: "B", description: "Tabs" }], multiSelect: false },
+      { question: "Which extras?", header: "Extras", options: [{ label: "Player" }, { label: "Legend" }], multiSelect: true },
+    ];
+    const out = handleHook(event("PermissionRequest", { tool_name: "AskUserQuestion", tool_input: { questions } }), ctx(store));
+    const open = store.openQuestions("cc-1");
+    assert.deepEqual(open.map((q) => [q.kind, q.text, q.options, q.dialog]), [["question", "Which layout?", ["A", "B"], true], ["question", "Which extras?", ["Player", "Legend"], true]], "no permission item, and the duplicate is gone");
+    assert.match(open[0]?.context ?? "", /\*\*A\*\*: Sidebar/);
+    assert.match(open[1]?.context ?? "", /Several can be chosen/);
+    assert.ok(out.dialog);
+
+    const waiting = waitForDialog("cc-1", out.dialog, store, { pollMs: 10, armWithinMs: 0, deadline: Date.now() + 5000 });
+    await new Promise((r) => setTimeout(r, 30));
+    store.answerFromDesk(open[0]?.id ?? "", "A");
+    store.answerFromDesk(open[1]?.id ?? "", "Player, Legend");
+    const decided = JSON.parse((await waiting).stdout ?? "{}").hookSpecificOutput.decision;
+    assert.deepEqual(decided, { behavior: "allow", updatedInput: { questions, answers: { "Which layout?": "A", "Which extras?": "Player, Legend" } } });
+  });
+
+  it("closes the dialog's questions with the answer given in the terminal", async () => {
+    const store = testStore();
+    handleHook(event("SessionStart", { source: "startup" }), ctx(store));
+    const questions = [{ question: "Which size?", options: [{ label: "S" }, { label: "M" }] }];
+    const out = handleHook(event("PermissionRequest", { tool_name: "AskUserQuestion", tool_input: { questions } }), ctx(store));
+    assert.ok(fs.existsSync(path.join(store.paths.home, ".permission-open")), "the next tool call runs the adapter");
+    const waiting = waitForDialog("cc-1", out.dialog ?? { input: {}, questions: [] }, store, { pollMs: 10, armWithinMs: 0, deadline: Date.now() + 5000 });
+    handleHook(event("PostToolUse", { tool_name: "AskUserQuestion", tool_input: { questions }, tool_response: { questions, answers: { "Which size?": "M" } } }), ctx(store));
+    assert.deepEqual(await waiting, { code: 0 }, "the hook gives up: the terminal decided");
+    const [q] = store.listQuestions();
+    assert.deepEqual([q?.status, q?.answer?.text, q?.answer?.via], ["answered", "M", "terminal"]);
   });
 
   it("allows or denies a permission prompt from the desk while its hook waits", async () => {

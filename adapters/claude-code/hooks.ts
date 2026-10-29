@@ -1,7 +1,7 @@
 // Claude Code adapter: turns Claude Code hook events into desk records, at no cost to the model.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { compact, fields, type Fields, InputError, optional, text } from "../../src/core/check.ts";
+import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { id, slug } from "../../src/core/ids.ts";
 import type { SessionProcess } from "../../src/core/model.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
@@ -11,7 +11,9 @@ import type { Store } from "../../src/store/store.ts";
 export const PROVIDER = "Claude Code";
 
 /** What a hook prints and exits with. */
-export type HookOutput = { code: number; stdout?: string; stderr?: string; questionId?: string };
+export type HookOutput = { code: number; stdout?: string; stderr?: string; questionId?: string; dialog?: Dialog };
+/** Claude Code's AskUserQuestion call shown on the desk: its input, and one desk question per question. */
+export type Dialog = { input: Fields; questions: { id: string; text: string }[] };
 
 export type HookContext = {
   store: Store;
@@ -96,6 +98,12 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
     }
 
     case "PermissionRequest": {
+      // A tool that asks the developer to choose is shown as its questions, not as a permission.
+      if (f.tool_name === ASK_TOOL) {
+        const dialog = askDialog(sid, f.tool_input, store, problems);
+        syncPermissionMarker(store, problems);
+        return { code: 0, dialog };
+      }
       const q = store.ask({ sessionId: sid, kind: "permission", text: describeTool(f.tool_name, f.tool_input), options: [ALLOW, DENY] });
       syncPermissionMarker(store, problems);
       return { code: 0, questionId: q.id };
@@ -104,8 +112,10 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
     case "PostToolUse":
     case "PostToolUseFailure":
     case "PermissionDenied":
-      // The tool ran or was refused: any permission prompt of this session is settled.
+      // The tool ran or was refused: any permission prompt of this session is settled, and so are
+      // the questions of a dialog, answered in the terminal or from the desk.
       store.closeOpen(sid, { kinds: ["permission"], problems });
+      if (f.tool_name === ASK_TOOL) closeDialog(sid, f.tool_response, store, problems);
       syncPermissionMarker(store, problems);
       if (input.event !== "PermissionDenied") recordActivity(input, ctx, problems);
       return { code: 0 };
@@ -274,7 +284,7 @@ function syncPermissionMarker(store: Store, problems: string[]): void {
   const marker = path.join(store.paths.home, PERMISSION_MARKER);
   // Under a lock, so one session's check cannot remove the marker another session just needed.
   withLock(marker, () => {
-    if (store.openQuestions(undefined, problems).some((q) => q.kind === "permission")) fs.writeFileSync(marker, "", { mode: 0o600 });
+    if (store.openQuestions(undefined, problems).some((q) => q.kind === "permission" || q.dialog)) fs.writeFileSync(marker, "", { mode: 0o600 });
     else fs.rmSync(marker, { force: true });
   });
 }
@@ -440,8 +450,7 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
       if (session.state === "waiting") armed = true;
       else if (armed || now() > armBy) return { code: 0 };
       if (armed) {
-        // Permission answers belong to the PermissionRequest hook waiting for them.
-        const answers = store.takeInbox(sessionId, (qid) => store.getQuestion(qid)?.kind !== "permission");
+        const answers = store.takeInbox(sessionId, forTheTurn(store));
         if (answers.length > 0) {
           const message = answers.map(deliveryText).join("\n\n");
           try {
@@ -453,6 +462,84 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
           return { code: 2, stderr: message };
         }
         if (store.listeners(sessionId).some((l) => l.pid !== process.pid && l.since > mine)) return { code: 0 };
+      }
+      await new Promise((r) => setTimeout(r, options.pollMs));
+    }
+    return { code: 0 };
+  } finally {
+    release();
+  }
+}
+
+/** Answers for the session's turn: permission and dialog answers belong to the hook waiting for them. */
+function forTheTurn(store: Store): (questionId: string) => boolean {
+  return (qid) => {
+    const q = store.getQuestion(qid);
+    return q?.kind !== "permission" && !q?.dialog;
+  };
+}
+
+export const ASK_TOOL = "AskUserQuestion";
+
+/**
+ * Shows an AskUserQuestion call on the desk: one question per question it asks, with its options;
+ * their descriptions, and whether several can be chosen, go in the context. A question the model
+ * also asked through `agent-desk ask` with the same text is replaced.
+ */
+function askDialog(sessionId: string, toolInput: unknown, store: Store, problems: string[]): Dialog {
+  const input = fields(toolInput, "tool_input");
+  const asked = list(input.questions, "tool_input.questions", (v, w) => {
+    const q = fields(v, w);
+    return {
+      text: nonEmpty(q.question, `${w}.question`, 2000),
+      options: list(q.options ?? [], `${w}.options`, (o, ow) => {
+        const opt = fields(o, ow);
+        return { label: nonEmpty(opt.label, `${ow}.label`, 500), description: optional(opt.description, `${ow}.description`, (d, dw) => text(d, dw, 2000)) };
+      }, 20),
+      several: optional(q.multiSelect, `${w}.multiSelect`, bool) === true,
+    };
+  }, 10);
+  const questions = asked.map((q) => {
+    store.closeOpen(sessionId, { kinds: ["question"], which: (o) => !o.dialog && o.text === q.text, status: "dismissed", problems });
+    const described = q.options.filter((o) => o.description).map((o) => `- **${o.label}**: ${o.description}`);
+    const context = [...described, q.several ? "Several can be chosen: write them separated by commas." : ""].filter(Boolean).join("\n");
+    const item = store.ask(compact({ sessionId, kind: "question" as const, text: q.text, options: q.options.map((o) => o.label), context: context || undefined, dialog: true }));
+    return { id: item.id, text: q.text };
+  });
+  return { input, questions };
+}
+
+/** The dialog's call ended: its questions still open are closed, with the answers it returned when it has them. */
+function closeDialog(sessionId: string, toolResponse: unknown, store: Store, problems: string[]): void {
+  const response = typeof toolResponse === "object" && toolResponse !== null ? (toolResponse as Fields) : {};
+  const answers = typeof response.answers === "object" && response.answers !== null ? (response.answers as Fields) : {};
+  for (const q of store.openQuestions(sessionId, problems).filter((o) => o.dialog)) {
+    const answer = answers[q.text];
+    store.closeOpen(sessionId, typeof answer === "string" ? { which: (o) => o.id === q.id, answer, problems } : { which: (o) => o.id === q.id, status: "dismissed", problems });
+  }
+}
+
+/**
+ * Runs inside the PermissionRequest hook of an AskUserQuestion call: waits until every question of
+ * the dialog is answered on the desk and returns them to Claude Code as the call's answers, so the
+ * terminal dialog closes. Returns no decision (the terminal dialog decides) when one of them is
+ * settled elsewhere or the wait ends.
+ */
+export async function waitForDialog(sessionId: string, dialog: Dialog, store: Store, options: WaitOptions): Promise<HookOutput> {
+  const now = options.now ?? Date.now;
+  const answers: Record<string, string> = {};
+  const release = store.listen(sessionId);
+  try {
+    while (now() < options.deadline && !options.signal?.aborted) {
+      for (const q of dialog.questions) {
+        if (q.text in answers) continue;
+        const [entry] = store.takeInbox(sessionId, (qid) => qid === q.id);
+        if (entry) answers[q.text] = entry.answer;
+        else if (store.getQuestion(q.id)?.status !== "open") return { code: 0 };
+      }
+      if (dialog.questions.every((q) => q.text in answers)) {
+        const decision = { behavior: "allow", updatedInput: { ...dialog.input, answers } };
+        return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision } }) };
       }
       await new Promise((r) => setTimeout(r, options.pollMs));
     }
@@ -501,8 +588,7 @@ export async function waitForPermission(sessionId: string, questionId: string, s
  */
 export function deliverWhileWorking(input: Common, store: Store): HookOutput {
   if (typeof input.raw.agent_id === "string" && input.raw.agent_id !== "") return { code: 0 };
-  // Permission answers belong to the PermissionRequest hook waiting for them.
-  const entries = store.takeInbox(input.sessionId, (qid) => store.getQuestion(qid)?.kind !== "permission");
+  const entries = store.takeInbox(input.sessionId, forTheTurn(store));
   if (entries.length === 0) return { code: 0 };
   const additionalContext = entries.map((e) => `Message from agent-desk: the developer wrote this to you on the desk page while you worked. Act on it as if they had typed it in the terminal now. Verbatim:\n${e.answer}`).join("\n\n");
   return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } }) };

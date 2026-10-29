@@ -70,6 +70,11 @@ export type Question = {
   /** How the session understood the answer, when it reports it. */
   interpretation?: string;
   closedAt?: string;
+  /**
+   * A dialog of the provider shown on the desk (a tool asking the developer to choose): its answer
+   * goes only to the provider hook that waits for it, as a permission answer does.
+   */
+  dialog?: boolean;
 };
 
 export const AGENT_STATES = ["working", "waiting", "blocked", "idle", "done", "failed"] as const;

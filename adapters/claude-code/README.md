@@ -14,6 +14,7 @@ answers given on the page back to the session that asked.
 | `Stop` (synchronous, also) | starts `agent-desk scan <project>` detached, at low priority: branches and merge state at most every 10 minutes, sizes at most every hour |
 | `Stop` and `SessionStart` (`asyncRewake`) | `agent-desk-claude wait`: while the session waits, an answer given on the page wakes it with exit code 2 and the answer on stderr, verbatim; `SessionStart` (startup, resume, clear) covers a session that has not finished a turn yet |
 | `PermissionRequest` | a permission item with the tool and its command or path, and options Allow and Deny; the hook then waits (up to 590 s) for a choice on the desk and returns it as Claude Code's decision ("Allow" allows; any other text denies and is given to Claude as the reason). If the prompt is settled in the terminal first, it returns no decision |
+| `PermissionRequest` (`AskUserQuestion`) | one question per question of the dialog, with its options (their descriptions in the context), instead of a permission item; a question the model also asked with `agent-desk ask` under the same text is replaced. Once every one is answered on the desk, the hook returns them as the call's `answers` (`updatedInput`) and the terminal dialog closes. Answered in the terminal instead, the `PostToolUse` of the call closes them with the answers it returned |
 | `PostToolUse`, `PostToolUseFailure`, `PermissionDenied` | settle the session's permission items, and record what the session or the sub-agent that made the call is doing ("Edit: src/app.ts"). They start the adapter while `.permission-open` exists in the store and otherwise at most once every 3 s across all sessions (`.activity` stamp), so ordinary tool calls cost no process |
 | `PostToolUse` (`deliver`) | while `.inbox-pending` exists in the store, hands the session the messages written to it on the desk while it works, as context it reads before its next step; a sub-agent's tool call leaves them |
 | `Notification` (`elicitation_dialog`, `agent_needs_input`) | a question with the notification's text |
@@ -66,9 +67,9 @@ button in the session panel.
   three agents launched in one message).
 - Those notes are Claude Code's internal files, not a documented interface: if they move or change
   shape, the correction stops and agents launched outside the Agent tool lose their goal.
-- Whether Claude Code shows the terminal's permission dialog while the `PermissionRequest` hook
-  waits, or only after it returns, is not documented and not yet verified here. If it waits, the
-  dialog appears only after an answer on the desk or the 590 s wait.
+- Claude Code shows the AskUserQuestion dialog in the terminal while the `PermissionRequest` hook
+  waits (verified 2026-10-29), so it can be answered in either place. For permission prompts this is
+  not documented and not verified here.
 - An answer on the page reaches the session only while its `wait` hook runs: from the start of the
   session or the end of a turn until the developer types in the terminal or the session ends (at
   most 23 h). The page shows the answer box only then.
