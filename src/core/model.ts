@@ -4,6 +4,7 @@ import { id } from "./ids.ts";
 import {
   AGENT_STATES,
   ANSWER_CHANNELS,
+  ATTACHED_IMAGES_MAX,
   QUESTION_KINDS,
   QUESTION_STATUSES,
   SESSION_STATES,
@@ -105,11 +106,17 @@ export function readQuestion(value: unknown, where = "question"): Question {
 
 function readAnswer(value: unknown, where: string): Answer {
   const f = fields(value, where);
-  return {
+  return compact({
     text: text(f.text, `${where}.text`),
     at: isoTime(f.at, `${where}.at`),
     via: oneOf(ANSWER_CHANNELS)(f.via, `${where}.via`),
-  };
+    images: optional(f.images, `${where}.images`, imageIds),
+  });
+}
+
+/** Ids of images attached on the desk. */
+export function imageIds(value: unknown, where: string): string[] {
+  return list(value, where, id, ATTACHED_IMAGES_MAX);
 }
 
 export function readAgent(value: unknown, where = "agent"): Agent {
@@ -228,17 +235,19 @@ export function readConversationEntry(value: unknown, where = "message"): Conver
     text: text(f.text, `${where}.text`),
     at: isoTime(f.at, `${where}.at`),
     via: optional(f.via, `${where}.via`, oneOf(ANSWER_CHANNELS)),
+    images: optional(f.images, `${where}.images`, imageIds),
   });
 }
 
 export function readInboxEntry(value: unknown, where = "inbox entry"): InboxEntry {
   const f = fields(value, where);
-  return {
+  return compact({
     questionId: id(f.questionId, `${where}.questionId`),
     question: text(f.question, `${where}.question`),
     answer: text(f.answer, `${where}.answer`),
     at: isoTime(f.at, `${where}.at`),
-  };
+    images: optional(f.images, `${where}.images`, imageIds),
+  });
 }
 
 export function readProjectScan(value: unknown, where = "project"): ProjectScan {

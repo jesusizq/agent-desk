@@ -75,6 +75,25 @@ describe("server", () => {
     stop();
   });
 
+  it("keeps an image pasted on the page and sends it with the answer", async () => {
+    const upload = (body: Uint8Array, headers: Record<string, string> = {}) =>
+      fetch(`${base}/api/images`, { method: "POST", headers: { "Content-Type": "image/png", Origin: base, "X-Agent-Desk-Secret": secret, ...headers }, body });
+    assert.equal((await upload(PNG, { "X-Agent-Desk-Secret": "0".repeat(64) })).status, 403, "the secret is required");
+    assert.equal((await upload(PNG, { Origin: "http://evil.example" })).status, 403, "the exact origin is required");
+    assert.equal((await upload(PNG, { "Content-Type": "application/json" })).status, 415);
+    assert.equal((await upload(Buffer.from("<svg onload=alert(1)>"), { "Content-Type": "image/svg+xml" })).status, 400, "only PNG, JPEG, WebP and GIF are kept");
+    const res = await upload(PNG);
+    assert.equal(res.status, 200);
+    const { id } = (await res.json()) as { id: string };
+    assert.equal((await fetch(`${base}/images/${id}`)).headers.get("content-type"), "image/png");
+    const q = store.ask({ sessionId: "s1", kind: "question", text: "Like this?" });
+    const stop = store.listen("s1");
+    assert.equal((await post(`/api/questions/${q.id}/answer`, { text: "no", images: ["../secret"] })).status, 400);
+    assert.equal((await post(`/api/questions/${q.id}/answer`, { text: "no, like this", images: [id] })).status, 200);
+    assert.deepEqual(store.takeInbox("s1").map((e) => e.images), [[id]]);
+    stop();
+  });
+
   it("rejects malformed ids and bodies", async () => {
     assert.equal((await post("/api/questions/..%2F..%2Fsecret/answer", { text: "x" })).status, 400);
     const q = store.ask({ sessionId: "s1", kind: "question", text: "Ok?" });

@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import * as path from "node:path";
-import { fields, InputError, nonEmpty, oneOf } from "../core/check.ts";
+import { fields, InputError, oneOf, optional, text } from "../core/check.ts";
 import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
-import type { DeskState, DiskWarning, Session } from "../core/model.ts";
+import { type DeskState, type DiskWarning, imageIds, type Session } from "../core/model.ts";
 import { isAlive } from "../core/proc.ts";
 import { isCode } from "../store/fsx.ts";
-import { IMAGE_TYPES, type Store } from "../store/store.ts";
+import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
 import { RemoteUnlock } from "./remote-unlock.ts";
 import { type Access, hostAllowed, IMAGE_HEADERS, isRemote, originAllowed, remoteFromEnv, send, sendJson, writeAllowed } from "./security.ts";
 
@@ -80,12 +80,18 @@ function diskWarnings(sessions: Session[], problems: string[]): DiskWarning[] {
 
 type Action = (store: Store, target: string, body: unknown) => unknown;
 
+/** What the developer sends a session from the desk: text, images attached, or both. */
+function reply(body: unknown): [text: string, images: string[]] {
+  const f = fields(body, "body");
+  return [text(f.text ?? "", "text"), optional(f.images, "images", imageIds) ?? []];
+}
+
 const ACTIONS: Record<string, Action> = {
-  "questions/answer": (store, target, body) => store.answerFromDesk(target, nonEmpty(fields(body, "body").text, "text")),
+  "questions/answer": (store, target, body) => store.answerFromDesk(target, ...reply(body)),
   "questions/dismiss": (store, target) => store.dismiss(target),
   "results/seen": (store, target) => store.markResultSeen(target),
   "sessions/read": (store, target) => store.markSessionRead(target),
-  "sessions/message": (store, target, body) => store.messageFromDesk(target, nonEmpty(fields(body, "body").text, "text")),
+  "sessions/message": (store, target, body) => store.messageFromDesk(target, ...reply(body)),
   "sessions/keys": (store, target, body) => {
     const action = oneOf(Object.keys(TMUX_ACTIONS) as TmuxAction[])(fields(body, "body").action, "action");
     const s = store.getSession(target);
@@ -136,6 +142,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   if (route === "/api/unlock" && isRemote(req, access)) return sendJson(res, 200, { unlocked: true });
   if (!writeAllowed(req, access, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
   if (route === "/api/seen") return sendJson(res, 200, store.markAllSeen());
+  if (route === "/api/images") return attachImage(store, req, res);
   const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read)$/.exec(route);
   const action = m ? ACTIONS[`${m[1]}/${m[3]}`] : undefined;
   if (!m?.[2] || !action) return sendJson(res, 404, { error: "not found" });
@@ -161,6 +168,17 @@ async function locked(route: string, access: Access, unlock: RemoteUnlock, req: 
   try {
     const cookie = unlock.unlock(fields(await readBody(req), "body").pin);
     return sendJson(res, 200, { unlocked: true }, { "Set-Cookie": cookie });
+  } catch (error) {
+    if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
+    throw error;
+  }
+}
+
+/** An image pasted on the desk, kept for an answer or message about to be sent; the body is the image itself. */
+async function attachImage(store: Store, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!/^image\//.test(req.headers["content-type"] ?? "")) return sendJson(res, 415, { error: "expected the image itself, with an image/* Content-Type" });
+  try {
+    return sendJson(res, 200, { id: store.addImage(await readBytes(req, IMAGE_MAX_BYTES), "the attached image") });
   } catch (error) {
     if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
     throw error;
@@ -193,28 +211,32 @@ function imageFile(store: Store, imageId: string, res: ServerResponse): void {
   res.end(fs.readFileSync(found.file));
 }
 
-function readBody(req: IncomingMessage): Promise<unknown> {
+async function readBody(req: IncomingMessage): Promise<unknown> {
+  const body = await readBytes(req, BODY_LIMIT);
+  if (body.length === 0) return {};
+  if (!(req.headers["content-type"] ?? "").startsWith("application/json")) throw new InputError("expected Content-Type: application/json");
+  try {
+    return JSON.parse(body.toString("utf8")) as unknown;
+  } catch {
+    throw new InputError("request body is not valid JSON");
+  }
+}
+
+function readBytes(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const type = req.headers["content-type"] ?? "";
     const chunks: Buffer[] = [];
     let size = 0;
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size <= BODY_LIMIT) chunks.push(chunk); // past the limit the rest is drained, then refused
+      if (size <= limit) chunks.push(chunk); // past the limit the rest is drained, then refused
     });
     req.on("error", reject);
     req.on("close", () => {
       if (!req.complete) reject(new InputError("the request was aborted before its body arrived"));
     });
     req.on("end", () => {
-      if (size > BODY_LIMIT) return reject(new InputError(`request body larger than ${BODY_LIMIT} bytes`));
-      if (size === 0) return resolve({});
-      if (!type.startsWith("application/json")) return reject(new InputError("expected Content-Type: application/json"));
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown);
-      } catch {
-        reject(new InputError("request body is not valid JSON"));
-      }
+      if (size > limit) return reject(new InputError(`request body larger than ${limit} bytes`));
+      resolve(Buffer.concat(chunks));
     });
   });
 }
@@ -225,8 +247,8 @@ const ARCHIVE_EVERY_MS = 6 * 3600_000;
 /** Keeps the live store small: what is older than 60 days moves to archive/. */
 function archiveOld(store: Store): void {
   const counts = store.archiveOlderThan(new Date(Date.now() - ARCHIVE_AFTER_DAYS * 86_400_000));
-  if (counts.questions + counts.results + counts.sessions > 0) {
-    process.stdout.write(`agent-desk: archived ${counts.questions} questions, ${counts.results} results, ${counts.sessions} sessions older than ${ARCHIVE_AFTER_DAYS} days\n`);
+  if (counts.questions + counts.results + counts.sessions + counts.images > 0) {
+    process.stdout.write(`agent-desk: archived ${counts.questions} questions, ${counts.results} results, ${counts.sessions} sessions, ${counts.images} images older than ${ARCHIVE_AFTER_DAYS} days\n`);
   }
 }
 

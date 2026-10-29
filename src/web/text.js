@@ -79,6 +79,13 @@ export const TEXT = {
   sendKeys: "Ctrl+Enter sends.",
   sendHint: "It reaches this session exactly as written.",
   notListening: "This session is not listening for answers right now: answer in its terminal.",
+  attachImage: "Attach images",
+  pasteImages: "Paste images to attach them.",
+  attachedImage: "Attached image",
+  removeImage: "Remove this image",
+  attaching: "Attaching…",
+  /** @param {number} n */
+  tooManyImages: (n) => `At most ${n} images per message; the rest were left out.`,
   permissionPlaceholder: "Allow, Deny, or type why it should not do this…",
   dismiss: "Dismiss",
   dismissTitle: "Remove from the list without answering (it goes to the history)",

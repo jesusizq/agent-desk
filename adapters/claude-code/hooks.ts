@@ -459,7 +459,7 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
       if (armed) {
         const answers = store.takeInbox(sessionId, forTheTurn(store));
         if (answers.length > 0) {
-          const message = answers.map(deliveryText).join("\n\n");
+          const message = answers.map((a) => deliveryText(a, imageFiles(store, a.images))).join("\n\n");
           try {
             store.updateSession(sessionId, (s) => ({ ...s, state: "working" }));
           } catch (error) {
@@ -597,11 +597,22 @@ export function deliverWhileWorking(input: Common, store: Store): HookOutput {
   if (typeof input.raw.agent_id === "string" && input.raw.agent_id !== "") return { code: 0 };
   const entries = store.takeInbox(input.sessionId, forTheTurn(store));
   if (entries.length === 0) return { code: 0 };
-  const additionalContext = entries.map((e) => `Message from agent-desk: the developer wrote this to you on the desk page while you worked. Act on it as if they had typed it in the terminal now. Verbatim:\n${e.answer}`).join("\n\n");
+  const additionalContext = entries
+    .map((e) => `Message from agent-desk: the developer wrote this to you on the desk page while you worked. Act on it as if they had typed it in the terminal now. Verbatim:\n${e.answer}${attachedText(imageFiles(store, e.images))}`)
+    .join("\n\n");
   return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } }) };
 }
 
-export function deliveryText(entry: { question: string; answer: string }): string {
+export function deliveryText(entry: { question: string; answer: string }, images: string[] = []): string {
   const question = entry.question.length > 300 ? `${entry.question.slice(0, 299)}…` : entry.question;
-  return `Answer from agent-desk (the developer replied on the desk page instead of the terminal).\nYour question: ${question}\nTheir answer, verbatim:\n${entry.answer}`;
+  return `Answer from agent-desk (the developer replied on the desk page instead of the terminal).\nYour question: ${question}\nTheir answer, verbatim:\n${entry.answer}${attachedText(images)}`;
+}
+
+/** The files of the images attached on the desk; one no longer in the store is named as such. */
+function imageFiles(store: Store, ids: string[] = []): string[] {
+  return ids.map((id) => store.imageFile(id)?.file ?? `(image ${id} is no longer in the agent-desk store)`);
+}
+
+function attachedText(files: string[]): string {
+  return files.length > 0 ? `\n\nImages they attached (open each file to see it):\n${files.join("\n")}` : "";
 }

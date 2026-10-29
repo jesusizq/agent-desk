@@ -14,7 +14,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer and how it was given (`terminal`, `desk`), interpretation, `dialog` when it is a provider dialog whose answer only the hook waiting for it takes | hooks, `agent-desk ask`, the page |
 | `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity, branch, commit, `after` (agents it builds on), times | hooks, `agent-desk agent` |
 | `results/<result>.json` | `Result`: title, summary, status, local URL, image ids, before/after pair, assumptions, taste decisions, checks | `agent-desk result` |
-| `images/<image>.<png\|jpg\|webp\|gif>` | a copy of each reported image, type checked by its first bytes, 20 MB at most | `agent-desk result` |
+| `images/<image>.<png\|jpg\|webp\|gif>` | a copy of each reported image, and each image the developer attaches to an answer or message on the page; type checked by its first bytes, 20 MB at most. One that no live result, answer or message shows is archived with the rest | `agent-desk result`, the page |
 | `services/<service>.json` | a local server of a session and its URL | `agent-desk service` |
 | `metrics/<session>.json` | what the session's status line shows; every field optional | status-line wrapper, hooks |
 | `inbox/<session>/<question>.json` | an answer given on the page, waiting for the session; an unreadable one is set aside as `.<name>.rejected` | the page |
@@ -77,14 +77,17 @@ If the developer types in the terminal while the session waits, before the waite
 answer, the adapter withdraws it from the inbox and records the typed text as the answer; typed while
 it works, both reach the session. When the session ends, the question is dismissed.
 
-1. The page posts the text; the server closes the question with `via: "desk"` and writes
-   `inbox/<session>/<question>.json` with the question and the answer, unchanged.
+1. The page posts the text, with the ids of the images attached (`POST /api/images` first; not for
+   a permission prompt or a dialog, which take text only); the server closes the question with
+   `via: "desk"` and writes `inbox/<session>/<question>.json` with the question, the answer
+   unchanged and the image ids.
 2. The waiter claims it and hands it to the session in the provider's own way (Claude Code: exit
    code 2 of an `asyncRewake` hook started at the end of each turn and when the session starts,
    which wakes the model with the text). While the session works, Claude Code's adapter claims it
    after the session's next tool call instead (`agent-desk-claude deliver`, a `PostToolUse` hook that
    runs only while `.inbox-pending` exists) and returns it as `additionalContext`; a message left
-   when the turn ends goes to the waiter.
+   when the turn ends goes to the waiter. The files of the attached images follow the text, for the
+   session to open.
 
 ## CLI
 
@@ -114,10 +117,11 @@ The server binds 127.0.0.1 and refuses any request whose `Host` is not `127.0.0.
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |
 | `POST /api/sessions/<id>/keys` `{ "action": "compact" \| "interrupt" \| "enter" \| "option-1"…"option-5" }` | sends those keys to the session's tmux pane (see `.claude/rules/security.md`) |
 | `GET /images/<id>` | a stored image, served with `Content-Security-Policy: default-src 'none'; sandbox` |
-| `POST /api/questions/<id>/answer` `{ "text": "…" }` | answer from the page |
+| `POST /api/images` (the image itself, `Content-Type: image/*`, 20 MB at most) | keeps an image pasted or picked on the page; returns `{ "id": "…" }` |
+| `POST /api/questions/<id>/answer` `{ "text": "…", "images"?: ["<id>"] }` | answer from the page, with up to 10 attached images |
 | `POST /api/questions/<id>/dismiss` | close without answering |
-| `POST /api/sessions/<id>/message` `{ "text": "…" }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
+| `POST /api/sessions/<id>/message` `{ "text": "…", "images"?: ["<id>"] }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
 | `POST /api/results/<id>/seen`, `POST /api/seen` | mark one result, or everything, as seen |
 
 Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header
-`X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most.
+`X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most, except an image.

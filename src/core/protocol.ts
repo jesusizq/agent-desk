@@ -54,7 +54,11 @@ export type QuestionKind = (typeof QUESTION_KINDS)[number];
 export const QUESTION_STATUSES = ["open", "answered", "dismissed"] as const;
 export const ANSWER_CHANNELS = ["terminal", "desk"] as const;
 
-export type Answer = { text: string; at: string; via: (typeof ANSWER_CHANNELS)[number] };
+/** Images the developer can attach to one answer or message from the desk. */
+export const ATTACHED_IMAGES_MAX = 10;
+
+/** `images`: ids of images in the store the developer attached on the desk. */
+export type Answer = { text: string; at: string; via: (typeof ANSWER_CHANNELS)[number]; images?: string[] };
 
 export type Question = {
   id: string;
@@ -163,9 +167,11 @@ export type ConversationEntry = {
   at: string;
   /** For the developer's messages: typed in the terminal or sent from the desk. */
   via?: "terminal" | "desk";
+  /** Ids of images in the store attached on the desk. */
+  images?: string[];
 };
 
-export type InboxEntry = { questionId: string; question: string; answer: string; at: string };
+export type InboxEntry = { questionId: string; question: string; answer: string; at: string; images?: string[] };
 
 export type Seen = { since: string };
 

@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { deliverWhileWorking, handleHook, type HookContext, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import type { Store } from "../src/store/store.ts";
-import { tempHome, testStore } from "./helpers.ts";
+import { PNG, tempHome, testStore } from "./helpers.ts";
 
 const MAIN = path.join(import.meta.dirname, "..", "adapters", "claude-code", "main.ts");
 
@@ -323,6 +323,19 @@ describe("answers from the desk", () => {
     assert.ok(out.stderr?.endsWith("«Ñandú»\n  exactly this"), "the answer is passed through untouched");
     assert.equal(store.isListening("cc-1"), false);
     assert.equal(store.getSession("cc-1")?.state, "working");
+  });
+
+  it("hands over the files of the images attached to a desk answer", async () => {
+    const store = testStore();
+    handleHook(event("Stop", { last_assistant_message: "Which layout?" }), ctx(store));
+    const q = store.openQuestions("cc-1")[0];
+    const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 });
+    await new Promise((r) => setTimeout(r, 50));
+    const image = store.addImage(PNG);
+    store.answerFromDesk(q?.id ?? "", "this one", [image]);
+    const out = await waiting;
+    assert.equal(out.code, 2);
+    assert.ok(out.stderr?.endsWith(`this one\n\nImages they attached (open each file to see it):\n${store.imageFile(image)?.file}`), out.stderr);
   });
 
   it("stops waiting without a message when the developer answers in the terminal", async () => {

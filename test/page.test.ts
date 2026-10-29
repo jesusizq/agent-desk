@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { Store } from "../src/store/store.ts";
 import { Browser, findChrome, type Page } from "./browser.ts";
-import { serve, tempHome } from "./helpers.ts";
+import { PNG, serve, tempHome } from "./helpers.ts";
 
 const chrome = findChrome();
 if (!chrome && process.env.CI) throw new Error("no Chrome found: install one or set AGENT_DESK_CHROME");
@@ -126,6 +126,28 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.click("#session .chat-footer .primary");
     await page.waitFor("document.querySelector('#toasts')?.textContent.includes('release notes')");
     assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"]);
+  });
+
+  it("sends an image pasted into the box with the message", async () => {
+    store.upsertSession({ id: "with-image", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "hero picture", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "hero picture");
+    await page.click("#session .chat-footer textarea");
+    await page.type("like this one");
+    await page.eval(`(() => {
+      const png = Uint8Array.from(atob(${JSON.stringify(PNG.toString("base64"))}), (c) => c.charCodeAt(0));
+      const data = new DataTransfer();
+      data.items.add(new File([png], "shot.png", { type: "image/png" }));
+      document.querySelector("#session .chat-footer textarea").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    })()`);
+    await page.waitFor("document.querySelector('#session .attached img')?.complete");
+    assert.equal(await page.eval<string>("document.querySelector('#session .chat-footer textarea').value"), "like this one", "the text typed stays as it was");
+    await page.click("#session .chat-footer .primary");
+    await page.waitFor("document.querySelector('#toasts')?.textContent.includes('hero picture')");
+    const [entry] = store.takeInbox("with-image");
+    assert.equal(entry?.answer, "like this one");
+    assert.equal(entry?.images?.length, 1);
+    assert.ok(store.imageFile(entry?.images?.[0] ?? ""), "the image is in the store");
   });
 
   it("closes only the zoom with Escape, then the result", async () => {

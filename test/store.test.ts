@@ -223,6 +223,24 @@ describe("questions", () => {
     assert.equal(store.getQuestion(q.id)?.status, "open");
   });
 
+  it("carries images attached on the desk with the answer, and refuses them where only text is taken", () => {
+    const store = testStore();
+    addSession(store);
+    store.listen("s1");
+    const image = store.addImage(PNG);
+    const q = store.ask({ sessionId: "s1", kind: "question", text: "Which layout?" });
+    store.answerFromDesk(q.id, "", [image]);
+    assert.deepEqual(store.takeInbox("s1").map((e) => [e.answer, e.images]), [["", [image]]]);
+    assert.deepEqual(store.getQuestion(q.id)?.answer?.images, [image]);
+    assert.deepEqual(store.listMessages("s1").at(-1)?.images, [image]);
+    const p = store.ask({ sessionId: "s1", kind: "permission", text: "Bash: ls", options: ["Allow", "Deny"] });
+    assert.throws(() => store.answerFromDesk(p.id, "Deny", [image]), /text only/);
+    const missing = store.ask({ sessionId: "s1", kind: "question", text: "Ok?" });
+    assert.throws(() => store.answerFromDesk(missing.id, "see this", ["img-gone"]), /no image img-gone/);
+    assert.equal(store.getQuestion(missing.id)?.status, "open");
+    assert.throws(() => store.addImage(Buffer.from("<svg onload=alert(1)>")), /not a PNG, JPEG, WebP or GIF/);
+  });
+
   it("reopens the question when the answer cannot reach the inbox", () => {
     const store = testStore();
     addSession(store);
@@ -261,12 +279,24 @@ describe("archive", () => {
     const oldQ = store.ask({ sessionId: "old", kind: "question", text: "Old?" });
     store.closeOpen("old", { answer: "yes" });
     const oldR = store.addResult({ sessionId: "old", title: "Old result", images: [{ path: path.join(dir, "a.png") }] });
+    // An image attached to an answer from the desk, one attached and never sent, one a live session shows.
+    const [answered, unsent, shown] = [store.addImage(PNG), store.addImage(PNG), store.addImage(PNG)];
+    const stop = store.listen("old");
+    store.answerFromDesk(store.ask({ sessionId: "old", kind: "question", text: "Which?" }).id, "this one", [answered]);
+    store.takeInbox("old");
+    stop();
     store.upsertAgent("old", "worker", { goal: "x" });
     store.updateSession("old", (s) => ({ ...s, state: "ended", endedAt: new Date(now).toISOString() }));
     now = Date.parse("2026-03-15T00:00:00.000Z");
     const openQ = store.ask({ sessionId: "live", kind: "question", text: "Still open?" });
+    const old = Date.parse("2026-01-01T00:00:00.000Z") / 1000;
+    for (const image of [answered, unsent, shown]) fs.utimesSync(store.imageFile(image)?.file ?? "", old, old);
+    store.addMessage({ sessionId: "live", from: "developer", text: "", via: "desk", images: [shown] });
     const counts = store.archiveOlderThan(new Date("2026-03-01T00:00:00.000Z"));
-    assert.deepEqual(counts, { questions: 1, results: 1, sessions: 1 });
+    assert.deepEqual(counts, { questions: 2, results: 1, sessions: 1, images: 2 });
+    assert.equal(store.imageFile(answered), undefined, "the image of an archived answer goes with it");
+    assert.equal(store.imageFile(unsent), undefined, "an image attached and never sent goes");
+    assert.ok(store.imageFile(shown), "an image a live message shows stays");
     assert.equal(store.getQuestion(oldQ.id), undefined);
     assert.ok(fs.existsSync(store.paths.archived(store.paths.question(oldQ.id, "closed"))));
     assert.deepEqual(store.listResults(), []);

@@ -414,7 +414,14 @@ h1.title { font: 650 19px var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; margin-top: 4px; }
 .answer .opts { grid-column: 1 / -1; }
 .answer .row { display: contents; }
-.answer .row .primary { grid-column: 2; align-self: stretch; padding: 8px 16px; justify-content: center; }
+.answer .send-col { grid-column: 2; align-self: stretch; display: flex; gap: 6px; }
+.answer .send-col .icon-btn { height: auto; }
+.answer .row .primary { padding: 8px 16px; justify-content: center; }
+.answer .attached { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.answer .thumb { position: relative; }
+.answer .thumb img { height: 64px; max-width: 160px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; background: #fff; }
+.answer .thumb .icon-btn { position: absolute; top: -7px; right: -7px; height: 22px; width: 22px; padding: 0; justify-content: center; border-radius: 999px; }
+.answer .thumb .icon-btn svg.i { width: 12px; height: 12px; }
 .answer .send-hint { grid-column: 1 / -1; margin-top: -2px; font-size: 12px; }
 .answer .opts { display: flex; flex-wrap: wrap; gap: 6px; }
 .answer .opts button { border: 1px solid var(--border); background: var(--surface); border-radius: 7px; padding: 6px 10px; font: inherit; cursor: pointer; color: var(--text); }
@@ -519,6 +526,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .msg { max-width: 92%; padding: 8px 11px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); font-size: 13px; }
 .msg.from-developer { align-self: flex-end; background: color-mix(in srgb, var(--accent) 9%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 25%, var(--border)); }
 .msg-meta { font-size: 11px; color: var(--faint); margin-bottom: 3px; }
+.msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.msg-imgs img { height: 72px; max-width: 180px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); cursor: zoom-in; background: #fff; }
 .msg.working-now { border-style: dashed; }
 .msg.working-now > .adoing { font: 12px var(--mono); color: var(--muted); }
 .msg.working-now .alist { margin-top: 8px; }

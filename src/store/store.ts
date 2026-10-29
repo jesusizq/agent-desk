@@ -64,7 +64,7 @@ export type ResultInput = {
   checks?: { criterion: string; verification: string }[];
 };
 
-const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+export const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 export const IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" } as const;
 export type ImageExt = keyof typeof IMAGE_TYPES;
 
@@ -257,18 +257,21 @@ export class Store {
    * never waits in an inbox to reach a later, unrelated turn. If the inbox write fails the question
    * is reopened.
    */
-  answerFromDesk(questionId: string, text: string): Question {
-    if (text.trim() === "") throw new InputError("the answer is empty");
+  answerFromDesk(questionId: string, text: string, images: string[] = []): Question {
+    if (text.trim() === "" && images.length === 0) throw new InputError("the answer is empty");
+    for (const image of images) if (!this.imageFile(image)) throw new InputError(`no image ${image} in the store; attach it again`);
+    const attached = images.length > 0 ? images : undefined;
     let before: Question | undefined;
     const answered = this.changeQuestion(questionId, (q) => {
       if (q.status !== "open") throw new InputError(`question ${questionId} is already ${q.status}`);
+      if (attached && (q.kind === "permission" || q.dialog)) throw new InputError("a permission prompt or a choice dialog takes text only; remove the images");
       if (!this.acceptsMessages(q.sessionId)) throw new InputError("the session is not taking answers from the desk right now; answer in its terminal");
       before = q;
       const at = this.stamp();
-      return { ...q, status: "answered", closedAt: at, answer: { text, at, via: "desk" } };
+      return { ...q, status: "answered", closedAt: at, answer: compact({ text, at, via: "desk" as const, images: attached }) };
     });
-    const entry: InboxEntry = { questionId, question: answered.text, answer: text, at: answered.closedAt ?? this.stamp() };
-    this.addMessage({ sessionId: answered.sessionId, from: "developer", text, via: "desk" });
+    const entry: InboxEntry = compact({ questionId, question: answered.text, answer: text, at: answered.closedAt ?? this.stamp(), images: attached });
+    this.addMessage(compact({ sessionId: answered.sessionId, from: "developer" as const, text, via: "desk" as const, images: attached }));
     try {
       writeJson(this.paths.inboxEntry(answered.sessionId, questionId), entry);
       this.syncInboxMarker();
@@ -289,10 +292,10 @@ export class Store {
    * message while it works, which it receives at its next step. It is kept in the history as an
    * answered item whose text is that last report.
    */
-  messageFromDesk(sessionId: string, text: string): Question {
+  messageFromDesk(sessionId: string, text: string, images: string[] = []): Question {
     const session = this.getSession(sessionId);
     if (!session) throw new InputError(`no session ${sessionId} in the store`);
-    if (text.trim() === "") throw new InputError("the message is empty");
+    if (text.trim() === "" && images.length === 0) throw new InputError("the message is empty");
     if (!this.acceptsMessages(sessionId)) throw new InputError("the session is not taking messages from the desk right now; write in its terminal");
     if (session.state === "working") {
       const at = this.stamp();
@@ -301,7 +304,7 @@ export class Store {
     const said = session.lastMessage?.text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).at(-1) ?? "(no message)";
     const item = this.ask({ sessionId, kind: "waiting", text: said.length > 600 ? `…${said.slice(-600)}` : said });
     try {
-      return this.answerFromDesk(item.id, text);
+      return this.answerFromDesk(item.id, text, images);
     } catch (error) {
       this.dismiss(item.id); // it was only created to carry this message
       throw error;
@@ -529,9 +532,14 @@ export class Store {
     }
     if (!stat.isFile()) throw new InputError(`${where}: ${source} is not a file`);
     if (stat.size > IMAGE_MAX_BYTES) throw new InputError(`${where}: ${source} is larger than 20 MB`);
-    const data = fs.readFileSync(source);
+    return this.addImage(fs.readFileSync(source), `${where}: ${source}`);
+  }
+
+  /** Keeps an image (copied from a file, or attached on the desk) after checking it is one; returns its id. */
+  addImage(data: Buffer, where = "image"): string {
+    if (data.length > IMAGE_MAX_BYTES) throw new InputError(`${where} is larger than 20 MB`);
     const ext = imageType(data);
-    if (!ext) throw new InputError(`${where}: ${source} is not a PNG, JPEG, WebP or GIF image`);
+    if (!ext) throw new InputError(`${where} is not a PNG, JPEG, WebP or GIF image`);
     const imageId = newId("img");
     writeAtomic(this.paths.image(imageId, ext), data);
     return imageId;
@@ -596,7 +604,7 @@ export class Store {
   // ── Conversation ────────────────────────────────────────────────────────
 
   /** Adds a message to the session's conversation, keeping its latest MESSAGES_KEPT. */
-  addMessage(input: { sessionId: string; from: "session" | "developer"; text: string; via?: "terminal" | "desk" }): ConversationEntry {
+  addMessage(input: { sessionId: string; from: "session" | "developer"; text: string; via?: "terminal" | "desk"; images?: string[] }): ConversationEntry {
     const entry = readConversationEntry(compact({ id: newId("m"), ...input, text: bounded(input.text), at: this.stamp() }));
     writeJson(this.paths.message(entry.sessionId, entry.id), entry);
     const names = listJson(this.paths.messageDir(entry.sessionId));
@@ -650,11 +658,12 @@ export class Store {
   /**
    * Moves what is older than `cutoff` out of the live store into archive/ (same layout): closed
    * questions, results with their images, and sessions that ended or whose process is gone, with
-   * their agents, metrics and services. Nothing is deleted; the page and the hooks stop reading it.
+   * their agents, metrics and services; then the images nothing left shows (attached on the desk
+   * to what was archived, or never sent). Nothing is deleted; the page and the hooks stop reading it.
    */
-  archiveOlderThan(cutoff: Date): { questions: number; results: number; sessions: number } {
+  archiveOlderThan(cutoff: Date): { questions: number; results: number; sessions: number; images: number } {
     const before = cutoff.toISOString();
-    const counts = { questions: 0, results: 0, sessions: 0 };
+    const counts = { questions: 0, results: 0, sessions: 0, images: 0 };
     for (const q of this.readAll(this.paths.questionDir("closed"), readQuestion)) {
       if ((q.closedAt ?? q.askedAt) >= before) continue;
       withLock(this.paths.questionLock(q.id), () => this.moveToArchive(this.paths.question(q.id, "closed")));
@@ -681,7 +690,32 @@ export class Store {
       this.moveToArchive(this.paths.session(s.id));
       counts.sessions++;
     }
+    counts.images = this.archiveUnshownImages(cutoff);
     return counts;
+  }
+
+  /** Moves to archive/ the images older than `cutoff` that no live result, answer or message shows. */
+  private archiveUnshownImages(cutoff: Date): number {
+    const shown = new Set([
+      ...this.listResults().flatMap((r) => r.images.map((i) => i.id)),
+      ...(["open", "closed"] as const).flatMap((status) => this.readAll(this.paths.questionDir(status), readQuestion)).flatMap((q) => q.answer?.images ?? []),
+      ...this.subdirs(this.paths.messagesDir).flatMap((dir) => this.readAll(dir, readConversationEntry)).flatMap((m) => m.images ?? []),
+    ]);
+    let names: string[];
+    try {
+      names = fs.readdirSync(this.paths.imagesDir);
+    } catch (error) {
+      if (isCode(error, "ENOENT")) return 0; // no image was ever kept
+      throw error;
+    }
+    let moved = 0;
+    for (const name of names) {
+      const file = path.join(this.paths.imagesDir, name);
+      if (shown.has(name.replace(/\.\w+$/, "")) || fs.statSync(file).mtime >= cutoff) continue;
+      this.moveToArchive(file);
+      moved++;
+    }
+    return moved;
   }
 
   private moveToArchive(file: string): void {

@@ -3,6 +3,9 @@
 import { byId, dialog, fill, h, icon, md, mdBlocks, svgEl } from "./dom.js";
 import { TEXT } from "./text.js";
 
+// The most images one answer or message carries, as the server allows (ATTACHED_IMAGES_MAX in protocol.ts).
+const ATTACHED_IMAGES_MAX = 10;
+
 /** @typedef {import("../core/protocol.ts").DeskState} DeskState */
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -47,6 +50,8 @@ const ui = {
   hfilter: /** @type {"all" | "decision" | "result"} */ ("all"),
   /** @type {string | null} */ sel: null,
   /** @type {Map<string, string>} */ drafts: new Map(),
+  /** @type {Map<string, string[]>} ids of the images attached to each draft */ draftImages: new Map(),
+  /** @type {Map<string, number>} images of each draft still on their way to the store */ uploading: new Map(),
   /** @type {Map<string, number>} */ arrived: new Map(),
   /** @type {Set<string> | null} */ known: null,
   /** @type {Map<string, string> | null} when each session last said something, to notice new messages */ heardAt: null,
@@ -495,22 +500,55 @@ function answerForm(q) {
     const opts = q.options.map((o, i) => h("span", { class: "opt" }, h("b", {}, String(i + 1)), o));
     return h("div", {}, q.options.length ? h("div", { class: "optline" }, h("span", { class: "faint" }, `${TEXT.options}:`), opts) : null, h("div", { class: "faint" }, TEXT.notListening));
   }
-  return replyBox(`answer-${q.id}`, q.options, `/api/questions/${q.id}/answer`, q.sessionId, q.kind === "permission" ? TEXT.permissionPlaceholder : undefined);
+  // A permission prompt or a choice dialog is settled by its hook, which takes text only.
+  const textOnly = q.kind === "permission" || q.dialog === true;
+  return replyBox(`answer-${q.id}`, q.options, `/api/questions/${q.id}/answer`, q.sessionId, q.kind === "permission" ? TEXT.permissionPlaceholder : undefined, undefined, !textOnly);
+}
+
+/** Keeps an image in the store for the reply being written; returns its id. @param {Blob} file */
+async function uploadImage(file) {
+  const res = await fetch("/api/images", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "X-Agent-Desk-Secret": secret }, body: file });
+  const body = /** @type {{ id?: unknown, error?: string }} */ (await res.json().catch(() => ({})));
+  if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
+  if (typeof body.id !== "string") throw new Error(`the desk kept the image but gave no id for it (${JSON.stringify(body)})`);
+  return body.id;
 }
 
 /**
- * Text box (and option buttons) whose content is sent verbatim to a listening session.
- * Drafts survive re-renders. @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder] @param {string} [hint]
+ * Text box (and option buttons) whose content is sent verbatim to a listening session, with the
+ * images pasted into it or picked when `images` is set. Drafts survive re-renders.
+ * @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder] @param {string} [hint] @param {boolean} [images]
  */
-function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint) {
+function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true) {
   const box = /** @type {HTMLTextAreaElement} */ (h("textarea", { "data-key": key, placeholder, "aria-label": placeholder }));
   box.value = ui.drafts.get(key) ?? "";
+  const attached = images ? (ui.draftImages.get(key) ?? []) : [];
+  const busy = ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0;
+  /** @param {Blob[]} files */
+  const attach = (files) => {
+    for (const file of files.slice(0, ATTACHED_IMAGES_MAX - attached.length)) {
+      ui.uploading.set(key, (ui.uploading.get(key) ?? 0) + 1);
+      run(uploadImage(file).then((id) => ui.draftImages.set(key, [...(ui.draftImages.get(key) ?? []), id])), () => ui.uploading.set(key, (ui.uploading.get(key) ?? 1) - 1));
+    }
+    if (files.length > ATTACHED_IMAGES_MAX - attached.length) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
+  };
+  if (images) {
+    box.addEventListener("paste", (e) => {
+      const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+      if (files.length === 0) return; // text is pasted as usual
+      e.preventDefault();
+      attach(files);
+    });
+  }
+  const picker = /** @type {HTMLInputElement} */ (h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true }));
+  picker.addEventListener("change", () => attach([...(picker.files ?? [])]));
   const send = () => {
     const text = box.value;
-    if (!text.trim() || ui.sending.has(key)) return;
+    if ((!text.trim() && attached.length === 0) || busy) return;
     ui.sending.add(key);
-    run(post(route, { text }).then(() => {
+    run(post(route, attached.length ? { text, images: attached } : { text }).then(() => {
       ui.drafts.delete(key);
+      ui.draftImages.delete(key);
       if (ui.panelSession === sid) ui.panelHeard = null; // the panel fetches the conversation again, with this message
       toast(TEXT.sent(label(S(sid))));
     }), () => ui.sending.delete(key));
@@ -544,8 +582,33 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     "div",
     { class: "answer" },
     opts.length ? h("div", { class: "opts" }, opts) : null,
+    attached.length || ui.uploading.get(key)
+      ? h(
+          "div",
+          { class: "attached" },
+          attached.map((id) =>
+            h(
+              "span",
+              { class: "thumb" },
+              h("img", { src: `/images/${encodeURIComponent(id)}`, alt: TEXT.attachedImage }),
+              h("button", { class: "icon-btn", title: TEXT.removeImage, "aria-label": TEXT.removeImage, onclick: () => (ui.draftImages.set(key, attached.filter((x) => x !== id)), render()) }, icon("x")),
+            ),
+          ),
+          ui.uploading.get(key) ? h("span", { class: "faint" }, TEXT.attaching) : null,
+        )
+      : null,
     box,
-    h("div", { class: "row" }, h("button", { class: "primary", title: TEXT.send, onclick: send, disabled: ui.sending.has(key) }, icon("send"), TEXT.sendShort), h("span", { class: "faint send-hint" }, h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), hint)),
+    h(
+      "div",
+      { class: "row" },
+      h(
+        "div",
+        { class: "send-col" },
+        images ? [picker, h("button", { class: "icon-btn", title: TEXT.attachImage, "aria-label": TEXT.attachImage, onclick: () => picker.click() }, icon("image"))] : null,
+        h("button", { class: "primary", title: TEXT.send, onclick: send, disabled: busy }, icon("send"), TEXT.sendShort),
+      ),
+      h("span", { class: "faint send-hint" }, h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), hint, images ? ` ${TEXT.pasteImages}` : ""),
+    ),
   );
 }
 
@@ -591,8 +654,20 @@ function conversationView(list, whileWorking = new Set()) {
   return list.map((m) => {
     const who = m.from === "session" ? TEXT.conversation.session : m.via === "desk" ? TEXT.conversation.youDesk : TEXT.conversation.you;
     const mark = m.from === "developer" && whileWorking.has(m.text) ? ` · ${TEXT.conversation.whileWorking}` : "";
-    return h("div", { class: `msg from-${m.from}` }, h("div", { class: "msg-meta" }, who, " · ", hm(m.at), mark), h("div", { class: "md" }, mdBlocks(m.text)));
+    return h(
+      "div",
+      { class: `msg from-${m.from}` },
+      h("div", { class: "msg-meta" }, who, " · ", hm(m.at), mark),
+      m.text.trim() ? h("div", { class: "md" }, mdBlocks(m.text)) : null,
+      m.images?.length ? attachedImages(m.images) : null,
+    );
   });
+}
+
+/** Images the developer attached on the desk, as thumbnails that open the zoom. @param {string[]} ids */
+function attachedImages(ids) {
+  const gallery = ids.map((id) => ({ src: `/images/${encodeURIComponent(id)}`, caption: "" }));
+  return h("div", { class: "msg-imgs" }, gallery.map((p, i) => h("img", { src: p.src, alt: TEXT.attachedImage, onclick: () => zoom(gallery, i) })));
 }
 
 /** Earlier messages of the asking session, unfolded on demand under the large card. @param {Question} q */
@@ -1211,6 +1286,7 @@ function panelShows(s) {
     data.results.filter(mine).map((r) => r.id),
     projectOf(s),
     ui.conversations.get(s.id)?.length,
+    [...ui.draftImages, ...ui.uploading], // images attached to the box below
     Math.floor(Date.now() / 60_000), // times shown as "for 5 min"
   ]);
 }
@@ -1563,7 +1639,7 @@ function highlight(text, q) {
 }
 /**
  * @typedef {{ at: string, sid: string, type: "decision" | "result", kind: keyof typeof TEXT.kinds,
- *   title: string, answer?: string, viaDesk?: boolean, note?: string, result?: Result }} Entry
+ *   title: string, answer?: string, viaDesk?: boolean, images?: string[], note?: string, result?: Result }} Entry
  */
 function historyView() {
   const q = ui.hq.trim();
@@ -1577,7 +1653,7 @@ function historyView() {
       type: "decision",
       kind: x.status === "dismissed" ? "dismissed" : x.kind === "permission" ? "permission" : "decision",
       title: x.text,
-      ...(x.answer ? { answer: x.answer.text, viaDesk: x.answer.via === "desk" } : {}),
+      ...(x.answer ? { answer: x.answer.text, viaDesk: x.answer.via === "desk", images: x.answer.images ?? [] } : {}),
       ...(x.interpretation ? { note: x.interpretation } : {}),
     }));
   /** @type {Entry[]} */
@@ -1622,6 +1698,7 @@ function historyView() {
                 h("div", { class: "meta" }, badge(e.kind), label(S(e.sid))),
                 h("div", { class: "hq" }, highlight(e.title, q)),
                 e.answer !== undefined ? h("div", { class: "ha" }, t.answer, h("b", {}, highlight(e.answer, q)), e.viaDesk ? t.viaDesk : "") : null,
+                e.images?.length ? attachedImages(e.images) : null,
                 e.note ? h("div", { class: "hi" }, e.type === "decision" ? t.understood : "", highlight(e.note, q)) : null,
               ),
             );
