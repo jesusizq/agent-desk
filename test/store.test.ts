@@ -85,6 +85,20 @@ describe("concurrency", () => {
     assert.equal(fs.readdirSync(store.paths.agentDir("s1")).length, 1, "no temp or lock file left behind");
   });
 
+  it("takes over at once a lock whose process is gone (a status line killed mid-write)", async () => {
+    const store = testStore();
+    addSession(store);
+    const gone = execFile(process.execPath, ["-e", ""]);
+    await new Promise((r) => gone.on("exit", r));
+    const file = store.paths.agent("s1", "builder");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(path.join(path.dirname(file), `.${path.basename(file)}.lock`), `${gone.pid}.abc123`);
+    const started = Date.now();
+    store.upsertAgent("s1", "builder", { goal: "Build" });
+    assert.ok(Date.now() - started < 1000, "no wait for the lock to age");
+    assert.equal(store.getAgent("s1", "builder")?.goal, "Build");
+  });
+
   it("hands each inbox answer to exactly one waiter", async () => {
     const store = testStore();
     addSession(store);

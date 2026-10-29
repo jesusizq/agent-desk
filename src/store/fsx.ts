@@ -63,6 +63,7 @@ export function listJson(dir: string): string[] {
 
 const LOCK_WAIT_MS = 5_000;
 const LOCK_STALE_MS = 15_000;
+const LOCK_EMPTY_MS = 1_000;
 
 /**
  * Runs `fn` while holding an exclusive lock on `file`, so read-modify-write cycles from
@@ -118,12 +119,33 @@ function release(lock: string, token: string): void {
   if (holder === token) fs.rmSync(lock, { force: true });
 }
 
+/**
+ * Abandoned: its holder's process is gone (a hook or status line killed mid-write, which Claude Code
+ * does to a status line that runs late), it was never given a token, or it is older than any write.
+ */
 function isStale(lock: string): boolean {
+  let age: number;
+  let holder: string;
   try {
-    return Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS;
+    age = Date.now() - fs.statSync(lock).mtimeMs;
+    holder = fs.readFileSync(lock, "utf8");
   } catch (error) {
     if (isCode(error, "ENOENT")) return false; // released between the failed open and this check
     throw error;
+  }
+  if (age > LOCK_STALE_MS) return true;
+  // A live holder writes its token right after creating the file.
+  if (holder === "") return age > LOCK_EMPTY_MS;
+  const pid = Number(holder.split(".")[0]);
+  return Number.isInteger(pid) && pid > 0 && !isRunning(pid);
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !isCode(error, "ESRCH"); // EPERM: it runs, as another user
   }
 }
 
