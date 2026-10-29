@@ -482,7 +482,8 @@ function column(key, count, body, { foot, quiet, aside } = {}) {
 /** @param {Question} q */
 function answerForm(q) {
   if (!data.listening.includes(q.sessionId)) {
-    return h("div", {}, q.options.length ? h("div", { class: "optline" }, h("span", { class: "faint" }, `${TEXT.options}: `), q.options.join(" · ")) : null, h("div", { class: "faint" }, TEXT.notListening));
+    const opts = q.options.map((o, i) => h("span", { class: "opt" }, h("b", {}, String(i + 1)), o));
+    return h("div", {}, q.options.length ? h("div", { class: "optline" }, h("span", { class: "faint" }, `${TEXT.options}:`), opts) : null, h("div", { class: "faint" }, TEXT.notListening));
   }
   return replyBox(`answer-${q.id}`, q.options, `/api/questions/${q.id}/answer`, q.sessionId, q.kind === "permission" ? TEXT.permissionPlaceholder : undefined);
 }
