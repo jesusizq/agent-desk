@@ -7,7 +7,7 @@ const form = /** @type {HTMLFormElement} */ (byId("unlock"));
 const input = h("input", { type: "password", inputmode: "numeric", autocomplete: "current-password", "aria-label": TEXT.unlock.label, placeholder: TEXT.unlock.placeholder, required: true });
 const message = h("p", { class: "unlock-msg", role: "alert" });
 fill(form, h("h1", {}, TEXT.unlock.title), h("p", { class: "faint" }, TEXT.unlock.why), input, h("button", { class: "primary", type: "submit" }, TEXT.unlock.submit), message);
-document.title = `agent-desk · ${TEXT.unlock.title}`;
+document.title = `${TEXT.appName} · ${TEXT.unlock.title}`;
 input.focus();
 
 form.addEventListener("submit", (e) => {

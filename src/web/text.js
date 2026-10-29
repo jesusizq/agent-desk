@@ -11,6 +11,7 @@ const counts = (done, failed) =>
 const NOW = "now";
 
 export const TEXT = {
+  appName: "Agent Desk",
   locale: "en-GB",
   views: { desk: "Desk", history: "History" },
   viewsLabel: "View",

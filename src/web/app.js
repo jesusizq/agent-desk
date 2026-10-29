@@ -392,7 +392,7 @@ function renderHeader() {
   // History has its own search box; the header's only leads there.
   const headerSearch = q.closest(".search");
   if (headerSearch instanceof HTMLElement) headerSearch.hidden = ui.view === "history";
-  document.title = n ? `(${n}) agent-desk` : "agent-desk";
+  document.title = n ? `(${n}) ${TEXT.appName}` : TEXT.appName;
   renderTabbar(n);
 }
 

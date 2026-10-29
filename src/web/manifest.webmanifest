@@ -1,6 +1,6 @@
 {
-  "name": "agent-desk",
-  "short_name": "agent-desk",
+  "name": "Agent Desk",
+  "short_name": "Agent Desk",
   "description": "Follow and answer every AI coding session on your machine.",
   "start_url": "/",
   "scope": "/",
