@@ -16,8 +16,9 @@ command (Bash) only for what hooks cannot know, and keep it to one call each:
 - A local server worth opening: `agent-desk service <name> http://localhost:PORT` (`--stop` when it stops).
 - When a short answer could be read more than one way: `agent-desk interpret "<how you understood it>"`.
 
-If the developer wrote to you while you were working, end the turn with one line per message on how
-you applied it.
+If the developer wrote to you while you were working, say how you applied it within your usual
+summary of the turn: no separate list of their messages, and nothing about messages when there were
+none.
 
 An answer given on the page reaches you as a message starting with "Answer from agent-desk": it is the
 developer's reply to your last question. While you work, the developer may also write to you from the
