@@ -21,6 +21,13 @@ export const TEXT = {
   needsPill: (n) => (n ? `${n} need${n === 1 ? "s" : ""} you` : "Nothing pending"),
   search: "Search history",
   theme: { auto: "Auto", light: "Light", dark: "Dark" },
+  display: {
+    title: "Display",
+    theme: "Theme",
+    text: "Text size",
+    /** @param {string} size */
+    sizes: (size) => `${size[0]?.toUpperCase()}${size.slice(1)} text`,
+  },
   cols: { needs: "Needs you", sessions: "Sessions", review: "To review" },
   tabbar: { inbox: "Inbox", sessions: "Sessions", review: "Results", history: "History" },
   /** @param {number} n */

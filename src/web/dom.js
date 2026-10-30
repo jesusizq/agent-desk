@@ -86,10 +86,11 @@ export function svgEl(tag, attrs) {
 
 /**
  * Session text as blocks: paragraphs, "- " / "* " / "1. " lists nested by indentation, "#" headings,
- * "| a | b |" tables and ``` fences. Everything stays text; inline marks go through md().
- * @param {string} text @returns {HTMLElement[]}
+ * "| a | b |" tables and ``` fences. Everything stays text; inline marks go through md(). With
+ * `breaks`, a paragraph keeps its line breaks: what the developer typed or pasted (terminal output).
+ * @param {string} text @param {{ breaks?: boolean }} [options] @returns {HTMLElement[]}
  */
-export function mdBlocks(text) {
+export function mdBlocks(text, { breaks = false } = {}) {
   /** @type {HTMLElement[]} */
   const out = [];
   /** @type {{ indent: number, list: HTMLElement }[]} */
@@ -97,7 +98,7 @@ export function mdBlocks(text) {
   /** @type {string[]} */
   let para = [];
   const flush = () => {
-    if (para.length) out.push(h("p", {}, md(para.join(" "))));
+    if (para.length) out.push(breaks ? h("p", { class: "md-br" }, md(para.join("\n"))) : h("p", {}, md(para.join(" "))));
     para = [];
   };
   const lines = text.replace(/\r\n?/g, "\n").split("\n");

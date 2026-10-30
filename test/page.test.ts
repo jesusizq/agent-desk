@@ -285,6 +285,34 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("keeps the line breaks of what the developer pasted, and joins the session's wrapped lines", async () => {
+    store.upsertSession({ id: "pasted", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "pasted output" });
+    store.addMessage({ sessionId: "pasted", from: "developer", text: "$ git push\nfatal: 403", via: "terminal" });
+    store.addMessage({ sessionId: "pasted", from: "session", text: "The push was\nrefused." });
+    const page = await open();
+    await page.click(".scard", "pasted output");
+    await page.waitFor("document.querySelector('#session .msg.from-developer')");
+    const shown = (who: string) => page.eval<string>(`document.querySelector('#session .msg.from-${who} .md p').innerText`);
+    assert.equal(await shown("developer"), "$ git push\nfatal: 403");
+    assert.equal(await shown("session"), "The push was refused.");
+    await page.press("Escape");
+  });
+
+  it("sets the theme and the text size from the display menu, kept for the next visit", async () => {
+    const page = await open();
+    const rootSize = "getComputedStyle(document.documentElement).fontSize";
+    assert.equal(await page.eval<string>(rootSize), "16px");
+    await page.click("#theme");
+    await page.click("#display-menu .sizes button:last-child");
+    await page.waitFor(`${rootSize} === "20px"`);
+    assert.equal(await page.eval<boolean>("!document.querySelector('#display-menu').hidden"), true, "a choice leaves the menu open");
+    await page.click("#display-menu button", "Dark");
+    await page.waitFor("document.documentElement.dataset.theme === 'dark'");
+    await page.goto(base + "/");
+    await page.waitFor(`document.querySelector('.scard') && ${rootSize} === "20px" && document.documentElement.dataset.theme === 'dark'`);
+    await page.eval("localStorage.clear()");
+  });
+
   it("on a phone, gives the keyboard the room of the tab bar while writing", async () => {
     store.upsertSession({ id: "typing", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "typing on a phone", takesMessagesWhileWorking: true });
     const page = await open(390, 844);

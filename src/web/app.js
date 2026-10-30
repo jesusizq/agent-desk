@@ -738,7 +738,7 @@ function conversationView(list, whileWorking = new Set()) {
     return h(
       "div",
       { class: `msg from-${m.from}${m.step ? " step" : ""}` },
-      m.text.trim() ? h("div", { class: "md" }, mdBlocks(m.text)) : null,
+      m.text.trim() ? h("div", { class: "md" }, mdBlocks(m.text, { breaks: m.from === "developer" })) : null,
       m.images?.length ? attachedImages(m.images) : null,
       h("div", { class: "msg-meta" }, who ? [who, " · "] : null, hm(m.at), mark),
     );
@@ -2063,32 +2063,44 @@ function renderAlerts() {
     row("failures", TEXT.alerts.failures, TEXT.alerts.failuresHint, alertOn("failures"), false),
   );
 }
-byId("alerts").onclick = () => {
-  const menu = byId("alerts-menu");
-  menu.hidden = !menu.hidden;
-  if (!menu.hidden) renderAlerts();
-};
-document.addEventListener("click", (e) => {
-  const menu = byId("alerts-menu");
-  if (!menu.hidden && e.target instanceof Node && !menu.parentElement?.contains(e.target)) menu.hidden = true;
-});
+/**
+ * A header button that opens its menu; a click anywhere else closes it. The path is read as
+ * dispatched, since a choice made in the menu redraws it. @param {string} buttonId @param {string} menuId @param {() => void} fill
+ */
+function headerMenu(buttonId, menuId, fill) {
+  const menu = byId(menuId);
+  byId(buttonId).onclick = () => {
+    menu.hidden = !menu.hidden;
+    if (!menu.hidden) fill();
+  };
+  document.addEventListener("click", (e) => {
+    if (!menu.hidden && menu.parentElement && !e.composedPath().includes(menu.parentElement)) menu.hidden = true;
+  });
+}
+headerMenu("alerts", "alerts-menu", renderAlerts);
 renderAlerts();
 
 const THEMES = /** @type {const} */ (["auto", "light", "dark"]);
-function applyTheme() {
-  const stored = localStorage.getItem("agent-desk:theme");
-  const t = THEMES.find((x) => x === stored) ?? "auto";
-  document.documentElement.dataset.theme = t === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : t;
+/** The display menu: theme and text size, each kept in this browser. */
+function renderDisplay() {
+  applyDisplay();
+  const theme = THEMES.find((x) => x === localStorage.getItem("agent-desk:theme")) ?? "auto";
+  const sizes = Object.keys(TEXT_SIZES);
+  const size = sizes.find((x) => x === localStorage.getItem("agent-desk:text")) ?? "normal";
   const button = byId("theme");
-  button.setAttribute("aria-label", TEXT.theme[t]);
-  button.replaceChildren(icon(t === "auto" ? "auto" : t === "light" ? "sun" : "moon"), h("span", { class: "lbl" }, TEXT.theme[t]));
+  button.title = TEXT.display.title;
+  button.setAttribute("aria-label", TEXT.display.title);
+  button.replaceChildren(icon(theme === "auto" ? "auto" : theme === "light" ? "sun" : "moon"), h("span", { class: "lbl" }, TEXT.theme[theme]));
+  /** @param {string} key @param {string} value @param {string} current @param {Node | string} text @param {string} [name] */
+  const choice = (key, value, current, text, name) =>
+    h("button", { "aria-pressed": String(value === current), "aria-label": name, title: name, onclick: () => (localStorage.setItem(key, value), renderDisplay()) }, text);
+  byId("display-menu").replaceChildren(
+    h("div", { class: "menu-row" }, h("span", {}, TEXT.display.theme), h("div", { class: "seg" }, THEMES.map((t) => choice("agent-desk:theme", t, theme, TEXT.theme[t])))),
+    h("div", { class: "menu-row" }, h("span", {}, TEXT.display.text), h("div", { class: "seg sizes" }, sizes.map((k, i) => choice("agent-desk:text", k, size, h("span", { class: `a${i}` }, "A"), TEXT.display.sizes(k))))),
+  );
 }
-byId("theme").onclick = () => {
-  const t = THEMES.find((x) => x === localStorage.getItem("agent-desk:theme")) ?? "auto";
-  localStorage.setItem("agent-desk:theme", THEMES[(THEMES.indexOf(t) + 1) % THEMES.length] ?? "auto");
-  applyTheme();
-};
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+headerMenu("theme", "display-menu", renderDisplay);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderDisplay);
 byId("q").addEventListener("input", (e) => {
   ui.hq = /** @type {HTMLInputElement} */ (e.target).value;
   ui.view = "history";
@@ -2160,7 +2172,7 @@ addEventListener("hashchange", route);
 // The device keeps the last desk it saw, shown when the computer is off or asleep (sw.js). Some
 // browsers (third-party ones on iOS) have no service workers: the desk works there without it.
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((/** @type {Error} */ e) => toast(TEXT.pageError(e.message)));
-applyTheme();
+renderDisplay();
 render();
 await refresh();
 route();
