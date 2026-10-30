@@ -308,6 +308,16 @@ describe("archive", () => {
   });
 });
 
+describe("messages", () => {
+  it("keeps the order of messages recorded in the same millisecond", () => {
+    const store = new Store(tempHome(), () => new Date("2026-10-30T09:00:00.000Z"));
+    addSession(store);
+    const texts = Array.from({ length: 40 }, (_, i) => `step ${i}`);
+    for (const text of texts) store.addMessage({ sessionId: "s1", from: "session", text, step: true });
+    assert.deepEqual(store.listMessages("s1").map((m) => m.text), texts);
+  });
+});
+
 describe("agents and results", () => {
   it("creates an agent working, merges updates and stamps the end once", () => {
     const store = testStore();
