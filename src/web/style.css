@@ -105,7 +105,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 .where { display: inline-flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; }
 .ctx { white-space: nowrap; }
-.tag { width: 13px; height: 13px; color: var(--g); flex: none; }
+/* The project's colour, pulled toward the text so a light hue still reads as text in either theme. */
+.tag, .pname { color: color-mix(in srgb, var(--g) 55%, var(--text)); }
+.tag { width: 13px; height: 13px; flex: none; }
 .prov { display: inline-grid; place-items: center; width: 17px; height: 15px; border-radius: 4px; background: var(--p);
   color: #fff; font: 750 8.5px var(--sans); flex: none; }
 .meta { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); min-width: 0; }
@@ -164,8 +166,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .s-ask, .s-bad, .s-more, .s-l3, .scard > .quiet-line { padding-left: 17px; font-size: 13px; min-width: 0; }
 .s-ask { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .s-label { color: var(--accent); font-weight: 650; }
-.s-bad { color: var(--danger); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.s-bad .dot { width: 9px; height: 9px; }
+.s-bad { color: var(--danger); display: flex; align-items: baseline; gap: 6px; }
+.s-bad .dot { width: 9px; height: 9px; flex: none; transform: translateY(1px); }
+.s-bad > span { flex: 1; min-width: 0; }
+/* A failed command can be a whole script: its first line is enough to recognise it. */
+.s-bad code { display: block; width: fit-content; max-width: 100%; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Quiet may be a long run, not a fault: a warning, not the red of a failure. */
 .s-warn { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
 .s-ask code, .s-bad code { font-size: 11.5px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
@@ -484,7 +489,7 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 .md th { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); font-weight: 650; color: var(--text); }
 .scard { min-width: 0; overflow: hidden; cursor: pointer; }
 .sname { display: flex; align-items: center; gap: 5px; flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; }
-.sname .sproj { color: var(--muted); font-weight: 500; flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; } /* the project stays readable; the session's name gives way */
+.sname .sproj { font-weight: 500; flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; } /* the project stays readable; the session's name gives way */
 .sname .sep { color: var(--faint); font-weight: 400; }
 .sname b { font-weight: 650; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 2.5em; }
 .scard > .chip { align-self: flex-start; font-size: 12px; }

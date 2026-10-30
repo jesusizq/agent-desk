@@ -25,7 +25,7 @@ const WARM_AFTER = 30;
 const HOT_AFTER = 120;
 const CONTEXT_WARN = 80;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const PALETTE = ["#6366f1", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#84cc16", "#a855f7", "#ef4444"];
+const PALETTE = ["#6366f1", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#84cc16", "#a855f7", "#d946ef"];
 const ATTENTION = ["failed", "blocked", "idle", "working", "waiting", "done"];
 const LEGEND = /** @type {const} */ (["needs", "working", "waiting", "blocked", "idle", "failed", "done"]);
 
@@ -144,12 +144,19 @@ function tagIcon(c) {
   i.style.setProperty("--g", c);
   return i;
 }
+/** A project's tag and name, both in the project's colour. @param {string} name @param {string} [cls] */
+function projectMark(name, cls = "pname") {
+  const c = color(name);
+  const n = h("span", { class: cls }, name);
+  n.style.setProperty("--g", c);
+  return [tagIcon(c), n];
+}
 /** @param {Session | undefined} s @param {string} [name] */
 function where(s, name) {
   if (!s) return h("span", { class: "where" }, "?");
   const mark = h("span", { class: "prov", title: s.provider }, providerMark(s.provider));
   mark.style.setProperty("--p", color(s.provider));
-  return h("span", { class: "where" }, tagIcon(color(s.project.name)), s.project.name, h("span", { class: "sep" }, "›"), mark, name ?? sessionName(s));
+  return h("span", { class: "where" }, projectMark(s.project.name), h("span", { class: "sep" }, "›"), mark, name ?? sessionName(s));
 }
 /** @param {number} v */
 function bar(v) {
@@ -433,7 +440,7 @@ function renderHeader() {
   projects.hidden = names.length < 2;
   projects.replaceChildren(
     ...[null, ...names].map((name) =>
-      h("button", { "aria-pressed": String(ui.project === name), onclick: () => ((ui.project = name), render()) }, name ? tagIcon(color(name)) : null, name ?? TEXT.allProjects),
+      h("button", { "aria-pressed": String(ui.project === name), onclick: () => ((ui.project = name), render()) }, name ? projectMark(name) : TEXT.allProjects),
     ),
   );
   const pill = byId("needs-pill");
@@ -1039,14 +1046,16 @@ function sessionCard(s) {
         : h("div", { class: "s-ask" }, h("span", { class: "s-label" }, TEXT.sessionLine.asks), " ", headline(asking.text)),
     );
   }
+  /** One line of trouble; the failed call, when known, on one line below it. @param {DotState} st @param {string} what @param {string} [call] */
+  const troubleLine = (st, what, call) => h("div", { class: `s-bad${st === "idle" ? " s-warn" : ""}` }, dot(st), h("span", {}, what, call ? h("code", {}, call) : null));
   /** @param {Agent | Session} x @param {string} who */
-  const failLine = (x, who) => h("div", { class: "s-bad" }, dot("failed"), [who, TEXT.failingCalls(recentFailures(x.failedAt))].filter(Boolean).join(" · "), x.failedWhat ? [" ", h("code", {}, x.failedWhat)] : null);
+  const failLine = (x, who) => troubleLine("failed", [who, TEXT.failingCalls(recentFailures(x.failedAt))].filter(Boolean).join(" · "), x.failedWhat);
   if (failing(s)) matters.push(failLine(s, ""));
   for (const a of as.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
-  for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(h("div", { class: "s-bad" }, dot(a.state), `${a.goal ?? a.name} · ${troubleText(a)}`));
+  for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a)}`));
   const quiet = sessionQuiet(s);
-  if (quiet) matters.push(h("div", { class: "s-bad s-warn" }, dot("idle"), TEXT.trouble.sessionQuiet(quiet)));
-  else for (const a of as.filter(agentQuiet)) matters.push(h("div", { class: "s-bad s-warn" }, dot("idle"), `${a.goal ?? a.name} · ${TEXT.quietFor(agentQuiet(a))}`));
+  if (quiet) matters.push(troubleLine("idle", TEXT.trouble.sessionQuiet(quiet)));
+  else for (const a of as.filter(agentQuiet)) matters.push(troubleLine("idle", `${a.goal ?? a.name} · ${TEXT.quietFor(agentQuiet(a))}`));
   const shown = matters.slice(0, 3);
   const open = () => openSession(s.id);
   return h(
@@ -1066,7 +1075,7 @@ function sessionCard(s) {
       { class: "s-l1" },
       asking ? dot("needs") : s.state === "working" || working ? sessionDot() : dot("done"),
       // The project names the session only while every project is shown; its colour stays.
-      h("span", { class: "sname", title: label(s) }, tagIcon(color(s.project.name)), ui.project === null ? [h("span", { class: "sproj" }, s.project.name), h("span", { class: "sep" }, "›")] : null, h("b", {}, sessionName(s))),
+      h("span", { class: "sname", title: label(s) }, ui.project === null ? [projectMark(s.project.name, "pname sproj"), h("span", { class: "sep" }, "›")] : tagIcon(color(s.project.name)), h("b", {}, sessionName(s))),
       h("span", { class: "s-meta num" }, [ctx !== undefined ? `${Math.round(ctx)}%` : "", ago(since)].filter(Boolean).join(" · ")),
     ),
     shown.length ? shown : quietLine(s),
@@ -1571,7 +1580,7 @@ function openProject(projectId) {
   // Paths come from git's own listing; quoted for the shell the developer pastes them into.
   const cleanup = merged.map((w) => `git -C '${p.dir.replace(/'/g, "'\\''")}' worktree remove '${w.path.replace(/'/g, "'\\''")}'`).join("\n");
   d.replaceChildren(
-    h("div", { class: "dhead" }, h("div", {}, h("div", { class: "meta" }, tagIcon(color(p.name)), p.name), h("h3", {}, t.title)), h("span", { class: "spacer" }), h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x"))),
+    h("div", { class: "dhead" }, h("div", {}, h("div", { class: "meta" }, projectMark(p.name)), h("h3", {}, t.title)), h("span", { class: "spacer" }), h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x"))),
     h(
       "div",
       { class: "dbody" },
