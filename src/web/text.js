@@ -32,7 +32,21 @@ export const TEXT = {
     blocked: (n) => `${n} blocked`,
     /** @param {number} n */
     idle: (n) => `${n} idle`,
+    /** @param {number} n */
+    quiet: (n) => `${n} quiet`,
+    /** @param {number} n */
+    failing: (n) => `${n} failing`,
+    /** @param {number} m */
+    sessionQuiet: (m) => `no activity for ${m} min`,
   },
+  /** @param {number} m */
+  quietFor: (m) => `no activity for ${m} min`,
+  /** @param {number} n */
+  failingCalls: (n) => `${n} failed calls in 10 min`,
+  /** @param {string} where */
+  reminder: (where) => `Still waiting for you: ${where}`,
+  /** @param {string} what @param {string} where */
+  failedAlert: (what, where) => `Failed in ${where}: ${what}`,
   /** @param {number} c @param {string} command */
   suggestChip: (c, command) => `Context ${Math.round(c)}%: ${command}`,
   chips: {
@@ -192,6 +206,8 @@ export const TEXT = {
     unavailable: "This browser cannot show them",
     sound: "Sound",
     soundHint: "A short chime when a question or permission prompt arrives",
+    failures: "Failures too",
+    failuresHint: "Also notify when an agent or a result fails",
   },
   newResult: "New",
   /** @param {string} t */

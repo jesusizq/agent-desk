@@ -61,6 +61,8 @@ const ui = {
   /** @type {number | undefined} a redraw of the panel put off while it is scrolled */ panelLater: undefined,
   /** @type {Set<string>} */ sending: new Set(),
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
+  /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
+  /** @type {Set<string> | null} failures already noticed */ failuresSeen: null,
   offline: false,
   /** @type {string | null} when the desk shown was saved on this device, while the computer does not answer */ savedAt: null,
   loaded: false,
@@ -295,8 +297,12 @@ function noticeArrivals() {
   const open = data.questions.filter((q) => q.status === "open");
   if (ui.known === null) {
     ui.known = new Set(open.map((q) => q.id));
+    // What already waits long when the page opens is in sight: no reminder for it.
+    for (const q of open) if (Date.now() - Date.parse(q.askedAt) >= REMIND_MS) ui.reminded.add(q.id);
+    ui.failuresSeen = new Set(failures());
     return;
   }
+  noticeFailures();
   let chimed = false;
   for (const q of open) {
     if (ui.known.has(q.id)) continue;
@@ -317,6 +323,45 @@ function noticeArrivals() {
     });
   }
   noticeMessages();
+}
+
+// A question unanswered this long is brought up once more, in case the first call was missed.
+const REMIND_MS = 15 * 60_000;
+function remindWaiting() {
+  if (ui.known === null) return;
+  for (const q of data.questions) {
+    if (q.status !== "open" || ui.reminded.has(q.id) || Date.now() - Date.parse(q.askedAt) < REMIND_MS) continue;
+    ui.reminded.add(q.id);
+    const where = label(S(q.sessionId));
+    toast(TEXT.reminder(where));
+    chime();
+    notify(TEXT.reminder(where), q.text, `again-${q.id}`, () => {
+      ui.view = "desk";
+      ui.sel = q.id;
+      render();
+    });
+  }
+}
+
+/** Keys of what has failed: results, and agents (by session and name). */
+const failures = () => [...data.results.filter((r) => r.status === "failed").map((r) => `r ${r.id}`), ...data.agents.filter((a) => a.state === "failed").map((a) => `a ${a.sessionId} ${a.name}`)];
+
+/** A new failure, when the developer asked to hear of failures too (off by default: they need no answer). */
+function noticeFailures() {
+  const seen = (ui.failuresSeen ??= new Set(failures()));
+  for (const key of failures()) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!alertOn("failures")) continue;
+    const [kind, a, b] = key.split(" ");
+    const result = kind === "r" ? data.results.find((r) => r.id === a) : undefined;
+    const agent = kind === "a" ? data.agents.find((x) => x.sessionId === a && x.name === b) : undefined;
+    const sid = result?.sessionId ?? agent?.sessionId ?? "";
+    const what = result?.title ?? agent?.goal ?? agent?.name ?? "";
+    toast(TEXT.failedAlert(what, label(S(sid))));
+    chime();
+    notify(TEXT.failedAlert(what, label(S(sid))), result?.summary ?? agent?.activity ?? "", key, () => (result ? openResult(result) : openSession(sid)));
+  }
 }
 
 /**
@@ -894,11 +939,33 @@ function troubleText(a) {
   if (waits.length) return TEXT.waits(waits.map((n) => agentOf(a.sessionId, n)?.goal ?? n).join(", "));
   return TEXT.idleSince(hm(a.updatedAt));
 }
+// An agent or session at work with no tool call for this long, or failing calls this recently, may be stuck.
+const QUIET_MS = 5 * 60_000;
+const FAILS_MS = 10 * 60_000;
+/** Minutes since `at`, once past QUIET_MS; otherwise 0. @param {string} at */
+const quietMinutes = (at) => {
+  const ms = Date.now() - Date.parse(at);
+  return ms >= QUIET_MS ? Math.floor(ms / 60_000) : 0;
+};
+/** Failed tool calls in the last FAILS_MS. @param {string[] | undefined} failedAt */
+const recentFailures = (failedAt) => (failedAt ?? []).filter((t) => Date.now() - Date.parse(t) < FAILS_MS).length;
+/** A working agent quiet for a while: minutes, or 0. Before activityAt existed, updatedAt tells the same. @param {Agent} a */
+const agentQuiet = (a) => (a.state === "working" ? quietMinutes(a.activityAt ?? a.updatedAt) : 0);
+/** Two failed calls in a row is a retry; three is a pattern. @param {Agent | Session} x */
+const failing = (x) => recentFailures(x.failedAt) >= 3;
+/** A working session none of whose own calls nor working agents' has moved for a while: minutes, or 0. @param {Session} s */
+function sessionQuiet(s) {
+  if (s.state !== "working") return 0;
+  const last = [s.activityAt ?? s.updatedAt, ...sessionAgents(s.id).filter((a) => a.state === "working").map((a) => a.activityAt ?? a.updatedAt)].sort().at(-1);
+  return last ? quietMinutes(last) : 0;
+}
 /** @param {string} sid */
 const sessionAgents = (sid) => data.agents.filter((a) => a.sessionId === sid).sort((a, b) => ATTENTION.indexOf(a.state) - ATTENTION.indexOf(b.state));
 /** @param {Session} s */
 const sessionWeight = (s) =>
-  data.questions.filter((q) => q.status === "open" && q.sessionId === s.id).length * 10 + sessionAgents(s.id).filter((a) => ["failed", "blocked", "idle"].includes(a.state)).length;
+  data.questions.filter((q) => q.status === "open" && q.sessionId === s.id).length * 10 +
+  sessionAgents(s.id).filter((a) => ["failed", "blocked", "idle"].includes(a.state) || agentQuiet(a) || failing(a)).length +
+  (sessionQuiet(s) || failing(s) ? 1 : 0);
 
 /**
  * One compact card per session: where it runs and how full its context is, its agents as dots with
@@ -910,7 +977,13 @@ function sessionCard(s) {
   const needs = data.questions.some((q) => q.status === "open" && q.sessionId === s.id);
   const m = metricsOf(s.id);
   const ctx = m?.contextPercent;
-  const trouble = /** @type {const} */ (["failed", "blocked", "idle"]).map((st) => ({ st, n: as.filter((a) => a.state === st).length })).filter((t) => t.n);
+  const quiet = sessionQuiet(s);
+  /** @type {{ st: "failed" | "blocked" | "idle", text: string }[]} */
+  const trouble = [
+    ...(/** @type {const} */ (["failed", "blocked", "idle"])).map((st) => ({ st, n: as.filter((a) => a.state === st).length })).filter((t) => t.n).map((t) => ({ st: t.st, text: TEXT.trouble[t.st](t.n) })),
+    ...[as.filter(failing).length + (failing(s) ? 1 : 0)].filter((n) => n).map((n) => ({ st: /** @type {const} */ ("failed"), text: TEXT.trouble.failing(n) })),
+    ...(quiet ? [{ st: /** @type {const} */ ("idle"), text: TEXT.trouble.sessionQuiet(quiet) }] : [as.filter(agentQuiet).length].filter((n) => n).map((n) => ({ st: /** @type {const} */ ("idle"), text: TEXT.trouble.quiet(n) }))),
+  ];
   // What is done needs nothing: active agents get a dot each, finished ones a count.
   const active = as.filter((a) => a.state !== "done");
   const done = as.length - active.length;
@@ -937,7 +1010,7 @@ function sessionCard(s) {
       ctx !== undefined ? h("span", { class: "ctx" }, bar(ctx), `${Math.round(ctx)}%`) : null,
     ),
     h("div", { class: "sline" }, active.length || needs || working || done ? h("span", { class: "adots" }, needs ? dot("needs") : working ? sessionDot() : null, active.map(agentDot), done ? h("span", { class: "faint done-count" }, TEXT.doneCount(done)) : null) : null, needs ? (s.activity ? h("div", { class: "quiet-line", title: s.activity }, s.activity) : null) : quietLine(s)),
-    trouble.length ? h("div", { class: "strouble" }, dot(trouble[0]?.st ?? "failed"), trouble.map((t) => TEXT.trouble[t.st](t.n)).join(" · ")) : null,
+    trouble.length ? h("div", { class: "strouble" }, dot(trouble[0]?.st ?? "failed"), trouble.map((t) => t.text).join(" · ")) : null,
     m?.suggestion ? h("span", { class: "chip warn", title: TEXT.suggest[m.suggestion.reason](ctx ?? 0) }, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
   );
 }
@@ -1111,6 +1184,9 @@ function agentRows(rows) {
           h("span", { class: "aname" }, agentDot(a), h("span", { class: "agoal" }, a.goal ?? a.name)),
           a.summary ? h("span", { class: "asummary" }, a.summary) : null,
           agentDoing(a) ? h("span", { class: "adoing" }, a.state === "working" && a.activity ? TEXT.now_(agentDoing(a)) : agentDoing(a)) : null,
+          agentQuiet(a) || failing(a)
+            ? h("span", { class: "astuck" }, [agentQuiet(a) ? TEXT.quietFor(agentQuiet(a)) : "", failing(a) ? TEXT.failingCalls(recentFailures(a.failedAt)) : ""].filter(Boolean).join(" · "))
+            : null,
         ),
         h("span", { class: "num faint", title: TEXT.state[a.state] }, a.endedAt ? TEXT.tookFor(ago(a.startedAt, a.endedAt)) : ago(a.startedAt)),
       ),
@@ -1345,7 +1421,14 @@ function workingNow(s, list) {
   return h(
     "div",
     { class: "msg from-session working-now" },
-    h("div", { class: "msg-meta" }, h("span", { class: "live" }, dot("working")), " ", turn ? TEXT.conversation.workingFor(since ? ago(since) : "") : TEXT.conversation.agentsAtWork(agents.length)),
+    h(
+      "div",
+      { class: "msg-meta" },
+      h("span", { class: "live" }, dot("working")),
+      " ",
+      turn ? TEXT.conversation.workingFor(since ? ago(since) : "") : TEXT.conversation.agentsAtWork(agents.length),
+      sessionQuiet(s) ? h("span", { class: "astuck" }, ` · ${TEXT.quietFor(sessionQuiet(s))}`) : null,
+    ),
     turn && s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
     agents.length
       ? h(
@@ -1844,9 +1927,13 @@ addEventListener("error", (e) => {
 });
 addEventListener("unhandledrejection", (e) => toast(TEXT.pageError(e.reason instanceof Error ? e.reason.message : String(e.reason))));
 // ---------- Alerts: desktop notifications and sound, each switched off on the page ----------
-const ALERTS = { notify: "agent-desk:notify", sound: "agent-desk:sound" };
-/** On unless the developer switched it off in this browser. @param {keyof typeof ALERTS} k */
-const alertOn = (k) => localStorage.getItem(ALERTS[k]) !== "off";
+const ALERTS = { notify: "agent-desk:notify", sound: "agent-desk:sound", failures: "agent-desk:failures" };
+const ALERTS_ON = { notify: true, sound: true, failures: false };
+/** As the developer set it in this browser, or its default. @param {keyof typeof ALERTS} k */
+const alertOn = (k) => {
+  const set = localStorage.getItem(ALERTS[k]);
+  return set === null ? ALERTS_ON[k] : set !== "off";
+};
 /** @type {AudioContext | null} */
 let audio = null;
 /** Browsers keep a page's audio muted until it is clicked once: the first click unmutes the chime. */
@@ -1899,6 +1986,7 @@ function renderAlerts() {
   byId("alerts-menu").replaceChildren(
     row("notify", TEXT.alerts.notify, !can ? TEXT.alerts.unavailable : Notification.permission === "denied" ? TEXT.alerts.blocked : TEXT.alerts.notifyHint, notifyOn, !can || Notification.permission === "denied"),
     row("sound", TEXT.alerts.sound, TEXT.alerts.soundHint, alertOn("sound"), false),
+    row("failures", TEXT.alerts.failures, TEXT.alerts.failuresHint, alertOn("failures"), false),
   );
 }
 byId("alerts").onclick = () => {
@@ -2008,3 +2096,4 @@ document.addEventListener("visibilitychange", () => document.hidden || refresh()
 addEventListener("pageshow", (e) => /** @type {PageTransitionEvent} */ (e).persisted && refresh());
 addEventListener("online", () => refresh());
 setInterval(render, TICK_MS);
+setInterval(remindWaiting, TICK_MS);

@@ -370,6 +370,8 @@ h1.title { font: 650 19px var(--sans); letter-spacing: -.01em; margin: 0; }
 .arow .aname { display: flex; align-items: center; gap: 7px; font-weight: 600; white-space: nowrap; overflow: hidden; min-width: 0; }
 .awhat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .awhat .adoing, .awhat .asummary { padding-left: 19px; font-size: 12.5px; }
+.awhat .astuck { padding-left: 19px; font-size: 12.5px; }
+.astuck { color: var(--danger); font-weight: 600; }
 .agents-fold > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margin-top: 4px; }
 .agents-fold[open] > summary { margin-bottom: 6px; }
 .asummary { color: var(--text); }

@@ -99,6 +99,52 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<number>("badges.at(-1)"), pending, "the icon counts what the title counts");
   });
 
+  it("marks an agent quiet for a while, or failing its calls, on its session's card and row", async () => {
+    store.upsertSession({ id: "stuck", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "stuck agents", state: "working", activityAt: new Date().toISOString() });
+    const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    store.upsertAgent("stuck", "silent", { goal: "Silent agent", activityAt: ago(8) });
+    store.upsertAgent("stuck", "looping", { goal: "Looping agent", activityAt: ago(0), failedAt: [ago(3), ago(2), ago(1)] });
+    store.upsertAgent("stuck", "fine", { goal: "Fine agent", activityAt: ago(1), failedAt: [ago(30), ago(1)] });
+    const page = await open();
+    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('stuck agents'))`;
+    await page.waitFor(card);
+    assert.match(await page.eval<string>(`${card}.querySelector('.strouble').textContent`), /1 failing · 1 quiet/);
+    await page.click(".scard", "stuck agents");
+    await page.click("#session .agents-fold > summary");
+    const row = (goal: string) => page.eval<string>(`[...document.querySelectorAll('#session .arow')].find((r) => r.textContent.includes('${goal}'))?.querySelector('.astuck')?.textContent ?? ''`);
+    assert.equal(await row("Silent agent"), "no activity for 8 min");
+    assert.equal(await row("Looping agent"), "3 failed calls in 10 min");
+    assert.equal(await row("Fine agent"), "", "one old failure and one retry are not a pattern");
+    await page.press("Escape");
+  });
+
+  it("brings an unanswered question up once more after 15 minutes", async () => {
+    const page = await browser.newPage(1400, 900);
+    pages.push(page);
+    // The page's 30 s tick runs every 200 ms here.
+    await page.send("Page.addScriptToEvaluateOnNewDocument", { source: "const tick = window.setInterval; window.setInterval = (f, ms, ...a) => tick(f, ms === 30000 ? 200 : ms, ...a);" });
+    await page.goto(base + "/");
+    await page.waitFor("document.querySelector('.next')");
+    const earlier = new Store(store.paths.home, () => new Date(Date.now() - 20 * 60_000));
+    earlier.ask({ sessionId: "demo-pagos", kind: "question", text: "Still there?" });
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.startsWith('Still waiting for you'))");
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(await page.eval<number>("[...document.querySelectorAll('.toast')].filter((t) => t.textContent.startsWith('Still waiting for you')).length"), 1, "once, not at every tick");
+  });
+
+  it("tells of a new failure only when failures are switched on", async () => {
+    const page = await open();
+    const failedToast = "[...document.querySelectorAll('.toast')].some((t) => t.textContent.startsWith('Failed in'))";
+    store.upsertAgent("demo-pagos", "quiet-failure", { goal: "First failure", state: "failed" });
+    await page.waitFor("[...document.querySelectorAll('.scard')].some((c) => c.textContent.includes('failed'))");
+    await new Promise((r) => setTimeout(r, 2000));
+    assert.equal(await page.eval<boolean>(failedToast), false, "off by default");
+    await page.eval("localStorage.setItem('agent-desk:failures', 'on')");
+    store.upsertAgent("demo-pagos", "loud-failure", { goal: "Second failure", state: "failed" });
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Second failure'))");
+    await page.eval("localStorage.removeItem('agent-desk:failures')");
+  });
+
   it("numbers a list shown from its third item from 3", async () => {
     store.ask({ sessionId: "demo-pagos", kind: "waiting", text: "3. Shall I rotate the token?\n4. Shall I remove line 119?" });
     const page = await open();
