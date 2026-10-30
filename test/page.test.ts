@@ -105,6 +105,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.upsertAgent("stuck", "silent", { goal: "Silent agent", activityAt: ago(8) });
     store.upsertAgent("stuck", "looping", { goal: "Looping agent", activityAt: ago(0), failedAt: [ago(3), ago(2), ago(1)] });
     store.upsertAgent("stuck", "fine", { goal: "Fine agent", activityAt: ago(1), failedAt: [ago(30), ago(1)] });
+    // An older adapter stamps no activity: its agent's last update, long ago, does not make it quiet.
+    new Store(store.paths.home, () => new Date(Date.now() - 20 * 60_000)).upsertAgent("stuck", "unstamped", { goal: "Unstamped agent" });
     const page = await open();
     const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('stuck agents'))`;
     await page.waitFor(card);
@@ -115,6 +117,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await row("Silent agent"), "no activity for 8 min");
     assert.equal(await row("Looping agent"), "3 failed calls in 10 min");
     assert.equal(await row("Fine agent"), "", "one old failure and one retry are not a pattern");
+    assert.equal(await row("Unstamped agent"), "");
     await page.press("Escape");
   });
 

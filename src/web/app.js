@@ -958,14 +958,20 @@ const quietMinutes = (at) => {
 };
 /** Failed tool calls in the last FAILS_MS. @param {string[] | undefined} failedAt */
 const recentFailures = (failedAt) => (failedAt ?? []).filter((t) => Date.now() - Date.parse(t) < FAILS_MS).length;
-/** A working agent quiet for a while: minutes, or 0. Before activityAt existed, updatedAt tells the same. @param {Agent} a */
-const agentQuiet = (a) => (a.state === "working" ? quietMinutes(a.activityAt ?? a.updatedAt) : 0);
+/**
+ * A working agent quiet for a while: minutes, or 0. Only an agent whose adapter stamps its tool
+ * calls can be quiet: an older adapter's agents carry no such stamp, and their last update says nothing.
+ * @param {Agent} a
+ */
+const agentQuiet = (a) => (a.state === "working" && a.activityAt ? quietMinutes(a.activityAt) : 0);
 /** Two failed calls in a row is a retry; three is a pattern. @param {Agent | Session} x */
 const failing = (x) => recentFailures(x.failedAt) >= 3;
 /** A working session none of whose own calls nor working agents' has moved for a while: minutes, or 0. @param {Session} s */
 function sessionQuiet(s) {
-  if (s.state !== "working") return 0;
-  const last = [s.activityAt ?? s.updatedAt, ...sessionAgents(s.id).filter((a) => a.state === "working").map((a) => a.activityAt ?? a.updatedAt)].sort().at(-1);
+  if (s.state !== "working" || !s.activityAt) return 0;
+  const working = sessionAgents(s.id).filter((a) => a.state === "working");
+  if (working.some((a) => !a.activityAt)) return 0; // an agent that cannot be timed may well be busy
+  const last = [s.activityAt, ...working.map((a) => a.activityAt ?? "")].sort().at(-1);
   return last ? quietMinutes(last) : 0;
 }
 /** @param {string} sid */
