@@ -409,7 +409,16 @@ function renderHeader() {
   const headerSearch = q.closest(".search");
   if (headerSearch instanceof HTMLElement) headerSearch.hidden = ui.view === "history";
   document.title = n ? `(${n}) ${TEXT.appName}` : TEXT.appName;
+  appBadge(n);
   renderTabbar(n);
+}
+
+let badgeShown = -1;
+/** The count on the icon of the desk installed as an app, like the title's. @param {number} n */
+function appBadge(n) {
+  if (n === badgeShown || !("setAppBadge" in navigator)) return;
+  badgeShown = n;
+  (n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {}); // refused outside an installed app or without notification permission; the title still counts
 }
 
 /** On a phone, the parts of the desk and the history sit in a bar at the bottom, under the thumb. @param {number} needs */

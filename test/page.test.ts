@@ -88,6 +88,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<boolean>("document.querySelector('.col-needs').textContent.includes('Both builds are green')"), false);
   });
 
+  it("shows the number of pending items on the app's icon", async () => {
+    const page = await browser.newPage(1400, 900);
+    pages.push(page);
+    await page.send("Page.addScriptToEvaluateOnNewDocument", { source: "window.badges = []; navigator.setAppBadge = async (n) => { badges.push(n); }; navigator.clearAppBadge = async () => { badges.push(0); };" });
+    await page.goto(base + "/");
+    await page.waitFor("document.querySelector('.next')");
+    const pending = await page.eval<number>("Number(/^\\((\\d+)\\)/.exec(document.title)?.[1])");
+    assert.ok(pending > 0);
+    assert.equal(await page.eval<number>("badges.at(-1)"), pending, "the icon counts what the title counts");
+  });
+
   it("numbers a list shown from its third item from 3", async () => {
     store.ask({ sessionId: "demo-pagos", kind: "waiting", text: "3. Shall I rotate the token?\n4. Shall I remove line 119?" });
     const page = await open();
