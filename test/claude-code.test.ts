@@ -101,6 +101,7 @@ describe("Claude Code hooks", () => {
         ["session", "Fixed and tested."],
       ],
     );
+    assert.deepEqual(store.listMessages("cc-1").map((m) => m.step ?? false), [false, true, true, false], "written between tool calls, not the turn's last message");
     assert.deepEqual(turnTexts(path.join(tempHome(), "none.jsonl")), [], "a transcript not written yet holds nothing");
   });
 
@@ -154,6 +155,7 @@ describe("Claude Code hooks", () => {
     assert.equal(store.getSession("cc-1")?.failedAt, undefined);
     for (let i = 0; i < 12; i++) handleHook(event("PostToolUseFailure", { tool_name: "Bash", tool_input: { command: "npm test" } }), ctx(store));
     assert.equal(store.getSession("cc-1")?.failedAt?.length, 10, "only the latest ten are kept");
+    assert.equal(store.getSession("cc-1")?.failedWhat, "Bash: npm test");
     handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: "t1", tool_input: { description: "Fix the seal", subagent_type: "general-purpose", prompt: "…" } }), ctx(store));
     handleHook(event("SubagentStart", { agent_id: "a-1", agent_type: "general-purpose" }), ctx(store));
     handleHook(event("PostToolUseFailure", { agent_id: "a-1", tool_name: "Bash", tool_input: { command: "make" } }), ctx(store));

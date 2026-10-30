@@ -604,7 +604,7 @@ export class Store {
   // ── Conversation ────────────────────────────────────────────────────────
 
   /** Adds a message to the session's conversation, keeping its latest MESSAGES_KEPT. */
-  addMessage(input: { sessionId: string; from: "session" | "developer"; text: string; via?: "terminal" | "desk"; images?: string[] }): ConversationEntry {
+  addMessage(input: { sessionId: string; from: "session" | "developer"; text: string; via?: "terminal" | "desk"; images?: string[]; step?: boolean }): ConversationEntry {
     const entry = readConversationEntry(compact({ id: newId("m"), ...input, text: bounded(input.text), at: this.stamp() }));
     writeJson(this.paths.message(entry.sessionId, entry.id), entry);
     const names = listJson(this.paths.messageDir(entry.sessionId));

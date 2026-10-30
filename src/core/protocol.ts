@@ -42,6 +42,8 @@ export type Session = {
   activityAt?: string;
   /** When its latest tool calls failed, the last 10. */
   failedAt?: string[];
+  /** The latest failed tool call, as its activity line reads ("Bash: npm test"). */
+  failedWhat?: string;
   /** The session's last message at the end of a turn: shown quietly unless it asks something. */
   lastMessage?: { text: string; at: string };
   /** When the developer last read this session's conversation on the desk (any device). */
@@ -105,6 +107,8 @@ export type Agent = {
   activityAt?: string;
   /** When its latest tool calls failed, the last 10. */
   failedAt?: string[];
+  /** The latest failed tool call, as its activity line reads ("Bash: npm test"). */
+  failedWhat?: string;
   branch?: string;
   commit?: string;
   /** Names of agents of the same session this one builds on or waits for. */
@@ -177,6 +181,8 @@ export type ConversationEntry = {
   via?: "terminal" | "desk";
   /** Ids of images in the store attached on the desk. */
   images?: string[];
+  /** For the session's messages: written between its tool calls, not at the end of its turn. */
+  step?: boolean;
 };
 
 export type InboxEntry = { questionId: string; question: string; answer: string; at: string; images?: string[] };

@@ -10,9 +10,9 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 
 | Path | Record | Written by |
 | --- | --- | --- |
-| `sessions/<session>.json` | `Session`: provider label, project, title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded, when its latest tool calls failed, last message of the turn, whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
+| `sessions/<session>.json` | `Session`: provider label, project, title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded, when its latest tool calls failed and the latest of them, last message of the turn, whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
 | `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer and how it was given (`terminal`, `desk`), interpretation, `dialog` when it is a provider dialog whose answer only the hook waiting for it takes | hooks, `agent-desk ask`, the page |
-| `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded, when its latest tool calls failed, branch, commit, `after` (agents it builds on), times | hooks, `agent-desk agent` |
+| `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded, when its latest tool calls failed and the latest of them, branch, commit, `after` (agents it builds on), times | hooks, `agent-desk agent` |
 | `results/<result>.json` | `Result`: title, summary, status, local URL, image ids, before/after pair, assumptions, taste decisions, checks | `agent-desk result` |
 | `images/<image>.<png\|jpg\|webp\|gif>` | a copy of each reported image, and each image the developer attaches to an answer or message on the page; type checked by its first bytes, 20 MB at most. One that no live result, answer or message shows is archived with the rest | `agent-desk result`, the page |
 | `services/<service>.json` | a local server of a session and its URL | `agent-desk service` |
@@ -20,7 +20,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `inbox/<session>/<question>.json` | an answer given on the page, waiting for the session; an unreadable one is set aside as `.<name>.rejected` | the page |
 | `inbox/<session>/.listener.<pid>.json` | a process waiting for that session's answers | the adapter's waiter |
 | `.inbox-pending` | present while any inbox holds an entry, so a hook that runs on every tool call tests one file | the store |
-| `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (when its adapter can tell), and each answer of the developer (typed or from the desk), the latest 500 per session | hooks, the page |
+| `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (marked `step`, when its adapter can tell), and each answer of the developer (typed or from the desk), the latest 500 per session | hooks, the page |
 | `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, size on disk, whether merged into the main branch and commits ahead; total and the day's starting total | `agent-desk scan`, started by adapters at the end of a turn |
 | `seen.json` | when the developer last marked everything as seen | the page |
 | `secret` | per-install secret for the page's writes | the server, on first start |

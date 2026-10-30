@@ -261,7 +261,7 @@ function recordTurnTexts(input: Common, store: Store, last = ""): void {
   const known = new Set(store.listMessages(input.sessionId).slice(-100).map((m) => m.text));
   for (const said of turnTexts(transcript)) {
     if (known.has(said) || (last !== "" && last.includes(said))) continue;
-    store.addMessage({ sessionId: input.sessionId, from: "session", text: said });
+    store.addMessage({ sessionId: input.sessionId, from: "session", text: said, step: true });
     known.add(said);
   }
 }
@@ -318,15 +318,21 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   const agentId = typeof input.raw.agent_id === "string" ? input.raw.agent_id : "";
   const at = new Date().toISOString();
   // A failed call is kept with its time: several in a row show an agent stuck or looping.
-  const failed = (before: string[] | undefined) => (input.event === "PostToolUseFailure" ? [...(before ?? []), at].slice(-FAILURES_KEPT) : before);
+  const fails = input.event === "PostToolUseFailure";
+  const failed = (before: string[] | undefined) => (fails ? [...(before ?? []), at].slice(-FAILURES_KEPT) : before);
+  const failedWhat = (before: string | undefined) => (fails ? bounded(what, 200) : before);
   if (agentId === "") {
-    ctx.store.updateSession(input.sessionId, (s) => (s.state === "ended" ? s : compact({ ...s, activity: bounded(what, 200), activityAt: at, failedAt: failed(s.failedAt) })));
+    ctx.store.updateSession(input.sessionId, (s) =>
+      s.state === "ended" ? s : compact({ ...s, activity: bounded(what, 200), activityAt: at, failedAt: failed(s.failedAt), failedWhat: failedWhat(s.failedWhat) }),
+    );
     recordTurnTexts(input, ctx.store);
     return;
   }
   settlePairing(input, ctx, agentId, subagentMeta(input, agentId), problems);
   const agent = ctx.store.listAgents(input.sessionId).find((a) => a.ref === agentId);
-  if (agent && agent.state === "working") ctx.store.upsertAgent(input.sessionId, agent.name, compact({ activity: bounded(what, 200), activityAt: at, failedAt: failed(agent.failedAt) }));
+  if (agent && agent.state === "working") {
+    ctx.store.upsertAgent(input.sessionId, agent.name, compact({ activity: bounded(what, 200), activityAt: at, failedAt: failed(agent.failedAt), failedWhat: failedWhat(agent.failedWhat) }));
+  }
 }
 
 /**
