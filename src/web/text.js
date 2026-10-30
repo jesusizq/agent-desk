@@ -41,6 +41,15 @@ export const TEXT = {
   },
   /** @param {number} m */
   quietFor: (m) => `no activity for ${m} min`,
+  sessionLine: {
+    asks: "Asks you:",
+    now: "Now:",
+    permission: "Asks permission:",
+    /** @param {number} n */
+    more: (n) => `and ${n} more`,
+    /** @param {number} working @param {number} done */
+    agents: (working, done) => [working && `${working} agent${working === 1 ? "" : "s"} working`, done && `${done} done`].filter(Boolean).join(" · "),
+  },
   /** @param {number} n */
   failingCalls: (n) => `${n} failed calls in 10 min`,
   /** @param {string} where */
@@ -82,6 +91,8 @@ export const TEXT = {
   next: "Next",
   asks: { question: "Asks you", waiting: "Asks you", permission: "Asks permission to" },
   itsMessage: "Its message, before the question",
+  unfoldMessage: "Show the whole message",
+  foldMessage: "Show less",
   options: "Options",
   answerPlaceholder: "Type your answer or pick an option…",
   replyPlaceholder: "Type your next instruction…",
@@ -120,6 +131,8 @@ export const TEXT = {
   details: "Details",
   conversation: {
     whileWorking: "sent while it worked",
+    /** @param {number} n @param {number} agents */
+    steps: (n, agents) => `${n === 1 ? "1 message" : `${n} messages`} while it worked${agents ? ` · ${agents === 1 ? "1 agent" : `${agents} agents`}` : ""}`,
     openQuestion: "See it on the desk",
     working: "Its reply appears here when the turn ends. To write to it while it works, use its terminal.",
     /** @param {string} t */

@@ -24,7 +24,6 @@ const ARRIVAL_MS = 5000;
 const WARM_AFTER = 30;
 const HOT_AFTER = 120;
 const CONTEXT_WARN = 80;
-const HALO_MS = 3200; // the halo animation's period in style.css
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const PALETTE = ["#6366f1", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#84cc16", "#a855f7", "#ef4444"];
 const ATTENTION = ["failed", "blocked", "idle", "working", "waiting", "done"];
@@ -63,6 +62,8 @@ const ui = {
   /** @type {Set<string>} */ sending: new Set(),
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
+  /** @type {Set<string>} questions whose long context is unfolded */ contextOpen: new Set(),
+  /** @type {Set<string>} runs of messages between tool calls unfolded, by their first message */ stepsOpen: new Set(),
   /** @type {Set<string> | null} failures already noticed */ failuresSeen: null,
   offline: false,
   /** @type {string | null} when the desk shown was saved on this device, while the computer does not answer */ savedAt: null,
@@ -556,15 +557,15 @@ function column(key, count, body, { foot, quiet, aside } = {}) {
 }
 /** @typedef {import("./dom.js").Child} Child */
 
-/** @param {Question} q */
-function answerForm(q) {
+/** The options, then `middle` (what the session said around the question), then the box. @param {Question} q @param {Child} [middle] */
+function answerForm(q, middle = null) {
   if (!data.listening.includes(q.sessionId)) {
     const opts = q.options.map((o, i) => h("span", { class: "opt" }, h("b", {}, String(i + 1)), o));
-    return h("div", {}, q.options.length ? h("div", { class: "optline" }, h("span", { class: "faint" }, `${TEXT.options}:`), opts) : null, h("div", { class: "faint" }, TEXT.notListening));
+    return h("div", {}, q.options.length ? h("div", { class: "optline" }, h("span", { class: "faint" }, `${TEXT.options}:`), opts) : null, middle, h("div", { class: "faint" }, TEXT.notListening));
   }
   // A permission prompt or a choice dialog is settled by its hook, which takes text only.
   const textOnly = q.kind === "permission" || q.dialog === true;
-  return replyBox(`answer-${q.id}`, q.options, `/api/questions/${q.id}/answer`, q.sessionId, q.kind === "permission" ? TEXT.permissionPlaceholder : undefined, undefined, !textOnly);
+  return replyBox(`answer-${q.id}`, q.options, `/api/questions/${q.id}/answer`, q.sessionId, q.kind === "permission" ? TEXT.permissionPlaceholder : undefined, undefined, !textOnly, middle);
 }
 
 /** Keeps an image in the store for the reply being written; returns its id. @param {Blob} file */
@@ -579,9 +580,9 @@ async function uploadImage(file) {
 /**
  * Text box (and option buttons) whose content is sent verbatim to a listening session, with the
  * images pasted into it or picked when `images` is set. Drafts survive re-renders.
- * @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder] @param {string} [hint] @param {boolean} [images]
+ * @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder] @param {string} [hint] @param {boolean} [images] @param {Child} [middle] shown between the options and the box
  */
-function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true) {
+function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null) {
   const box = /** @type {HTMLTextAreaElement} */ (h("textarea", { "data-key": key, placeholder, "aria-label": placeholder }));
   box.value = ui.drafts.get(key) ?? "";
   // The box grows with what is written, up to 40% of the window; past that it scrolls.
@@ -653,6 +654,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     "div",
     { class: "answer" },
     opts.length ? h("div", { class: "opts" }, opts) : null,
+    middle ? h("div", { class: "answer-middle" }, middle) : null,
     attached.length || ui.uploading.get(key)
       ? h(
           "div",
@@ -722,17 +724,44 @@ function loadConversation(sid, then) {
  * @param {ConversationEntry[]} list @param {Set<string>} [whileWorking]
  */
 function conversationView(list, whileWorking = new Set()) {
-  return list.map((m) => {
-    const who = m.from === "session" ? TEXT.conversation.session : m.via === "desk" ? TEXT.conversation.youDesk : TEXT.conversation.you;
+  /** @param {ConversationEntry} m */
+  const message = (m) => {
+    const who = m.from === "session" ? null : m.via === "desk" ? TEXT.conversation.youDesk : TEXT.conversation.you;
     const mark = m.from === "developer" && whileWorking.has(m.text) ? ` · ${TEXT.conversation.whileWorking}` : "";
     return h(
       "div",
-      { class: `msg from-${m.from}` },
-      h("div", { class: "msg-meta" }, who, " · ", hm(m.at), mark),
+      { class: `msg from-${m.from}${m.step ? " step" : ""}` },
       m.text.trim() ? h("div", { class: "md" }, mdBlocks(m.text)) : null,
       m.images?.length ? attachedImages(m.images) : null,
+      h("div", { class: "msg-meta" }, who ? [who, " · "] : null, hm(m.at), mark),
     );
-  });
+  };
+  /** @type {HTMLElement[]} */
+  const out = [];
+  for (let i = 0; i < list.length; ) {
+    const m = list[i];
+    if (!m) break;
+    let end = i;
+    while (list[end]?.step) end++;
+    // What the session wrote between its tool calls folds under one line once something followed it;
+    // the latest run, still being written, stays open.
+    if (end > i && end < list.length) {
+      const run = list.slice(i, end);
+      const key = run[0]?.id ?? "";
+      const open = ui.stepsOpen.has(key);
+      const until = list[end]?.at ?? "";
+      const agents = data.agents.filter((a) => a.sessionId === m.sessionId && a.startedAt >= (run[0]?.at ?? "") && a.startedAt <= until).length;
+      out.push(
+        h("button", { class: "steps-fold linkish faint", "aria-expanded": String(open), onclick: () => ((open ? ui.stepsOpen.delete(key) : ui.stepsOpen.add(key)), render()) }, `${open ? "▾" : "▸"} ${TEXT.conversation.steps(run.length, agents)}`),
+      );
+      if (open) out.push(...run.map(message));
+      i = end;
+      continue;
+    }
+    out.push(message(m));
+    i++;
+  }
+  return out;
 }
 
 /** Images the developer attached on the desk, as thumbnails that open the zoom. @param {string[]} ids */
@@ -767,24 +796,30 @@ function nextCard(q) {
   const s = S(q.sessionId);
   const canAnswer = data.listening.includes(q.sessionId);
   const enters = entering(q.id, "next");
+  // The question and its answers come first; what the session said around it, folded, after the options.
+  const long = (q.context ?? "").length > 320 || (q.context ?? "").split("\n").length > 5;
+  const unfolded = ui.contextOpen.has(q.id);
+  const context = q.context
+    ? h(
+        "div",
+        { class: "qmore" },
+        h("div", { class: `qctx md${long && !unfolded ? " folded" : ""}`, "data-scroll": `ctx-${q.id}` }, mdBlocks(q.context)),
+        long
+          ? h("button", { class: "linkish", onclick: () => ((unfolded ? ui.contextOpen.delete(q.id) : ui.contextOpen.add(q.id)), renderView()) }, unfolded ? TEXT.foldMessage : TEXT.unfoldMessage)
+          : null,
+        earlierConversation(q),
+      )
+    : h("div", { class: "qmore" }, earlierConversation(q));
   return h(
     "article",
-    {
-      class: `next${heat(q.askedAt)}${enters ? " arrived" : ""}`,
-      "aria-label": TEXT.next,
-      // The halo keeps its phase across re-renders instead of starting over each time.
-      style: `view-transition-name: q-${q.id}; animation-delay: ${enters ? "0s, .35s" : `-${Date.now() % HALO_MS}ms`}`,
-    },
-    h("div", { class: "meta" }, beacon(q.askedAt), badge(q.kind), where(s), h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt))),
-    h("div", { class: "qlabel" }, TEXT.asks[q.kind]),
+    { class: `next${heat(q.askedAt)}${enters ? " arrived" : ""}`, "aria-label": TEXT.next, style: `view-transition-name: q-${q.id}` },
+    h("div", { class: "meta" }, h("span", { class: `qkind k-${q.kind}` }, TEXT.kinds[q.kind]), where(s), h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt))),
     q.kind === "permission" ? h("pre", { class: "qcode", "data-scroll": `code-${q.id}` }, q.text) : questionText(q.text),
-    q.context ? [h("div", { class: "qlabel" }, TEXT.itsMessage), h("div", { class: "qctx md", "data-scroll": `ctx-${q.id}` }, mdBlocks(q.context))] : null,
-    earlierConversation(q),
-    answerForm(q),
+    answerForm(q, context),
     h(
       "div",
       { class: "actions" },
-      goLink(s, canAnswer ? "secondary" : "primary go", icon("go"), TEXT.goTo, canAnswer ? null : h("kbd", {}, "⏎")),
+      goLink(s, canAnswer ? "linkish go-link" : "primary go", icon("go"), TEXT.goTo, canAnswer ? null : h("kbd", {}, "⏎")),
       h("span", { class: "spacer" }),
       h("button", { class: "linkish faint", title: TEXT.dismissTitle, onclick: () => run(post(`/api/questions/${q.id}/dismiss`)) }, TEXT.dismiss),
     ),
@@ -983,32 +1018,41 @@ const sessionWeight = (s) =>
   (sessionQuiet(s) || failing(s) ? 1 : 0);
 
 /**
- * One compact card per session: where it runs and how full its context is, its agents as dots with
- * what it does now, what went wrong, and the command its context calls for.
+ * One row per session: its state, name, context and age, then only what matters about it — what it
+ * asks, which of its agents fail or have gone quiet — or else what it does now; its agents counted.
  * @param {Session} s
  */
 function sessionCard(s) {
   const as = sessionAgents(s.id);
-  const needs = data.questions.some((q) => q.status === "open" && q.sessionId === s.id);
+  const asking = data.questions.filter((q) => q.status === "open" && q.sessionId === s.id).sort((a, b) => a.askedAt.localeCompare(b.askedAt))[0];
   const m = metricsOf(s.id);
   const ctx = m?.contextPercent;
+  const working = as.filter((a) => a.state === "working").length;
+  const done = as.filter((a) => a.state === "done").length;
+  const since = s.state === "working" ? (s.activityAt ?? s.updatedAt) : (s.lastMessage?.at ?? s.updatedAt);
+  /** @type {HTMLElement[]} */
+  const matters = [];
+  if (asking) {
+    matters.push(
+      asking.kind === "permission"
+        ? h("div", { class: "s-ask" }, h("span", { class: "s-label" }, TEXT.sessionLine.permission), " ", h("code", {}, asking.text))
+        : h("div", { class: "s-ask" }, h("span", { class: "s-label" }, TEXT.sessionLine.asks), " ", headline(asking.text)),
+    );
+  }
+  /** @param {Agent | Session} x @param {string} who */
+  const failLine = (x, who) => h("div", { class: "s-bad" }, dot("failed"), [who, TEXT.failingCalls(recentFailures(x.failedAt))].filter(Boolean).join(" · "), x.failedWhat ? [" ", h("code", {}, x.failedWhat)] : null);
+  if (failing(s)) matters.push(failLine(s, ""));
+  for (const a of as.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
+  for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(h("div", { class: "s-bad" }, dot(a.state), `${a.goal ?? a.name} · ${troubleText(a)}`));
   const quiet = sessionQuiet(s);
-  /** @type {{ st: "failed" | "blocked" | "idle", text: string }[]} */
-  const trouble = [
-    ...(/** @type {const} */ (["failed", "blocked", "idle"])).map((st) => ({ st, n: as.filter((a) => a.state === st).length })).filter((t) => t.n).map((t) => ({ st: t.st, text: TEXT.trouble[t.st](t.n) })),
-    ...[as.filter(failing).length + (failing(s) ? 1 : 0)].filter((n) => n).map((n) => ({ st: /** @type {const} */ ("failed"), text: TEXT.trouble.failing(n) })),
-    ...(quiet ? [{ st: /** @type {const} */ ("idle"), text: TEXT.trouble.sessionQuiet(quiet) }] : [as.filter(agentQuiet).length].filter((n) => n).map((n) => ({ st: /** @type {const} */ ("idle"), text: TEXT.trouble.quiet(n) }))),
-  ];
-  // What is done needs nothing: active agents get a dot each, finished ones a count.
-  const active = as.filter((a) => a.state !== "done");
-  const done = as.length - active.length;
-  // The session's own turn counts too: with every agent done, it still shows it is working.
-  const working = s.state === "working";
+  if (quiet) matters.push(h("div", { class: "s-bad" }, dot("idle"), TEXT.trouble.sessionQuiet(quiet)));
+  else for (const a of as.filter(agentQuiet)) matters.push(h("div", { class: "s-bad" }, dot("idle"), `${a.goal ?? a.name} · ${TEXT.quietFor(agentQuiet(a))}`));
+  const shown = matters.slice(0, 3);
   const open = () => openSession(s.id);
   return h(
     "div",
     {
-      class: "scard",
+      class: `scard${asking ? " needs" : ""}`,
       role: "button",
       tabindex: "0",
       onclick: open,
@@ -1019,13 +1063,15 @@ function sessionCard(s) {
     },
     h(
       "div",
-      { class: "shead-line" },
+      { class: "s-l1" },
+      asking ? dot("needs") : s.state === "working" || working ? sessionDot() : dot("done"),
       // The project names the session only while every project is shown; its colour stays.
       h("span", { class: "sname", title: label(s) }, tagIcon(color(s.project.name)), ui.project === null ? [h("span", { class: "sproj" }, s.project.name), h("span", { class: "sep" }, "›")] : null, h("b", {}, sessionName(s))),
-      ctx !== undefined ? h("span", { class: "ctx" }, bar(ctx), `${Math.round(ctx)}%`) : null,
+      h("span", { class: "s-meta num" }, [ctx !== undefined ? `${Math.round(ctx)}%` : "", ago(since)].filter(Boolean).join(" · ")),
     ),
-    h("div", { class: "sline" }, active.length || needs || working || done ? h("span", { class: "adots" }, needs ? dot("needs") : working ? sessionDot() : null, active.map(agentDot), done ? h("span", { class: "faint done-count" }, TEXT.doneCount(done)) : null) : null, needs ? (s.activity ? h("div", { class: "quiet-line", title: s.activity }, s.activity) : null) : quietLine(s)),
-    trouble.length ? h("div", { class: "strouble" }, dot(trouble[0]?.st ?? "failed"), trouble.map((t) => t.text).join(" · ")) : null,
+    shown.length ? shown : quietLine(s),
+    matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
+    working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
     m?.suggestion ? h("span", { class: "chip warn", title: TEXT.suggest[m.suggestion.reason](ctx ?? 0) }, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
   );
 }
@@ -1090,7 +1136,7 @@ function attachLine({ socket, pane }) {
 function quietLine(s) {
   if (s.state === "waiting" && s.lastMessage && unread(s)) return h("div", { class: "quiet-line unread", title: firstLine(s.lastMessage.text) }, readBadge(s), firstLine(s.lastMessage.text));
   if (s.state === "waiting") return h("div", { class: "quiet-line" }, readBadge(s), TEXT.awaiting(s.lastMessage ? ago(s.lastMessage.at) : ""));
-  if (s.activity) return h("div", { class: "quiet-line", title: s.activity }, s.activity);
+  if (s.activity) return h("div", { class: "quiet-line", title: s.activity }, TEXT.sessionLine.now, " ", h("code", {}, s.activity));
   return null;
 }
 /** "New message" until the developer opens the session, "Seen" after. @param {Session} s */
@@ -1101,7 +1147,7 @@ function readBadge(s) {
 function sessionsColumn() {
   const list = data.sessions.filter((s) => isLive(s) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
   const legend = h("div", { class: "legend" }, LEGEND.map((st) => h("span", {}, dot(st), TEXT.state[st])));
-  return column("sessions", list.length, list.length ? list.map(sessionCard) : h("div", { class: "empty" }, TEXT.emptyRunning), { foot: legend, quiet: true });
+  return column("sessions", list.length, list.length ? h("div", { class: "slist" }, list.map(sessionCard)) : h("div", { class: "empty" }, TEXT.emptyRunning), { foot: legend, quiet: true });
 }
 
 // ---------- Session panel ----------
@@ -1379,6 +1425,7 @@ function panelShows(s) {
     projectOf(s),
     ui.conversations.get(s.id)?.length,
     [...ui.draftImages, ...ui.uploading], // images attached to the box below
+    [...ui.stepsOpen],
     Math.floor(Date.now() / 60_000), // times shown as "for 5 min"
   ]);
 }

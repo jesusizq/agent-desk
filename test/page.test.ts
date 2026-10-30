@@ -56,8 +56,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const page = await open();
     const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('all agents done'))`;
     await page.waitFor(card);
-    assert.equal(await page.eval<boolean>(`!!${card}.querySelector('.adots .live .st-working')`), true, "a working dot for the session");
-    assert.match(await page.eval<string>(`${card}.querySelector('.adots').textContent`), /1 done/);
+    assert.equal(await page.eval<boolean>(`!!${card}.querySelector('.s-l1 .live .st-working')`), true, "a working dot for the session");
+    assert.match(await page.eval<string>(`${card}.querySelector('.s-l3').textContent`), /^1 done$/);
     store.updateSession("all-done", (s) => ({ ...s, state: "waiting" }));
     await page.waitFor(`!${card}.querySelector('.st-working')`);
   });
@@ -110,7 +110,11 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const page = await open();
     const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('stuck agents'))`;
     await page.waitFor(card);
-    assert.match(await page.eval<string>(`${card}.querySelector('.strouble').textContent`), /1 failing · 1 quiet/);
+    assert.deepEqual(
+      await page.eval<string[]>(`[...${card}.querySelectorAll('.s-bad')].map((l) => l.textContent)`),
+      ["Looping agent · 3 failed calls in 10 min", "Silent agent · no activity for 8 min"],
+      "what matters about the session, one line each, failures first",
+    );
     await page.click(".scard", "stuck agents");
     await page.click("#session .agents-fold > summary");
     const row = (goal: string) => page.eval<string>(`[...document.querySelectorAll('#session .arow')].find((r) => r.textContent.includes('${goal}'))?.querySelector('.astuck')?.textContent ?? ''`);
@@ -154,9 +158,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const q = store.ask({ sessionId: "demo-iva", kind: "question", text: "Which rounding mode?" });
     await page.waitFor("[...document.querySelectorAll('.qrow, .next')].some((e) => e.textContent.includes('Which rounding mode?'))");
     // Changes that make the page redraw while the arrival is still fresh.
-    for (const activity of ["Edit: a.ts", "Edit: b.ts", "Edit: c.ts"]) {
-      store.updateSession("demo-iva", (s) => ({ ...s, activity }));
-      await page.waitFor(`document.body.textContent.includes(${JSON.stringify(activity)})`);
+    for (const title of ["VAT rounding a", "VAT rounding b", "VAT rounding c"]) {
+      store.updateSession("demo-iva", (s) => ({ ...s, title }));
+      await page.waitFor(`document.body.textContent.includes(${JSON.stringify(title)})`);
     }
     assert.ok((await page.eval<number>("entrances")) <= 1, "the entrance is drawn at most once");
     store.dismiss(q.id);
@@ -260,6 +264,25 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor(`document.querySelector('#session').textContent.includes('Redraw the panel')`);
     assert.equal(await page.eval<number>(`${box}.scrollTop`), top, "a redraw keeps the draft's scroll");
     assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), true);
+  });
+
+  it("folds what a session wrote between its tool calls once something followed it", async () => {
+    store.upsertSession({ id: "steps", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "steps folded", state: "working" });
+    store.addMessage({ sessionId: "steps", from: "developer", text: "fix the build", via: "terminal" });
+    store.addMessage({ sessionId: "steps", from: "session", text: "Looking at the logs first.", step: true });
+    store.addMessage({ sessionId: "steps", from: "session", text: "Found it: a missing import.", step: true });
+    store.addMessage({ sessionId: "steps", from: "session", text: "Fixed and tested." });
+    store.addMessage({ sessionId: "steps", from: "session", text: "Now running the e2e suite.", step: true });
+    const page = await open();
+    await page.click(".scard", "steps folded");
+    await page.waitFor("document.querySelector('#session .steps-fold')");
+    const texts = () => page.eval<string[]>("[...document.querySelectorAll('#session .msg:not(.working-now) .md')].map((m) => m.textContent)");
+    assert.deepEqual(await texts(), ["fix the build", "Fixed and tested.", "Now running the e2e suite."], "the latest run, still being written, stays open");
+    assert.match(await page.eval<string>("document.querySelector('#session .steps-fold').textContent"), /2 messages while it worked/);
+    await page.click("#session .steps-fold");
+    await page.waitFor("document.querySelectorAll('#session .msg.step').length === 3");
+    assert.deepEqual((await texts()).slice(1, 3), ["Looking at the logs first.", "Found it: a missing import."]);
+    await page.press("Escape");
   });
 
   it("on a phone, gives the keyboard the room of the tab bar while writing", async () => {
