@@ -121,6 +121,14 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const agents = await page.eval<string[]>("[...document.querySelectorAll('#session .working-now .agoal')].map((g) => g.textContent)");
     assert.ok(agents.includes("Order summary beside the cart"), "its agents at work are listed under it");
     assert.ok(!agents.includes("Three pay button variants"), "finished ones are not");
+    const fold = "document.querySelector('#session .working-now .agents-fold')";
+    assert.equal(await page.eval<boolean>(`${fold}.open`), false, "the agents are folded under one line");
+    assert.match(await page.eval<string>(`${fold}.querySelector('summary').textContent`), /^\d+ agents/);
+    await page.click("#session .working-now .agents-fold > summary");
+    await page.waitFor(`${fold}.open`);
+    store.upsertAgent("demo-checkout", "summary", { activity: "Editing src/checkout/Totals.tsx" });
+    await page.waitFor("document.querySelector('#session .working-now')?.textContent.includes('Totals.tsx')");
+    assert.equal(await page.eval<boolean>(`${fold}.open`), true, "unfolded, they stay so across redraws");
     await page.press("Escape");
     await page.waitFor("!document.getElementById('session').open");
   });
@@ -178,6 +186,19 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor(`document.querySelector('#session').textContent.includes('Redraw the panel')`);
     assert.equal(await page.eval<number>(`${box}.scrollTop`), top, "a redraw keeps the draft's scroll");
     assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), true);
+  });
+
+  it("on a phone, gives the keyboard the room of the tab bar while writing", async () => {
+    store.upsertSession({ id: "typing", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "typing on a phone", takesMessagesWhileWorking: true });
+    const page = await open(390, 844);
+    await page.click(".tabbar button", "Sessions");
+    await page.click(".scard", "typing on a phone");
+    const tabbar = "getComputedStyle(document.querySelector('.tabbar')).display";
+    assert.notEqual(await page.eval<string>(tabbar), "none");
+    await page.click("#session .chat-footer textarea");
+    await page.waitFor(`${tabbar} === "none" && getComputedStyle(document.querySelector('.credits')).display === "none"`);
+    await page.press("Escape");
+    await page.waitFor(`${tabbar} !== "none"`);
   });
 
   it("closes only the zoom with Escape, then the result", async () => {

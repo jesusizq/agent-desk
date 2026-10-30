@@ -60,6 +60,7 @@ const ui = {
   /** when the developer last scrolled or touched the session panel */ panelTouchedAt: 0,
   /** @type {number | undefined} a redraw of the panel put off while it is scrolled */ panelLater: undefined,
   /** @type {Set<string>} */ sending: new Set(),
+  /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   offline: false,
   /** @type {string | null} when the desk shown was saved on this device, while the computer does not answer */ savedAt: null,
   loaded: false,
@@ -1337,7 +1338,19 @@ function workingNow(s, list) {
     { class: "msg from-session working-now" },
     h("div", { class: "msg-meta" }, h("span", { class: "live" }, dot("working")), " ", turn ? TEXT.conversation.workingFor(since ? ago(since) : "") : TEXT.conversation.agentsAtWork(agents.length)),
     turn && s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
-    agents.length ? agentRows(agents) : null,
+    agents.length
+      ? h(
+          "details",
+          { class: "agents-fold", open: ui.agentsOpen.has(s.id) },
+          // Kept on the click itself: a redraw between the click and its toggle event would fold it again.
+          h(
+            "summary",
+            { onclick: () => (ui.agentsOpen.has(s.id) ? ui.agentsOpen.delete(s.id) : ui.agentsOpen.add(s.id)) },
+            TEXT.chips.agents(agents.length, agents.filter((a) => a.state === "failed").length),
+          ),
+          agentRows(agents),
+        )
+      : null,
   );
 }
 
