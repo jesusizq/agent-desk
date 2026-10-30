@@ -166,6 +166,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .s-label { color: var(--accent); font-weight: 650; }
 .s-bad { color: var(--danger); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .s-bad .dot { width: 9px; height: 9px; }
+/* Quiet may be a long run, not a fault: a warning, not the red of a failure. */
+.s-warn { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
 .s-ask code, .s-bad code { font-size: 11.5px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
 .s-more, .s-l3 { color: var(--faint); font-size: 12px; }
 .scard .quiet-line code { font-size: 11.5px; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }

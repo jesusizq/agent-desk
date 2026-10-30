@@ -1045,8 +1045,8 @@ function sessionCard(s) {
   for (const a of as.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
   for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(h("div", { class: "s-bad" }, dot(a.state), `${a.goal ?? a.name} · ${troubleText(a)}`));
   const quiet = sessionQuiet(s);
-  if (quiet) matters.push(h("div", { class: "s-bad" }, dot("idle"), TEXT.trouble.sessionQuiet(quiet)));
-  else for (const a of as.filter(agentQuiet)) matters.push(h("div", { class: "s-bad" }, dot("idle"), `${a.goal ?? a.name} · ${TEXT.quietFor(agentQuiet(a))}`));
+  if (quiet) matters.push(h("div", { class: "s-bad s-warn" }, dot("idle"), TEXT.trouble.sessionQuiet(quiet)));
+  else for (const a of as.filter(agentQuiet)) matters.push(h("div", { class: "s-bad s-warn" }, dot("idle"), `${a.goal ?? a.name} · ${TEXT.quietFor(agentQuiet(a))}`));
   const shown = matters.slice(0, 3);
   const open = () => openSession(s.id);
   return h(

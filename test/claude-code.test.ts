@@ -254,6 +254,35 @@ describe("Claude Code hooks", () => {
     assert.ok(store.listAgents("cc-1").some((a) => a.ref === "a11"));
   });
 
+  it("records as stopped a workflow's agent left interrupted, and labels one whose notes came after its start", () => {
+    const store = testStore();
+    const projects = tempHome();
+    const transcript = path.join(projects, "cc-1.jsonl");
+    const run = path.join(projects, "cc-1", "subagents", "workflows", "wf_1");
+    fs.mkdirSync(run, { recursive: true });
+    for (const id of ["a1", "a2"]) handleHook(event("SubagentStart", { agent_id: id, agent_type: "workflow-subagent", transcript_path: transcript }), ctx(store));
+    for (const id of ["a1", "a2"]) fs.writeFileSync(path.join(run, `agent-${id}.meta.json`), JSON.stringify({ description: `qa-${id}` }));
+    handleHook(event("PostToolUse", { agent_id: "a1", tool_name: "Bash", tool_input: { command: "npm test" }, transcript_path: transcript }), ctx(store));
+    assert.equal(store.listAgents("cc-1").find((a) => a.ref === "a1")?.goal, "qa-a1");
+
+    const entry = (content: unknown) => JSON.stringify({ type: "user", isSidechain: true, message: { role: "user", content } });
+    fs.writeFileSync(path.join(run, "agent-a1.jsonl"), `${entry([{ type: "tool_result", content: "ok" }])}\n${entry([{ type: "text", text: "[Request interrupted by user for tool use]" }])}\n`);
+    fs.writeFileSync(path.join(run, "agent-a2.jsonl"), `${entry([{ type: "tool_result", content: "[Request interrupted by user" }])}\n`);
+    handleHook(event("Stop", { last_assistant_message: "Stopped the run.", transcript_path: transcript }), ctx(store));
+    const state = (ref: string) => store.listAgents("cc-1").find((a) => a.ref === ref)?.state;
+    assert.equal(state("a1"), "done");
+    assert.equal(state("a2"), "working", "a tool's output that quotes the note is not an interruption");
+  });
+
+  it("restarts the quiet clock when a turn starts", () => {
+    const store = testStore();
+    handleHook(event("PostToolUse", { tool_name: "Bash", tool_input: { command: "npm test" } }), ctx(store));
+    store.updateSession("cc-1", (s) => ({ ...s, activityAt: "2026-01-01T00:00:00.000Z" }));
+    handleHook(event("Stop", { last_assistant_message: "Done." }), ctx(store));
+    handleHook(event("UserPromptSubmit", { prompt: "and now the docs" }), ctx(store));
+    assert.ok((store.getSession("cc-1")?.activityAt ?? "") > "2026-01-01T00:00:00.000Z", "a turn that only thinks is not quiet since the last turn's call");
+  });
+
   it("corrects launches of one type paired the wrong way round, once Claude Code has noted their labels", () => {
     const store = testStore();
     const projects = tempHome();

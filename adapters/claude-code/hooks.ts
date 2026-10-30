@@ -73,7 +73,8 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (fromClaudeCode(prompt)) {
         // A background task's notification wakes the session like a prompt: it works again, but
         // nothing was said by the developer and nothing they were asked is answered.
-        store.updateSession(sid, (s) => ({ ...s, state: "working" }));
+        store.updateSession(sid, (s) => ({ ...s, state: "working", activityAt: new Date().toISOString() }));
+        settleInterrupted(input, ctx);
         return { code: 0 };
       }
       // Without a title from Claude Code, the first thing asked of the session names it. A prompt
@@ -84,6 +85,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
         compact({
           ...s,
           state: "working" as const,
+          activityAt: at,
           title: s.title ?? (titleFrom(prompt) || undefined),
           sentWhileWorking: s.state === "working" ? [...(s.sentWhileWorking ?? []), { text: bounded(prompt, 2000), at }].slice(-SENT_KEPT) : s.sentWhileWorking,
         }),
@@ -94,6 +96,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (!wasWorking) store.withdrawInbox(sid, prompt);
       store.closeOpen(sid, { answer: prompt, problems });
       syncPermissionMarker(store, problems);
+      settleInterrupted(input, ctx);
       return { code: 0 };
     }
 
@@ -200,6 +203,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     }),
   );
   recordTurnTexts(input, store, message);
+  settleInterrupted(input, ctx);
   if (message) store.addMessage({ sessionId: sid, from: "session", text: message });
   const tasks = Array.isArray(input.raw.background_tasks) ? input.raw.background_tasks : [];
   const shells = tasks.filter((t) => typeof t === "object" && t !== null && (t as Fields).type === "shell").length;
@@ -268,27 +272,61 @@ function recordTurnTexts(input: Common, store: Store, last = ""): void {
 
 const TRANSCRIPT_TAIL = 1024 * 1024;
 
+/** The last `bytes` of a transcript; empty when it is not written yet. */
+function readTail(transcript: string, bytes: number): string {
+  try {
+    const fd = fs.openSync(transcript, "r");
+    try {
+      const size = fs.fstatSync(fd).size;
+      const length = Math.min(size, bytes);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, size - length);
+      return buffer.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return ""; // a session or agent that has not written its transcript yet
+    throw error;
+  }
+}
+
+/** Whether a transcript ends where the developer interrupted it (Esc, or a stopped workflow). */
+export function endsInterrupted(transcript: string): boolean {
+  const last = readTail(transcript, 8192).trimEnd().split("\n").at(-1) ?? "";
+  let entry: unknown;
+  try {
+    entry = JSON.parse(last);
+  } catch {
+    return false; // a last line longer than the tail, or half written: not the short interruption note
+  }
+  if (typeof entry !== "object" || entry === null || (entry as Fields).type !== "user") return false;
+  const message = (entry as Fields).message;
+  const content = typeof message === "object" && message !== null ? (message as Fields).content : undefined;
+  const said = typeof content === "string" ? [content] : Array.isArray(content) ? content.map((b) => (typeof b === "object" && b !== null ? (b as Fields).text : undefined)) : [];
+  return said.some((t) => typeof t === "string" && t.startsWith("[Request interrupted by user"));
+}
+
+/**
+ * An interrupted sub-agent gets no SubagentStop: it would show as working for ever. At each turn's
+ * start and end, an agent still working whose transcript ends interrupted is recorded as stopped.
+ */
+function settleInterrupted(input: Common, ctx: HookContext): void {
+  for (const agent of ctx.store.listAgents(input.sessionId)) {
+    if (agent.state !== "working" || !agent.ref || agent.ref.startsWith(PENDING)) continue;
+    const meta = subagentMeta(input, agent.ref);
+    if (meta && endsInterrupted(meta.replace(/\.meta\.json$/, ".jsonl"))) {
+      ctx.store.upsertAgent(input.sessionId, agent.name, { state: "done", activity: "Interrupted before it finished" });
+    }
+  }
+}
+
 /**
  * The texts Claude wrote in the session's current turn, oldest first: its assistant entries after
  * the last entry from the developer, read from the end of the transcript (sub-agents' left out).
  */
 export function turnTexts(transcript: string): string[] {
-  let tail: string;
-  try {
-    const fd = fs.openSync(transcript, "r");
-    try {
-      const size = fs.fstatSync(fd).size;
-      const length = Math.min(size, TRANSCRIPT_TAIL);
-      const buffer = Buffer.alloc(length);
-      fs.readSync(fd, buffer, 0, length, size - length);
-      tail = buffer.toString("utf8");
-    } finally {
-      fs.closeSync(fd);
-    }
-  } catch (error) {
-    if (isCode(error, "ENOENT")) return []; // a session that has not written its transcript yet
-    throw error;
-  }
+  const tail = readTail(transcript, TRANSCRIPT_TAIL);
   const texts: string[] = [];
   for (const line of tail.split("\n").reverse()) {
     let entry: unknown;
@@ -328,10 +366,13 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
     recordTurnTexts(input, ctx.store);
     return;
   }
-  settlePairing(input, ctx, agentId, subagentMeta(input, agentId), problems);
+  const meta = subagentMeta(input, agentId);
+  settlePairing(input, ctx, agentId, meta, problems);
   const agent = ctx.store.listAgents(input.sessionId).find((a) => a.ref === agentId);
   if (agent && agent.state === "working") {
-    ctx.store.upsertAgent(input.sessionId, agent.name, compact({ activity: bounded(what, 200), activityAt: at, failedAt: failed(agent.failedAt), failedWhat: failedWhat(agent.failedWhat) }));
+    // A workflow's agent whose notes were not written when it started gets its label now.
+    const goal = agent.goal ? undefined : launchNotes(meta, problems).description;
+    ctx.store.upsertAgent(input.sessionId, agent.name, compact({ goal, activity: bounded(what, 200), activityAt: at, failedAt: failed(agent.failedAt), failedWhat: failedWhat(agent.failedWhat) }));
   }
 }
 
