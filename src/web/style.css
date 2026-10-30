@@ -5,6 +5,8 @@
   --shadow-lg: 0 14px 34px rgb(16 24 40 / .14), 0 3px 8px rgb(16 24 40 / .07);
   --proposed: #9150db; --todo: #0e8fcf; --blocked: #8a94a5; --doing: #ee6a1a; --review: #d9407f; --done: #1f9d4f;
   --danger: #d63030; --lane: rgb(15 23 42 / .022);
+  /* Motion tokens: one easing and three durations for every transition */
+  --ease-out: cubic-bezier(.2, .8, .2, 1); --dur-1: .12s; --dur-2: .18s; --dur-3: .28s;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
 }
@@ -255,14 +257,15 @@ h1.title { font: 650 19px var(--sans); letter-spacing: -.01em; margin: 0; }
   margin: 0; padding: 0; border: 0; background: none; overflow: visible; }
 #toasts:not(:popover-open) { display: none; }
 .toast { background: var(--text); color: var(--bg); border-radius: 6px; padding: 8px 13px; font-size: 13px; box-shadow: var(--shadow-lg);
-  max-width: min(560px, 92vw); animation: tin .2s ease-out; }
+  max-width: min(560px, 92vw); animation: tin var(--dur-3) var(--ease-out); }
 @keyframes tin { from { opacity: 0; transform: translateY(6px); } }
+.toast.leaving { opacity: 0; transform: translateY(4px); transition: opacity var(--dur-2) ease-in, transform var(--dur-2) ease-in; }
 /* Motion only where it says something: a question arriving, agents alive, waits growing old */
 @keyframes arrive { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
 @keyframes ring { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); } to { box-shadow: 0 0 0 14px transparent; } }
-.qcard.arrived { animation: arrive .35s ease-out, ring 1.4s ease-out .1s 2; }
+.qcard.arrived { animation: arrive .35s var(--ease-out), ring 1.4s ease-out .1s 2; }
 .live { display: inline-grid; border-radius: 50%; }
-@keyframes bump { 30% { transform: scale(1.18); } }
+@keyframes bump { 30% { transform: scale(1.08); } }
 .needs-pill.bump { animation: bump .5s ease-out 2; }
 .age.warm { color: var(--doing); }
 .age.hot { color: var(--danger); }
@@ -282,8 +285,8 @@ h1.title { font: 650 19px var(--sans); letter-spacing: -.01em; margin: 0; }
 .next .go kbd { border-color: color-mix(in srgb, var(--accent-text) 45%, transparent); color: inherit; }
 .next { --pc: var(--accent); animation: halo 3.2s ease-in-out infinite; }
 .next.warm { --pc: var(--doing); } .next.hot { --pc: var(--danger); }
-.next.arrived { animation: arrive .35s ease-out, halo 3.2s ease-in-out .35s infinite; }
-.qrow.arrived { animation: arrive .35s ease-out; }
+.next.arrived { animation: arrive .35s var(--ease-out), halo 3.2s ease-in-out .35s infinite; }
+.qrow.arrived { animation: arrive .35s var(--ease-out); }
 .qcode { margin: 0; font: 500 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto;
   padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--text) 6%, var(--surface)); border: 1px solid var(--border); }
 .qlabel { font: 650 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-bottom: -4px; }
@@ -488,8 +491,7 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 .agoal { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- Motion: movement that follows what changed; nothing blinks ---------- */
-:root { --ease-out: cubic-bezier(.2, .8, .2, 1); }
-dialog { opacity: 0; transition: opacity .2s var(--ease-out), transform .28s var(--ease-out), overlay .28s allow-discrete, display .28s allow-discrete; }
+dialog { opacity: 0; transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-3) var(--ease-out), overlay var(--dur-3) allow-discrete, display var(--dur-3) allow-discrete; }
 dialog[open] { opacity: 1; transform: none; }
 @starting-style { dialog[open] { opacity: 0; } }
 dialog.result:not([open]) { transform: translateY(10px) scale(.98); }
@@ -502,10 +504,12 @@ dialog::backdrop { background: transparent; backdrop-filter: blur(0); transition
 dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(2px); }
 @starting-style { dialog[open]::backdrop { background: transparent; backdrop-filter: blur(0); } }
 
-.scard, .rrow, .qrow, .hitem.open { transition: transform .18s var(--ease-out), box-shadow .18s var(--ease-out), border-color .18s, background-color .18s; }
+.scard, .rrow, .qrow, .rcard, .hitem.open { transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), border-color var(--dur-2), background-color var(--dur-2); }
 .scard:hover, .rrow:hover, .qrow:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
 :is(button, a).primary, :is(button, a).secondary, .answer .opts button, .seg button, .chip, .icon-btn {
-  transition: background-color .15s, border-color .15s, color .15s, filter .15s, transform .1s, box-shadow .15s; }
+  transition: background-color var(--dur-2), border-color var(--dur-2), color var(--dur-2), filter var(--dur-2), transform var(--dur-1) var(--ease-out), box-shadow var(--dur-2); }
+.alerts-menu label, .zbar button, .needs-pill, .linkish, .links a, .credits a, .row-go, .rdismiss { transition: background-color var(--dur-2), color var(--dur-2), opacity var(--dur-2), filter var(--dur-2); }
+.bar i, .mini i { transition: width var(--dur-3) var(--ease-out); }
 :is(button, a).primary:active, :is(button, a).secondary:active, .answer .opts button:active, .icon-btn:active { transform: scale(.97); }
 
 /* Lists re-order, enter and leave through view transitions (see app.js). */
@@ -518,8 +522,9 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 
 @media (prefers-reduced-motion: reduce) {
-  dialog, dialog::backdrop, .scard, .rrow, .qrow { transition: none; }
+  dialog, dialog::backdrop, .scard, .rrow, .qrow, .rcard, .toast.leaving, .bar i, .mini i { transition: none; }
   .scard:hover, .rrow:hover, .qrow:hover { transform: none; }
+  :is(button, a).primary:active, :is(button, a).secondary:active, .answer .opts button:active, .icon-btn:active { transform: none; }
   .skel { animation: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none; }
 }
@@ -754,7 +759,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .rtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .rtile-wrap { position: relative; min-width: 0; }
 .rtile { width: 100%; display: flex; flex-direction: column; gap: 3px; padding: 6px 6px 8px; border: 1px solid var(--border); border-radius: 10px;
-  background: var(--surface); text-align: left; transition: border-color .18s, box-shadow .18s; }
+  background: var(--surface); text-align: left; transition: border-color var(--dur-2), box-shadow var(--dur-2); }
 .rtile:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
 .rtile img, .rtile .ph { width: 100%; height: 88px; object-fit: cover; object-position: top; border-radius: 6px; border: 1px solid var(--border); background: #fff; margin-bottom: 3px; }
 .rtile .ph { display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--surface-2); font-size: 11.5px; line-height: 1.35; color: var(--muted); overflow: hidden; }

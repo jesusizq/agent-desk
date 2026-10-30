@@ -164,6 +164,7 @@ function toast(msg) {
   // Re-shown each time so it sits above any open dialog in the browser's top layer.
   if (box.matches(":popover-open")) box.hidePopover();
   box.showPopover();
+  setTimeout(() => t.classList.add("leaving"), 3400);
   setTimeout(() => {
     t.remove();
     if (!box.childElementCount && box.matches(":popover-open")) box.hidePopover();
