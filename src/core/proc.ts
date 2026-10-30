@@ -50,6 +50,16 @@ export function sessionProcess(fromPid = process.pid): { pid: number; start: str
   return { pid: own.pid, start: own.start, ancestors: chain.slice(index + 1).map((p) => p.pid) };
 }
 
+/**
+ * Asks a session's own process to end (SIGTERM), only while pid is still that very process: the
+ * same start time, read from /proc. Without /proc nothing is sent.
+ */
+export function endProcess(pid: number, start: string): void {
+  const info = procInfo(pid);
+  if (!info || info.start !== start) throw new Error(`process ${pid} is no longer this session's; nothing was sent`);
+  process.kill(pid, "SIGTERM");
+}
+
 /** True when pid runs and, if a start time is known, is still the same process (pids get reused). */
 export function isAlive(pid: number, start?: string): boolean {
   const info = procInfo(pid);

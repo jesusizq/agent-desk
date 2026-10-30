@@ -150,6 +150,24 @@ describe("server", () => {
     assert.equal(cross.status, 403);
   });
 
+  it("ends a session's process only while it is still that process, and only from the page", async () => {
+    const { spawn } = await import("node:child_process");
+    const { procInfo } = await import("../src/core/proc.ts");
+    const child = spawn("sleep", ["30"], { stdio: "ignore" });
+    const exited = new Promise<NodeJS.Signals | null>((resolve) => child.once("exit", (_code, signal) => resolve(signal)));
+    const pid = child.pid ?? 0;
+    const start = procInfo(pid)?.start ?? "";
+    addSession(store, "s-end");
+    store.updateSession("s-end", (s) => ({ ...s, process: { pid, start: `${start}0`, ancestors: [] } }));
+    const reused = await post("/api/sessions/s-end/end", {});
+    assert.equal(reused.status, 400, "a pid now held by another process is not signalled");
+    assert.equal(procInfo(pid)?.start, start);
+    store.updateSession("s-end", (s) => ({ ...s, process: { pid, start, ancestors: [] } }));
+    assert.equal((await post("/api/sessions/s-end/end", {}, { Origin: "http://evil.example" })).status, 403);
+    assert.equal((await post("/api/sessions/s-end/end", {})).status, 200);
+    assert.equal(await exited, "SIGTERM");
+  });
+
   it("serves a session's conversation, desk answers included", async () => {
     store.addMessage({ sessionId: "s1", from: "session", text: "Which name?" });
     const q = store.ask({ sessionId: "s1", kind: "question", text: "Which name?" });

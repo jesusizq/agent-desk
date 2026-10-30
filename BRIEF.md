@@ -74,7 +74,8 @@ show, and it takes the developer to the right terminal in one click.
 - **While you were away.** One view of what happened since the developer last looked.
 - **Early warnings.** Disk and worktree growth per project, contexts close to full.
 - **Session control.** Suggest the right terminal command at the right time (e.g. compact when the
-  context is nearly full), ready to copy; direct control through tmux (see §4).
+  context is nearly full), ready to copy; direct control through tmux, and ending a session the
+  developer can no longer reach (see §4).
 
 ## 4. Architecture
 
@@ -108,7 +109,9 @@ show, and it takes the developer to the right terminal in one click.
   model, so an answer cannot trigger them. Sessions that run inside `tmux` record their pane; the
   desk sends them keys from a fixed list (`/compact`, Escape, Enter, 1–5), after a confirming second
   click, only to a live registered session whose pane hosts its process. Elsewhere the desk suggests
-  the command with a copy button. Launching sessions through a provider SDK is noted as an
+  the command with a copy button. Any terminal's session can be ended from the desk (a session left
+  running where the developer can no longer reach it): after a confirming second click, the desk
+  sends SIGTERM to the session's own process, once it has checked the pid is still that process. Launching sessions through a provider SDK is noted as an
   alternative and not pursued.
 - **From a phone.** Tailscale Serve publishes the desk on the developer's tailnet (HTTPS, never
   Funnel) while the server stays on 127.0.0.1 and accepts that host only with the developer's
@@ -126,7 +129,7 @@ show, and it takes the developer to the right terminal in one click.
 
 The desk turns clicks into text delivered to AI sessions, so everything it shows is untrusted and
 everything it sends is a command. Rules in `.claude/rules/security.md`: bound to 127.0.0.1, protected
-against DNS rebinding and CSRF, no command execution beyond the allow-listed tmux keys, strict path
+against DNS rebinding and CSRF, no command execution beyond the allow-listed tmux keys and ending a session's own process, strict path
 handling, sanitised rendering, no remote assets, minimal pinned dependencies. Links to sessions only
 focus a registered session's terminal; they never type into it or run anything.
 

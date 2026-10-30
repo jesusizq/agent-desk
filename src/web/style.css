@@ -548,6 +548,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 }
 .wt-list { max-height: 340px; overflow: auto; }
 .wt-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+/* Ending a session cannot be undone: set apart, in the colour of what stops. */
+.wt-actions .danger { color: var(--danger); margin-left: auto; }
 .next .qfull { color: var(--text); }
 .conversation { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; padding: 4px 2px; }
 .conversation.long { max-height: 560px; }

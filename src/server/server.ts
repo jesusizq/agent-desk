@@ -8,7 +8,7 @@ import { fields, InputError, oneOf, optional, text } from "../core/check.ts";
 import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { type DeskState, type DiskWarning, imageIds, type Session } from "../core/model.ts";
-import { isAlive } from "../core/proc.ts";
+import { endProcess, isAlive } from "../core/proc.ts";
 import { isCode } from "../store/fsx.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
 import { RemoteUnlock } from "./remote-unlock.ts";
@@ -104,6 +104,14 @@ const ACTIONS: Record<string, Action> = {
     sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], action);
     return { sent: action };
   },
+  "sessions/end": (store, target) => {
+    const s = store.getSession(target);
+    if (!s?.process?.start || s.state === "ended" || !isAlive(s.process.pid, s.process.start)) {
+      throw new InputError("this session's process is not running or cannot be identified; nothing was sent");
+    }
+    endProcess(s.process.pid, s.process.start);
+    return { ended: target };
+  },
 };
 
 export function createDeskServer(store: Store, port: number, remote: Access["remote"] = remoteFromEnv(process.env)): Server {
@@ -146,7 +154,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   if (!writeAllowed(req, access, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
   if (route === "/api/seen") return sendJson(res, 200, store.markAllSeen());
   if (route === "/api/images") return attachImage(store, req, res);
-  const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read)$/.exec(route);
+  const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read|end)$/.exec(route);
   const action = m ? ACTIONS[`${m[1]}/${m[3]}`] : undefined;
   if (!m?.[2] || !action) return sendJson(res, 404, { error: "not found" });
   if (!ID_PATTERN.test(m[2])) return sendJson(res, 400, { error: "invalid id" });

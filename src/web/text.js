@@ -155,6 +155,9 @@ export const TEXT = {
     confirm: (what) => `Send ${what}?`,
     /** @param {string} what @param {string} where */
     sent: (what, where) => `Sent ${what} to ${where}.`,
+    end: "End session",
+    /** @param {string} where */
+    ended: (where) => `Asked ${where} to end. It closes in a moment.`,
   },
   /** @param {string} type */
   agentType: (type) => `${type} agent`,

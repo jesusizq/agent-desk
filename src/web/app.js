@@ -1086,14 +1086,15 @@ function sessionCard(s) {
 }
 
 /**
- * Keys the desk may send a session that runs inside tmux. Each button asks for a second click
- * within 3 s before sending, so a stray click sends nothing. @param {Session} s
+ * Keys the desk may send a session that runs inside tmux, and ending the session's process. Each
+ * button asks for a second click within 3 s before acting, so a stray click does nothing. @param {Session} s
  */
 function controlSection(s) {
-  if (!s.tmux || !isLive(s)) return null;
-  /** @param {string} action @param {string} text */
-  const key = (action, text) => {
-    const b = h("button", { class: "secondary" }, text);
+  const endable = Boolean(s.process?.start);
+  if ((!s.tmux && !endable) || !isLive(s)) return null;
+  /** @param {string} text @param {() => Promise<unknown>} act @param {string} [cls] */
+  const confirmed = (text, act, cls = "secondary") => {
+    const b = h("button", { class: cls }, text);
     let armed = 0;
     b.addEventListener("click", () => {
       if (Date.now() - armed > 3000) {
@@ -1104,10 +1105,12 @@ function controlSection(s) {
       }
       armed = 0;
       b.textContent = text;
-      run(post(`/api/sessions/${s.id}/keys`, { action }).then(() => toast(TEXT.control.sent(text, label(s)))));
+      run(act());
     });
     return b;
   };
+  /** @param {string} action @param {string} text */
+  const key = (action, text) => confirmed(text, () => post(`/api/sessions/${s.id}/keys`, { action }).then(() => toast(TEXT.control.sent(text, label(s)))));
   // The terminal shows a dialog (a permission prompt, a question with options) only while the
   // session has one open; the keys that answer it are offered only then.
   const dialog = data.questions.some((q) => q.status === "open" && q.sessionId === s.id && (q.kind === "permission" || q.kind === "question"));
@@ -1118,11 +1121,11 @@ function controlSection(s) {
     h(
       "div",
       { class: "row wt-actions" },
-      key("compact", "/compact"),
-      key("interrupt", TEXT.control.interrupt),
-      dialog ? [h("span", { class: "faint" }, TEXT.control.dialog), ...[1, 2, 3, 4, 5].map((n) => key(`option-${n}`, String(n))), key("enter", "Enter")] : null,
+      s.tmux ? [key("compact", "/compact"), key("interrupt", TEXT.control.interrupt)] : null,
+      s.tmux && dialog ? [h("span", { class: "faint" }, TEXT.control.dialog), ...[1, 2, 3, 4, 5].map((n) => key(`option-${n}`, String(n))), key("enter", "Enter")] : null,
+      endable ? confirmed(TEXT.control.end, () => post(`/api/sessions/${s.id}/end`, {}).then(() => toast(TEXT.control.ended(label(s)))), "secondary danger") : null,
     ),
-    ON_THIS_MACHINE ? null : attachLine(s.tmux),
+    s.tmux && !ON_THIS_MACHINE ? attachLine(s.tmux) : null,
   );
 }
 

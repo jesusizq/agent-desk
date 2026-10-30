@@ -14,11 +14,15 @@ command.
   login (`AGENT_DESK_REMOTE_USER`); writes from it need its `https://` origin and the secret.
 - Every state-changing request needs a per-install secret (random, stored with 0600 permissions)
   and an exact `Origin` match; no CORS for any other origin (CSRF from other local pages).
-- No endpoint executes commands, spawns processes or reads arbitrary paths, with one exception: the
-  keys endpoint runs `tmux send-keys` (argument list, no shell) with keys from a fixed allow-list
-  (`src/core/tmux.ts`: /compact, Escape, Enter, 1–5), only to the pane of a registered, live session,
-  after checking that the pane's process is that session's process or one of its ancestors, and only
-  after the developer confirms on the page.
+- No endpoint executes commands, spawns processes or reads arbitrary paths, with two exceptions,
+  each only after the developer confirms on the page:
+  - the keys endpoint runs `tmux send-keys` (argument list, no shell) with keys from a fixed
+    allow-list (`src/core/tmux.ts`: /compact, Escape, Enter, 1–5), only to the pane of a registered,
+    live session, after checking that the pane's process is that session's process or one of its
+    ancestors;
+  - the end endpoint sends SIGTERM to a registered, live session's own process, only after checking
+    in /proc that the pid still has the start time the session recorded (`src/core/proc.ts`); no
+    other signal, and no process the session did not register as its own.
 
 ## Data
 
