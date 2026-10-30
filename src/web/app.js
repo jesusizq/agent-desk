@@ -53,6 +53,7 @@ const ui = {
   /** @type {Map<string, string[]>} ids of the images attached to each draft */ draftImages: new Map(),
   /** @type {Map<string, number>} images of each draft still on their way to the store */ uploading: new Map(),
   /** @type {Map<string, number>} */ arrived: new Map(),
+  /** @type {Set<string>} arrivals whose entrance was already drawn */ entered: new Set(),
   /** @type {Set<string> | null} */ known: null,
   /** @type {Map<string, string> | null} when each session last said something, to notice new messages */ heardAt: null,
   /** @type {Map<string, string>} the message each session was last marked read for; a failure is not retried in a loop */ readFor: new Map(),
@@ -120,6 +121,12 @@ const openQuestions = () => data.questions.filter((q) => q.status === "open" && 
 const isNew = (r) => !r.seenAt && (!data.seen || r.at > data.seen.since);
 /** @param {string} id */
 const arriving = (id) => Date.now() - (ui.arrived.get(id) ?? 0) < ARRIVAL_MS;
+/** On the first drawing only of what just arrived: the page redraws often, and the entrance must not replay. @param {string} id @param {string} where */
+const entering = (id, where) => {
+  if (!arriving(id) || ui.entered.has(`${where} ${id}`)) return false;
+  ui.entered.add(`${where} ${id}`);
+  return true;
+};
 /** @param {Session} s */
 const isLive = (s) => s.state !== "ended" && !data.gone.includes(s.id);
 
@@ -758,13 +765,14 @@ function earlierConversation(q) {
 function nextCard(q) {
   const s = S(q.sessionId);
   const canAnswer = data.listening.includes(q.sessionId);
+  const enters = entering(q.id, "next");
   return h(
     "article",
     {
-      class: `next${heat(q.askedAt)}${arriving(q.id) ? " arrived" : ""}`,
+      class: `next${heat(q.askedAt)}${enters ? " arrived" : ""}`,
       "aria-label": TEXT.next,
       // The halo keeps its phase across re-renders instead of starting over each time.
-      style: `view-transition-name: q-${q.id}; animation-delay: ${arriving(q.id) ? "0s, .35s" : `-${Date.now() % HALO_MS}ms`}`,
+      style: `view-transition-name: q-${q.id}; animation-delay: ${enters ? "0s, .35s" : `-${Date.now() % HALO_MS}ms`}`,
     },
     h("div", { class: "meta" }, beacon(q.askedAt), badge(q.kind), where(s), h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt))),
     h("div", { class: "qlabel" }, TEXT.asks[q.kind]),
@@ -801,7 +809,7 @@ function inboxRow({ mark, line, meta, when, open, go, end, key }) {
   return h(
     "div",
     {
-      class: `qrow${arriving(key) ? " arrived" : ""}`,
+      class: `qrow${entering(key, "row") ? " arrived" : ""}`,
       style: `view-transition-name: i-${key}`,
       role: "button",
       tabindex: "0",

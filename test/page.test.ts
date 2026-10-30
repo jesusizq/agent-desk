@@ -145,6 +145,20 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.eval("localStorage.removeItem('agent-desk:failures')");
   });
 
+  it("plays a new question's entrance once, not at every redraw", async () => {
+    const page = await open();
+    await page.eval(`window.entrances = 0; new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n instanceof Element) entrances += [n, ...n.querySelectorAll('.arrived')].filter((e) => e.matches('.arrived') && e.textContent.includes('Which rounding mode?')).length; }).observe(document.body, { childList: true, subtree: true })`);
+    const q = store.ask({ sessionId: "demo-iva", kind: "question", text: "Which rounding mode?" });
+    await page.waitFor("[...document.querySelectorAll('.qrow, .next')].some((e) => e.textContent.includes('Which rounding mode?'))");
+    // Changes that make the page redraw while the arrival is still fresh.
+    for (const activity of ["Edit: a.ts", "Edit: b.ts", "Edit: c.ts"]) {
+      store.updateSession("demo-iva", (s) => ({ ...s, activity }));
+      await page.waitFor(`document.body.textContent.includes(${JSON.stringify(activity)})`);
+    }
+    assert.ok((await page.eval<number>("entrances")) <= 1, "the entrance is drawn at most once");
+    store.dismiss(q.id);
+  });
+
   it("numbers a list shown from its third item from 3", async () => {
     store.ask({ sessionId: "demo-pagos", kind: "waiting", text: "3. Shall I rotate the token?\n4. Shall I remove line 119?" });
     const page = await open();
