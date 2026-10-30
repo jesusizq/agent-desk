@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { id, slug } from "../../src/core/ids.ts";
-import type { SessionProcess } from "../../src/core/model.ts";
+import { FAILURES_KEPT, type SessionProcess } from "../../src/core/model.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { Store } from "../../src/store/store.ts";
@@ -316,14 +316,17 @@ export function turnTexts(transcript: string): string[] {
 function recordActivity(input: Common, ctx: HookContext, problems: string[]): void {
   const what = describeTool(input.raw.tool_name, input.raw.tool_input, ctx.env.CLAUDE_PROJECT_DIR || input.cwd);
   const agentId = typeof input.raw.agent_id === "string" ? input.raw.agent_id : "";
+  const at = new Date().toISOString();
+  // A failed call is kept with its time: several in a row show an agent stuck or looping.
+  const failed = (before: string[] | undefined) => (input.event === "PostToolUseFailure" ? [...(before ?? []), at].slice(-FAILURES_KEPT) : before);
   if (agentId === "") {
-    ctx.store.updateSession(input.sessionId, (s) => (s.state === "ended" ? s : { ...s, activity: bounded(what, 200) }));
+    ctx.store.updateSession(input.sessionId, (s) => (s.state === "ended" ? s : compact({ ...s, activity: bounded(what, 200), activityAt: at, failedAt: failed(s.failedAt) })));
     recordTurnTexts(input, ctx.store);
     return;
   }
   settlePairing(input, ctx, agentId, subagentMeta(input, agentId), problems);
   const agent = ctx.store.listAgents(input.sessionId).find((a) => a.ref === agentId);
-  if (agent && agent.state === "working") ctx.store.upsertAgent(input.sessionId, agent.name, { activity: bounded(what, 200) });
+  if (agent && agent.state === "working") ctx.store.upsertAgent(input.sessionId, agent.name, compact({ activity: bounded(what, 200), activityAt: at, failedAt: failed(agent.failedAt) }));
 }
 
 /**

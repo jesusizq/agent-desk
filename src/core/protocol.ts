@@ -38,6 +38,10 @@ export type Session = {
   takesMessagesWhileWorking?: boolean;
   /** What the session is doing now, sampled from its tool calls (e.g. "Edit: src/app.ts"). */
   activity?: string;
+  /** When its last tool call was recorded. */
+  activityAt?: string;
+  /** When its latest tool calls failed, the last 10. */
+  failedAt?: string[];
   /** The session's last message at the end of a turn: shown quietly unless it asks something. */
   lastMessage?: { text: string; at: string };
   /** When the developer last read this session's conversation on the desk (any device). */
@@ -97,6 +101,10 @@ export type Agent = {
   summary?: string;
   state: AgentState;
   activity?: string;
+  /** When its last tool call was recorded. */
+  activityAt?: string;
+  /** When its latest tool calls failed, the last 10. */
+  failedAt?: string[];
   branch?: string;
   commit?: string;
   /** Names of agents of the same session this one builds on or waits for. */

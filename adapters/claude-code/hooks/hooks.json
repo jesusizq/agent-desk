@@ -73,7 +73,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "h=\"${AGENT_DESK_HOME:-$HOME/.cache/agent-desk}\"; if [ -e \"$h/.permission-open\" ] || [ $(( $(date +%s) - $(stat -c %Y \"$h/.activity\" 2>/dev/null || echo 0) )) -ge 3 ]; then touch \"$h/.activity\" 2>/dev/null; agent-desk-claude hook; fi; true",
+            "command": "agent-desk-claude hook",
             "async": true
           }
         ]

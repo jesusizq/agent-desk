@@ -147,6 +147,21 @@ describe("Claude Code hooks", () => {
     assert.equal(store.getSession("cc-1")?.activity, undefined);
   });
 
+  it("stamps each recorded tool call and keeps when the latest ones failed", () => {
+    const store = testStore();
+    handleHook(event("PostToolUse", { tool_name: "Bash", tool_input: { command: "npm test" } }), ctx(store));
+    assert.ok(store.getSession("cc-1")?.activityAt);
+    assert.equal(store.getSession("cc-1")?.failedAt, undefined);
+    for (let i = 0; i < 12; i++) handleHook(event("PostToolUseFailure", { tool_name: "Bash", tool_input: { command: "npm test" } }), ctx(store));
+    assert.equal(store.getSession("cc-1")?.failedAt?.length, 10, "only the latest ten are kept");
+    handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: "t1", tool_input: { description: "Fix the seal", subagent_type: "general-purpose", prompt: "…" } }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a-1", agent_type: "general-purpose" }), ctx(store));
+    handleHook(event("PostToolUseFailure", { agent_id: "a-1", tool_name: "Bash", tool_input: { command: "make" } }), ctx(store));
+    const [agent] = store.listAgents("cc-1");
+    assert.equal(agent?.failedAt?.length, 1);
+    assert.ok(agent?.activityAt);
+  });
+
   it("keeps what the developer writes while the session works, until the turn that took it in ends", () => {
     const store = testStore();
     handleHook(event("SessionStart", { source: "startup" }), ctx(store));

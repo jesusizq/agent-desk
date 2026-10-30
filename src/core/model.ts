@@ -49,6 +49,8 @@ export function readSession(value: unknown, where = "session"): Session {
     tmux: optional(f.tmux, `${where}.tmux`, readTmux),
     takesMessagesWhileWorking: optional(f.takesMessagesWhileWorking, `${where}.takesMessagesWhileWorking`, bool),
     activity: optional(f.activity, `${where}.activity`, line),
+    activityAt: optional(f.activityAt, `${where}.activityAt`, isoTime),
+    failedAt: optional(f.failedAt, `${where}.failedAt`, (v, w) => list(v, w, isoTime, FAILURES_KEPT)),
     lastMessage: optional(f.lastMessage, `${where}.lastMessage`, readMessage),
     readAt: optional(f.readAt, `${where}.readAt`, isoTime),
     sentWhileWorking: optional(f.sentWhileWorking, `${where}.sentWhileWorking`, (v, w) => list(v, w, readSent, 20)),
@@ -114,6 +116,9 @@ function readAnswer(value: unknown, where: string): Answer {
   });
 }
 
+/** How many of the latest failed tool calls a session or an agent keeps. */
+export const FAILURES_KEPT = 10;
+
 /** Ids of images attached on the desk. */
 export function imageIds(value: unknown, where: string): string[] {
   return list(value, where, id, ATTACHED_IMAGES_MAX);
@@ -130,6 +135,8 @@ export function readAgent(value: unknown, where = "agent"): Agent {
     summary: optional(f.summary, `${where}.summary`, line),
     state: oneOf(AGENT_STATES)(f.state, `${where}.state`),
     activity: optional(f.activity, `${where}.activity`, line),
+    activityAt: optional(f.activityAt, `${where}.activityAt`, isoTime),
+    failedAt: optional(f.failedAt, `${where}.failedAt`, (v, w) => list(v, w, isoTime, FAILURES_KEPT)),
     branch: optional(f.branch, `${where}.branch`, label),
     commit: optional(f.commit, `${where}.commit`, label),
     after: list(f.after ?? [], `${where}.after`, id, 50),

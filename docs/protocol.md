@@ -10,9 +10,9 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 
 | Path | Record | Written by |
 | --- | --- | --- |
-| `sessions/<session>.json` | `Session`: provider label, project, title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity, last message of the turn, whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
+| `sessions/<session>.json` | `Session`: provider label, project, title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded, when its latest tool calls failed, last message of the turn, whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
 | `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer and how it was given (`terminal`, `desk`), interpretation, `dialog` when it is a provider dialog whose answer only the hook waiting for it takes | hooks, `agent-desk ask`, the page |
-| `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity, branch, commit, `after` (agents it builds on), times | hooks, `agent-desk agent` |
+| `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded, when its latest tool calls failed, branch, commit, `after` (agents it builds on), times | hooks, `agent-desk agent` |
 | `results/<result>.json` | `Result`: title, summary, status, local URL, image ids, before/after pair, assumptions, taste decisions, checks | `agent-desk result` |
 | `images/<image>.<png\|jpg\|webp\|gif>` | a copy of each reported image, and each image the developer attaches to an answer or message on the page; type checked by its first bytes, 20 MB at most. One that no live result, answer or message shows is archived with the rest | `agent-desk result`, the page |
 | `services/<service>.json` | a local server of a session and its URL | `agent-desk service` |
