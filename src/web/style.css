@@ -846,6 +846,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .menu small { grid-column: 2; color: var(--faint); font-size: 0.75rem; line-height: 1.35; }
 .menu-row { display: grid; gap: 6px; padding: 7px 8px; font-size: 0.8125rem; color: var(--muted); }
 .menu-row .seg { display: flex; } .menu-row .seg button { flex: 1; justify-content: center; }
+.menu-row .row-i { display: inline-flex; align-items: center; gap: 5px; }
 .sizes .a0 { font-size: 0.75rem; } .sizes .a1 { font-size: 0.875rem; } .sizes .a2 { font-size: 1rem; } .sizes .a3 { font-size: 1.125rem; }
 .ppart .back { align-self: flex-start; margin-bottom: 4px; }
 .done-count { font-size: 0.7188rem; margin-left: 4px; white-space: nowrap; }

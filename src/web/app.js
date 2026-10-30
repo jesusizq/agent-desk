@@ -2090,12 +2090,13 @@ function renderDisplay() {
   const button = byId("theme");
   button.title = TEXT.display.title;
   button.setAttribute("aria-label", TEXT.display.title);
-  button.replaceChildren(icon(theme === "auto" ? "auto" : theme === "light" ? "sun" : "moon"), h("span", { class: "lbl" }, TEXT.theme[theme]));
+  // Settings, not a light/dark switch: the menu holds the theme and the text size.
+  button.replaceChildren(icon("sliders"), h("span", { class: "lbl" }, TEXT.display.title));
   /** @param {string} key @param {string} value @param {string} current @param {Node | string} text @param {string} [name] */
   const choice = (key, value, current, text, name) =>
     h("button", { "aria-pressed": String(value === current), "aria-label": name, title: name, onclick: () => (localStorage.setItem(key, value), renderDisplay()) }, text);
   byId("display-menu").replaceChildren(
-    h("div", { class: "menu-row" }, h("span", {}, TEXT.display.theme), h("div", { class: "seg" }, THEMES.map((t) => choice("agent-desk:theme", t, theme, TEXT.theme[t])))),
+    h("div", { class: "menu-row" }, h("span", {}, TEXT.display.theme), h("div", { class: "seg" }, THEMES.map((t) => choice("agent-desk:theme", t, theme, h("span", { class: "row-i" }, icon(t === "auto" ? "auto" : t === "light" ? "sun" : "moon"), TEXT.theme[t]))))),
     h("div", { class: "menu-row" }, h("span", {}, TEXT.display.text), h("div", { class: "seg sizes" }, sizes.map((k, i) => choice("agent-desk:text", k, size, h("span", { class: `a${i}` }, "A"), TEXT.display.sizes(k))))),
   );
 }
