@@ -187,9 +187,6 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   const { store } = ctx;
   const sid = input.sessionId;
   store.closeOpen(sid, { kinds: ["permission"], problems });
-  // A turn that started without a typed prompt (e.g. a background task finishing) leaves the
-  // previous turn's last message behind; this turn's message replaces it.
-  store.closeOpen(sid, { kinds: ["waiting"], status: "dismissed", problems });
   syncPermissionMarker(store, problems);
   const message = text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000).trim();
   const at = new Date().toISOString();
@@ -208,16 +205,22 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   store.mergeMetrics({ sessionId: sid, backgroundShells: shells });
   if (message === "") return;
   const { last, before } = splitLastParagraph(message);
-  const asked = store.openQuestions(sid, problems);
+  // A question still open here was not answered: this turn started without a typed prompt (e.g. a
+  // background task finishing). A turn that asks again replaces it; a report that asks nothing
+  // ("still waiting for your answer") leaves it open, or the developer would lose the question.
+  const replaced = () => store.closeOpen(sid, { kinds: ["waiting"], status: "dismissed", problems });
+  const asked = store.openQuestions(sid, problems).filter((q) => q.kind === "question");
   if (asked.length > 0) {
     // The model asked through the CLI: the message it ended the turn with explains the question.
     // Its last paragraph is left out only when it repeats the question; anything more it says stays.
+    replaced();
     const whole = [before, last].filter(Boolean).join("\n\n");
-    for (const q of asked) if (q.kind === "question") store.addContext(q.id, sameWords(last, q.text) ? before : whole);
+    for (const q of asked) store.addContext(q.id, sameWords(last, q.text) ? before : whole);
     return;
   }
   // Only a turn that ends asking something needs the developer; a report waits quietly on the session.
   if (!/[?¿]/.test(last)) return;
+  replaced();
   store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: last, context: before || undefined }));
 }
 

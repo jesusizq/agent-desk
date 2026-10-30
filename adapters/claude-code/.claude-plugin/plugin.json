@@ -1,6 +1,6 @@
 {
   "name": "agent-desk",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Reports this machine's Claude Code sessions to agent-desk, the local page that follows them, and delivers answers given there.",
   "license": "MIT"
 }

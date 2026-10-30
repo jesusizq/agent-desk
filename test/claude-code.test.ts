@@ -82,6 +82,17 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(store.openQuestions("cc-1").map((q) => q.text), ["Build passed. Deploy?"]);
   });
 
+  it("keeps a question open when a turn without a typed prompt ends asking nothing", () => {
+    const store = testStore();
+    handleHook(event("Stop", { last_assistant_message: "Shall I fix the four of them?" }), ctx(store));
+    // A background task wakes the session; its turn ends with a reminder, not a question.
+    handleHook(event("Stop", { last_assistant_message: "Still waiting for your answer about the four fixes." }), ctx(store));
+    assert.deepEqual(store.openQuestions("cc-1").map((q) => q.text), ["Shall I fix the four of them?"]);
+    assert.match(store.getSession("cc-1")?.lastMessage?.text ?? "", /Still waiting/);
+    handleHook(event("Stop", { last_assistant_message: "Shall I fix only two?" }), ctx(store));
+    assert.deepEqual(store.openQuestions("cc-1").map((q) => q.text), ["Shall I fix only two?"], "a turn that asks again replaces it");
+  });
+
   it("keeps a report that asks nothing out of Needs you, as the session's last message", () => {
     const store = testStore();
     handleHook(event("UserPromptSubmit", { prompt: "relaunch the agents" }), ctx(store));
