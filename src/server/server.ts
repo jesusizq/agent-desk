@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import * as path from "node:path";
+import { gzipSync } from "node:zlib";
 import { fields, InputError, oneOf, optional, text } from "../core/check.ts";
 import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
@@ -41,6 +42,8 @@ export function deskState(store: Store, now = new Date()): DeskState {
   const snap = store.snapshot();
   return {
     ...snap,
+    // The page shows a question's context only while it is open; the history needs no more.
+    questions: snap.questions.map(({ context, ...q }) => (q.status === "open" && context !== undefined ? { ...q, context } : q)),
     now: now.toISOString(),
     gone: goneSessions(snap.sessions),
     listening: snap.sessions.filter((s) => store.isListening(s.id, snap.problems)).map((s) => s.id),
@@ -200,7 +203,9 @@ function state(store: Store, req: IncomingMessage, res: ServerResponse): void {
     res.end();
     return;
   }
-  send(res, 200, body, "application/json; charset=utf-8", { ETag: etag, "Cache-Control": "no-cache" });
+  // Polled every 1.5 s, also from a phone over the tailnet: compressed when the browser takes it.
+  const gzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));
+  send(res, 200, gzip ? gzipSync(body) : body, "application/json; charset=utf-8", { ETag: etag, "Cache-Control": "no-cache", Vary: "Accept-Encoding", ...(gzip ? { "Content-Encoding": "gzip" } : {}) });
 }
 
 function imageFile(store: Store, imageId: string, res: ServerResponse): void {

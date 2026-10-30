@@ -112,7 +112,7 @@ The server binds 127.0.0.1 and refuses any request whose `Host` is not `127.0.0.
 | Request | Purpose |
 | --- | --- |
 | `GET /` and `/app.js`, `/dom.js`, `/text.js`, `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
-| `GET /api/state` | `DeskState`: every record, plus `gone`, `listening`, `disk` and `problems`; answers 304 while nothing changed |
+| `GET /api/state` | `DeskState`: every record (a closed question without its context), plus `gone`, `listening`, `disk` and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |
 | `POST /api/sessions/<id>/keys` `{ "action": "compact" \| "interrupt" \| "enter" \| "option-1"…"option-5" }` | sends those keys to the session's tmux pane (see `.claude/rules/security.md`) |

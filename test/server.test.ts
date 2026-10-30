@@ -54,6 +54,20 @@ describe("server", () => {
     assert.equal(again.status, 304);
   });
 
+  it("sends the state compressed, with the context of open questions only", async () => {
+    const open = store.ask({ sessionId: "s1", kind: "question", text: "Open?" });
+    store.addContext(open.id, "why it asks");
+    const closed = store.ask({ sessionId: "s1", kind: "question", text: "Closed?" });
+    store.addContext(closed.id, "a long report");
+    store.dismiss(closed.id);
+    const res = await fetch(base + "/api/state", { headers: { "Accept-Encoding": "gzip" } });
+    assert.equal(res.headers.get("content-encoding"), "gzip");
+    const { questions } = (await res.json()) as { questions: { id: string; context?: string }[] };
+    assert.equal(questions.find((q) => q.id === open.id)?.context, "why it asks");
+    assert.equal(questions.find((q) => q.id === closed.id)?.context, undefined);
+    store.dismiss(open.id);
+  });
+
   it("refuses writes without the exact Origin or the secret", async () => {
     const q = store.ask({ sessionId: "s1", kind: "question", text: "Ok?" });
     for (const headers of [{ Origin: "http://evil.example" }, { Origin: `http://127.0.0.1:${port + 1}` }, { "X-Agent-Desk-Secret": "0".repeat(64) }]) {

@@ -1969,4 +1969,8 @@ render();
 await refresh();
 route();
 setInterval(refresh, POLL_MS);
+// A phone puts a hidden tab's timers to sleep: coming back, the desk is fetched at once, not at the next tick.
+document.addEventListener("visibilitychange", () => document.hidden || refresh());
+addEventListener("pageshow", (e) => /** @type {PageTransitionEvent} */ (e).persisted && refresh());
+addEventListener("online", () => refresh());
 setInterval(render, TICK_MS);
