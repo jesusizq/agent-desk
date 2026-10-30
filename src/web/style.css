@@ -642,7 +642,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   .board[data-tab="inbox"] > .col-needs, .board[data-tab="sessions"] > .col-sessions, .board[data-tab="review"] > .col-review { display: flex; }
   .board.review-empty[data-tab="review"] > .col-review { display: flex; }
   .col-head { font-size: 16px; padding: 4px 2px 8px; }
-  #toasts { bottom: calc(70px + var(--foot) + env(safe-area-inset-bottom)); }
+  #toasts { bottom: calc(70px + var(--foot) + env(safe-area-inset-bottom)); left: 12px; right: 12px; width: auto; transform: none; align-items: stretch; }
+  .toast { max-width: none; padding: 12px 14px; font-size: 14px; border-radius: 10px; }
   /* The strip (warnings, what is new to review) belongs with Inbox and Results; elsewhere it gives its room back, unless it reports an error. */
   body:not([data-view="desk"][data-tab="inbox"]):not([data-view="desk"][data-tab="review"]) .strip:not(:has(.err)) { display: none; }
   /* The large card: kind and age on the first line, where it comes from on its own line below. */
