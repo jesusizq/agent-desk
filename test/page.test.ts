@@ -159,6 +159,27 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.ok(store.imageFile(entry?.images?.[0] ?? ""), "the image is in the store");
   });
 
+  it("on a phone, shows the project's name whole and keeps a long draft where it is written", async () => {
+    store.upsertSession({ id: "long-draft", provider: "Test", project: { name: "invoices-api", dir: "/home/demo/Projects/invoices-api" }, title: "a session whose title is far too long for a phone", takesMessagesWhileWorking: true });
+    const page = await open(390, 844);
+    await page.click(".tabbar button", "Sessions");
+    const proj = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('far too long')).querySelector('.sproj')`;
+    await page.waitFor(proj);
+    assert.equal(await page.eval<boolean>(`${proj}.scrollWidth <= ${proj}.clientWidth`), true, "the project's name is not cut");
+    await page.click(".scard", "far too long");
+    await page.click("#session .chat-footer textarea");
+    const box = "document.querySelector('#session .chat-footer textarea')";
+    const before = await page.eval<number>(`${box}.clientHeight`);
+    await page.type(Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n"));
+    assert.ok((await page.eval<number>(`${box}.clientHeight`)) > before, "the box grows with the draft");
+    const top = await page.eval<number>(`${box}.scrollTop`);
+    assert.ok(top > 0, "a draft taller than the box is scrolled to where it is written");
+    store.upsertAgent("long-draft", "helper", { goal: "Redraw the panel" });
+    await page.waitFor(`document.querySelector('#session').textContent.includes('Redraw the panel')`);
+    assert.equal(await page.eval<number>(`${box}.scrollTop`), top, "a redraw keeps the draft's scroll");
+    assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), true);
+  });
+
   it("closes only the zoom with Escape, then the result", async () => {
     const page = await open();
     await page.click(".rtile", "Three pay button variants");

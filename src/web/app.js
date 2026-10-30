@@ -521,6 +521,13 @@ async function uploadImage(file) {
 function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true) {
   const box = /** @type {HTMLTextAreaElement} */ (h("textarea", { "data-key": key, placeholder, "aria-label": placeholder }));
   box.value = ui.drafts.get(key) ?? "";
+  // The box grows with what is written, up to 40% of the window; past that it scrolls.
+  const fit = () => {
+    if (!box.isConnected) return;
+    box.style.height = "auto";
+    box.style.height = `${Math.min(box.scrollHeight + 2, Math.round(innerHeight * 0.4))}px`;
+  };
+  requestAnimationFrame(fit);
   const attached = images ? (ui.draftImages.get(key) ?? []) : [];
   const busy = ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0;
   /** @param {Blob[]} files */
@@ -559,11 +566,13 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     box.value = o;
     ui.drafts.set(key, o);
     syncPressed();
+    fit();
     box.focus();
   };
   box.addEventListener("input", () => {
     ui.drafts.set(key, box.value);
     syncPressed();
+    fit();
   });
   box.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -1722,13 +1731,16 @@ function renderView() {
 function keepFocus(root, rebuild) {
   const active = document.activeElement;
   const key = active instanceof HTMLElement && root.contains(active) ? active.dataset.key : undefined;
-  const caret = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? { from: active.selectionStart, to: active.selectionEnd } : null;
+  const caret = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? { from: active.selectionStart, to: active.selectionEnd, top: active.scrollTop } : null;
   rebuild();
   if (!key) return;
   const again = root.querySelector(`[data-key="${CSS.escape(key)}"]`);
   if (again instanceof HTMLTextAreaElement || again instanceof HTMLInputElement) {
     again.focus({ preventScroll: true });
-    if (caret) again.setSelectionRange(caret.from, caret.to);
+    if (caret) {
+      again.setSelectionRange(caret.from, caret.to);
+      again.scrollTop = caret.top; // a long draft stays where it was being written, not at its start
+    }
   }
 }
 /**
