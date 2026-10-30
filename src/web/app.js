@@ -320,7 +320,7 @@ function noticeArrivals() {
 
 /**
  * A session that finished and wrote something new, without asking (questions are noticed above),
- * gets a toast, unless its panel is open and in view.
+ * gets a toast, unless its panel is open and in view; no desktop notification, as it needs no answer.
  */
 function noticeMessages() {
   const first = ui.heardAt === null;
@@ -332,7 +332,6 @@ function noticeMessages() {
     if (first || !unread(s) || data.questions.some((q) => q.status === "open" && q.sessionId === s.id)) continue;
     if (ui.panelSession === s.id && dialog("session").open && !document.hidden) continue;
     toast(TEXT.newMessage(label(s)));
-    notify(TEXT.newMessage(label(s)), firstLine(s.lastMessage?.text ?? ""), `m-${s.id}`, () => openSession(s.id));
   }
 }
 
