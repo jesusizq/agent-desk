@@ -267,8 +267,8 @@ async function refresh() {
 
 /** Which cards are on the desk: when it changes, the change is animated. */
 function shape() {
-  const { questions, messages } = inbox();
-  return [questions.map((q) => q.id), messages.map((s) => s.id), ui.sel, data.results.filter(isNew).map((r) => r.id), data.sessions.filter(isLive).map((s) => s.id)].flat().join(" ");
+  const { questions } = inbox();
+  return [questions.map((q) => q.id), ui.sel, data.results.filter(isNew).map((r) => r.id), data.sessions.filter(isLive).map((s) => s.id)].flat().join(" ");
 }
 
 /**
@@ -721,17 +721,13 @@ function nextCard(q) {
 
 /**
  * Everything that waits for the developer, in the order to deal with it: questions and permission
- * prompts oldest first, then sessions that finished with something new to read, then failures not
- * looked at yet.
+ * prompts oldest first, then failures not looked at yet. A session that finished with a report and
+ * asked nothing is not here: its card under Sessions marks the message as new.
  */
 function inbox() {
   const questions = openQuestions();
-  const asking = new Set(questions.map((q) => q.sessionId));
-  const messages = data.sessions
-    .filter((s) => isLive(s) && inProject(s.id) && s.state === "waiting" && unread(s) && !asking.has(s.id))
-    .sort((a, b) => (a.lastMessage?.at ?? "").localeCompare(b.lastMessage?.at ?? ""));
   const failures = data.results.filter((r) => inProject(r.sessionId) && isNew(r) && r.status === "failed").sort((a, b) => a.at.localeCompare(b.at));
-  return { questions, messages, failures, count: questions.length + messages.length + failures.length };
+  return { questions, failures, count: questions.length + failures.length };
 }
 
 /**
@@ -782,19 +778,6 @@ function questionRow(q) {
   });
 }
 
-/** A session that finished and wrote something not read yet: opening it reads it. @param {Session} s */
-function messageRow(s) {
-  const at = s.lastMessage?.at ?? s.updatedAt;
-  return inboxRow({
-    key: `m-${s.id}`,
-    mark: dot("waiting"),
-    line: [h("span", { class: "badge k-new" }, TEXT.newBadge), " ", firstLine(s.lastMessage?.text ?? "")],
-    meta: `${label(s)} · ${TEXT.yourTurn}`,
-    when: h("span", { class: "age quiet", title: hm(at) }, ago(at)),
-    open: () => openSession(s.id),
-  });
-}
-
 /** A failure not looked at yet: opening it, or its ×, moves it to the history. @param {Result} r */
 function failureRow(r) {
   return inboxRow({
@@ -810,10 +793,10 @@ function failureRow(r) {
 
 /** The inbox: the selected question large, with what it takes to answer it, then the rest in order. */
 function inboxColumn() {
-  const { questions, messages, failures, count } = inbox();
+  const { questions, failures, count } = inbox();
   const selected = questions.find((q) => q.id === ui.sel) ?? questions[0];
   ui.sel = selected?.id ?? null;
-  const rows = [...questions.filter((q) => q !== selected).map(questionRow), ...messages.map(messageRow), ...failures.map(failureRow)];
+  const rows = [...questions.filter((q) => q !== selected).map(questionRow), ...failures.map(failureRow)];
   const reviewEmpty = !data.results.some((r) => inProject(r.sessionId) && isNew(r));
   const clear = h(
     "div",

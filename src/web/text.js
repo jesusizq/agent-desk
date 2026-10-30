@@ -23,7 +23,6 @@ export const TEXT = {
   theme: { auto: "Auto", light: "Light", dark: "Dark" },
   cols: { needs: "Needs you", sessions: "Sessions", review: "To review" },
   tabbar: { inbox: "Inbox", sessions: "Sessions", review: "Results", history: "History" },
-  yourTurn: "your turn",
   /** @param {number} n */
   nOptions: (n) => plural(n, "option", "options"),
   trouble: {
