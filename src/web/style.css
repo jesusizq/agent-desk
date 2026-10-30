@@ -545,8 +545,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .conversation { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; padding: 4px 2px; }
 .conversation.long { max-height: 560px; }
 .conversation > * { flex-shrink: 0; }
-/* A conversation reads like a document: the session's text bare, at a reading measure; the developer's in a grey bubble */
-.msg { max-width: 68ch; font-size: 14px; line-height: 1.6; }
+/* A conversation reads like a document: the session's text bare, at a wide reading measure; the developer's in a grey bubble */
+.msg { max-width: 92ch; font-size: 14px; line-height: 1.6; }
 .msg.from-developer { align-self: flex-end; max-width: min(75%, 60ch); padding: 9px 13px; border-radius: 14px 14px 4px 14px; background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
 .msg.step { color: var(--muted); }
 .msg-meta { font-size: 11px; color: var(--faint); margin-top: 3px; }
