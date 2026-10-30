@@ -791,7 +791,7 @@ export class Store {
 }
 
 const ANSWER_MAX = 20_000;
-const MESSAGES_KEPT = 200;
+const MESSAGES_KEPT = 500;
 /** A prompt can be a pasted log; the history keeps a bounded copy of it. */
 function bounded(answer: string): string {
   return answer.length > ANSWER_MAX ? `${answer.slice(0, ANSWER_MAX - 1)}…` : answer;

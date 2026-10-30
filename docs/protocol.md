@@ -20,7 +20,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `inbox/<session>/<question>.json` | an answer given on the page, waiting for the session; an unreadable one is set aside as `.<name>.rejected` | the page |
 | `inbox/<session>/.listener.<pid>.json` | a process waiting for that session's answers | the adapter's waiter |
 | `.inbox-pending` | present while any inbox holds an entry, so a hook that runs on every tool call tests one file | the store |
-| `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message and each answer of the developer (typed or from the desk), the latest 200 per session | hooks, the page |
+| `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (when its adapter can tell), and each answer of the developer (typed or from the desk), the latest 500 per session | hooks, the page |
 | `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, size on disk, whether merged into the main branch and commits ahead; total and the day's starting total | `agent-desk scan`, started by adapters at the end of a turn |
 | `seen.json` | when the developer last marked everything as seen | the page |
 | `secret` | per-install secret for the page's writes | the server, on first start |

@@ -5,7 +5,7 @@ import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optiona
 import { id, slug } from "../../src/core/ids.ts";
 import type { SessionProcess } from "../../src/core/model.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
-import { withLock } from "../../src/store/fsx.ts";
+import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { Store } from "../../src/store/store.ts";
 
 export const PROVIDER = "Claude Code";
@@ -199,6 +199,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
       sentWhileWorking: s.sentWhileWorking?.map((m) => (m.turnEndedAt ? m : { ...m, turnEndedAt: at })),
     }),
   );
+  recordTurnTexts(input, store, message);
   if (message) store.addMessage({ sessionId: sid, from: "session", text: message });
   const tasks = Array.isArray(input.raw.background_tasks) ? input.raw.background_tasks : [];
   const shells = tasks.filter((t) => typeof t === "object" && t !== null && (t as Fields).type === "shell").length;
@@ -249,12 +250,75 @@ function titleFrom(prompt: string): string {
   return first.length > 60 ? `${first.slice(0, 59)}…` : first;
 }
 
+/**
+ * Adds to the conversation what Claude wrote to the developer during the turn, between its tool
+ * calls, so it can be read later on the desk (the turn's last message is recorded on its own).
+ * Runs at the end of the turn and, at most every few seconds, after the session's tool calls.
+ */
+function recordTurnTexts(input: Common, store: Store, last = ""): void {
+  const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
+  if (!transcript?.endsWith(".jsonl")) return;
+  const known = new Set(store.listMessages(input.sessionId).slice(-100).map((m) => m.text));
+  for (const said of turnTexts(transcript)) {
+    if (known.has(said) || (last !== "" && last.includes(said))) continue;
+    store.addMessage({ sessionId: input.sessionId, from: "session", text: said });
+    known.add(said);
+  }
+}
+
+const TRANSCRIPT_TAIL = 1024 * 1024;
+
+/**
+ * The texts Claude wrote in the session's current turn, oldest first: its assistant entries after
+ * the last entry from the developer, read from the end of the transcript (sub-agents' left out).
+ */
+export function turnTexts(transcript: string): string[] {
+  let tail: string;
+  try {
+    const fd = fs.openSync(transcript, "r");
+    try {
+      const size = fs.fstatSync(fd).size;
+      const length = Math.min(size, TRANSCRIPT_TAIL);
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, size - length);
+      tail = buffer.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return []; // a session that has not written its transcript yet
+    throw error;
+  }
+  const texts: string[] = [];
+  for (const line of tail.split("\n").reverse()) {
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // the first line of the tail is cut, and the last may be half written
+    }
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Fields;
+    if (e.isSidechain === true) continue;
+    const content = typeof e.message === "object" && e.message !== null ? (e.message as Fields).content : undefined;
+    const blocks = Array.isArray(content) ? content.filter((b): b is Fields => typeof b === "object" && b !== null) : [];
+    if (e.type === "user") {
+      if (typeof content === "string" || !blocks.some((b) => b.type === "tool_result")) break; // the developer spoke: the turn starts after it
+      continue;
+    }
+    if (e.type !== "assistant") continue;
+    for (const b of blocks.reverse()) if (b.type === "text" && typeof b.text === "string" && b.text.trim() !== "") texts.unshift(b.text.trim());
+  }
+  return texts;
+}
+
 /** What a tool call says about the session or sub-agent that made it. */
 function recordActivity(input: Common, ctx: HookContext, problems: string[]): void {
   const what = describeTool(input.raw.tool_name, input.raw.tool_input, ctx.env.CLAUDE_PROJECT_DIR || input.cwd);
   const agentId = typeof input.raw.agent_id === "string" ? input.raw.agent_id : "";
   if (agentId === "") {
     ctx.store.updateSession(input.sessionId, (s) => (s.state === "ended" ? s : { ...s, activity: bounded(what, 200) }));
+    recordTurnTexts(input, ctx.store);
     return;
   }
   settlePairing(input, ctx, agentId, subagentMeta(input, agentId), problems);

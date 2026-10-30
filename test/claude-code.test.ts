@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { deliverWhileWorking, handleHook, type HookContext, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
+import { deliverWhileWorking, handleHook, type HookContext, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import type { Store } from "../src/store/store.ts";
 import { PNG, tempHome, testStore } from "./helpers.ts";
@@ -80,6 +80,28 @@ describe("Claude Code hooks", () => {
     handleHook(event("Stop", { last_assistant_message: "Waiting for the build." }), ctx(store));
     handleHook(event("Stop", { last_assistant_message: "Build passed. Deploy?" }), ctx(store));
     assert.deepEqual(store.openQuestions("cc-1").map((q) => q.text), ["Build passed. Deploy?"]);
+  });
+
+  it("adds what Claude wrote between its tool calls to the conversation, once", () => {
+    const store = testStore();
+    const transcript = path.join(tempHome(), "session.jsonl");
+    const line = (e: object) => `${JSON.stringify(e)}\n`;
+    const said = (text: string, extra = {}) => line({ type: "assistant", message: { content: [{ type: "text", text }, { type: "tool_use", name: "Bash" }] }, ...extra });
+    fs.writeFileSync(transcript, line({ type: "assistant", message: { content: [{ type: "text", text: "From an earlier turn." }] } }) + line({ type: "user", message: { content: "fix the build" } }) + said("Looking at the logs first.") + line({ type: "user", message: { content: [{ type: "tool_result" }] } }));
+    handleHook(event("UserPromptSubmit", { prompt: "fix the build" }), ctx(store));
+    handleHook(event("PostToolUse", { tool_name: "Bash", tool_input: { command: "npm test" }, transcript_path: transcript }), ctx(store));
+    fs.appendFileSync(transcript, said("A sub-agent's note.", { isSidechain: true }) + said("Found it: a missing import.") + '{"type":"assistant","mess');
+    handleHook(event("Stop", { last_assistant_message: "Fixed and tested.", transcript_path: transcript }), ctx(store));
+    assert.deepEqual(
+      store.listMessages("cc-1").map((m) => [m.from, m.text]),
+      [
+        ["developer", "fix the build"],
+        ["session", "Looking at the logs first."],
+        ["session", "Found it: a missing import."],
+        ["session", "Fixed and tested."],
+      ],
+    );
+    assert.deepEqual(turnTexts(path.join(tempHome(), "none.jsonl")), [], "a transcript not written yet holds nothing");
   });
 
   it("keeps a question open when a turn without a typed prompt ends asking nothing", () => {
