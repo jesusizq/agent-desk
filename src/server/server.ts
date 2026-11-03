@@ -9,6 +9,7 @@ import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { type DeskState, type DiskWarning, imageIds, type Session } from "../core/model.ts";
 import { endProcess, isAlive } from "../core/proc.ts";
+import { Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
 import { RemoteUnlock } from "./remote-unlock.ts";
@@ -138,6 +139,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     const type = STATIC[route];
     if (type) return send(res, 200, fs.readFileSync(path.join(WEB_DIR, route.slice(1))), type);
     if (route === "/api/state") return state(store, req, res);
+    if (route === "/api/push/key") return sendJson(res, 200, { key: new Push(store.paths.push).publicKey() });
     const conversation = /^\/api\/sessions\/([^/]+)\/messages$/.exec(route);
     if (conversation?.[1]) {
       if (!ID_PATTERN.test(conversation[1])) return sendJson(res, 400, { error: "invalid id" });
@@ -154,6 +156,18 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   if (!writeAllowed(req, access, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
   if (route === "/api/seen") return sendJson(res, 200, store.markAllSeen());
   if (route === "/api/images") return attachImage(store, req, res);
+  if (route === "/api/push/subscribe" || route === "/api/push/unsubscribe") {
+    try {
+      const body = await readBody(req);
+      const push = new Push(store.paths.push);
+      if (route === "/api/push/subscribe") push.subscribe(subscription(body));
+      else push.unsubscribe(text(fields(body, "body").endpoint, "endpoint", 2048));
+      return sendJson(res, 200, { ok: true });
+    } catch (error) {
+      if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
+      throw error;
+    }
+  }
   const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read|end)$/.exec(route);
   const action = m ? ACTIONS[`${m[1]}/${m[3]}`] : undefined;
   if (!m?.[2] || !action) return sendJson(res, 404, { error: "not found" });
@@ -265,8 +279,29 @@ function archiveOld(store: Store): void {
   }
 }
 
+const PUSH_EVERY_MS = 5_000;
+
+/**
+ * Tells the subscribed phones when a new question opens: only how many wait, never what they say.
+ * Questions open when the desk starts were already there to see. Returns the check, for tests.
+ */
+export function pushNewQuestions(store: Store, push: Push, post: typeof fetch = fetch): () => Promise<void> {
+  const known = new Set(store.openQuestions().map((q) => q.id));
+  return async () => {
+    const open = store.openQuestions();
+    const fresh = open.filter((q) => !known.has(q.id));
+    for (const q of open) known.add(q.id);
+    if (fresh.length === 0 || push.subscriptions().length === 0) return;
+    for (const problem of await push.send(JSON.stringify({ count: open.length }), post)) process.stderr.write(`agent-desk: ${problem}\n`);
+  };
+}
+
 export function startServer(store: Store, port: number): Promise<Server> {
   const server = createDeskServer(store, port);
+  const checkPush = pushNewQuestions(store, new Push(store.paths.push));
+  setInterval(() => {
+    checkPush().catch((error: unknown) => process.stderr.write(`agent-desk: push failed: ${(error as Error).stack ?? String(error)}\n`));
+  }, PUSH_EVERY_MS).unref();
   archiveOld(store);
   setInterval(() => {
     try {

@@ -21,6 +21,8 @@ export class StorePaths {
   /** scrypt hash of the PIN that unlocks remote access. */
   get pin() { return path.join(this.home, "pin.json"); }
   get seen() { return path.join(this.home, "seen.json"); }
+  /** The VAPID key and the phones subscribed to push. */
+  get push() { return path.join(this.home, "push.json"); }
   get sessionsDir() { return path.join(this.home, "sessions"); }
   get questionsDir() { return path.join(this.home, "questions"); }
   get resultsDir() { return path.join(this.home, "results"); }

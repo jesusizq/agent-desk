@@ -38,3 +38,19 @@ async function stamped(res) {
   headers.set(SAVED_AT, new Date().toISOString());
   return new Response(await res.blob(), { status: res.status, statusText: res.statusText, headers });
 }
+
+// A push says only how many questions wait (src/server/push.ts); what they ask is read in the desk.
+sw.addEventListener("push", (e) => {
+  let count = 0;
+  try {
+    count = Number(/** @type {{ count?: unknown }} */ (e.data?.json() ?? {}).count) || 0;
+  } catch {
+    count = 0; // an unreadable payload still says something waits: iOS requires a notification for every push
+  }
+  const body = count > 1 ? `${count} need you` : "Something needs you";
+  e.waitUntil(sw.registration.showNotification("Agent Desk", { body, tag: "needs-you", icon: "/icon-192.png" }));
+});
+sw.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(sw.clients.matchAll({ type: "window" }).then((open) => (open[0] ? open[0].focus() : sw.clients.openWindow("/"))));
+});

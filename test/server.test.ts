@@ -168,6 +168,19 @@ describe("server", () => {
     assert.equal(await exited, "SIGTERM");
   });
 
+  it("subscribes a phone to push only from the page, and only to Apple's push service", async () => {
+    const { createECDH } = await import("node:crypto");
+    const keys = { p256dh: createECDH("prime256v1").generateKeys().toString("base64url"), auth: Buffer.alloc(16, 1).toString("base64url") };
+    const key = ((await (await fetch(`${base}/api/push/key`)).json()) as { key: string }).key;
+    assert.equal(Buffer.from(key, "base64url").length, 65, "a P-256 point the page subscribes with");
+    assert.equal((await post("/api/push/subscribe", { endpoint: "https://web.push.apple.com/x", keys }, { Origin: "http://evil.example" })).status, 403);
+    const other = await post("/api/push/subscribe", { endpoint: "https://collector.example/x", keys });
+    assert.equal(other.status, 400);
+    assert.match(((await other.json()) as { error: string }).error, /only Apple's push service/);
+    assert.equal((await post("/api/push/subscribe", { endpoint: "https://web.push.apple.com/x", keys })).status, 200);
+    assert.equal((await post("/api/push/unsubscribe", { endpoint: "https://web.push.apple.com/x" })).status, 200);
+  });
+
   it("serves a session's conversation, desk answers included", async () => {
     store.addMessage({ sessionId: "s1", from: "session", text: "Which name?" });
     const q = store.ask({ sessionId: "s1", kind: "question", text: "Which name?" });

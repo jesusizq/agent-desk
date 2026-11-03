@@ -2047,7 +2047,7 @@ function renderAlerts() {
   const button = byId("alerts");
   button.title = TEXT.alerts.title;
   button.setAttribute("aria-label", TEXT.alerts.title);
-  button.replaceChildren(icon(notifyOn || alertOn("sound") ? "bell" : "bellOff"));
+  button.replaceChildren(icon((ON_THIS_MACHINE ? notifyOn : pushOn === true) || alertOn("sound") ? "bell" : "bellOff"));
   /** @param {keyof typeof ALERTS} k @param {string} text @param {string} hint @param {boolean} checked @param {boolean} disabled */
   const row = (k, text, hint, checked, disabled) => {
     const box = /** @type {HTMLInputElement} */ (h("input", { type: "checkbox", disabled }));
@@ -2061,7 +2061,8 @@ function renderAlerts() {
     return h("label", { class: disabled ? "off" : "" }, box, h("span", {}, text), h("small", {}, hint));
   };
   byId("alerts-menu").replaceChildren(
-    row("notify", TEXT.alerts.notify, !can ? TEXT.alerts.unavailable : Notification.permission === "denied" ? TEXT.alerts.blocked : TEXT.alerts.notifyHint, notifyOn, !can || Notification.permission === "denied"),
+    // One notifications switch per device: the page's own on the computer, push on the phone.
+    ON_THIS_MACHINE ? row("notify", TEXT.alerts.notify, !can ? TEXT.alerts.unavailable : Notification.permission === "denied" ? TEXT.alerts.blocked : TEXT.alerts.notifyHint, notifyOn, !can || Notification.permission === "denied") : pushRow(),
     row("sound", TEXT.alerts.sound, TEXT.alerts.soundHint, alertOn("sound"), false),
     row("failures", TEXT.alerts.failures, TEXT.alerts.failuresHint, alertOn("failures"), false),
   );
@@ -2080,6 +2081,37 @@ function headerMenu(buttonId, menuId, fill) {
     if (!menu.hidden && menu.parentElement && !e.composedPath().includes(menu.parentElement)) menu.hidden = true;
   });
 }
+// ---------- Push: notifications on a phone that is locked, from the computer ----------
+/** Whether this device is subscribed; null until known. @type {boolean | null} */
+let pushOn = null;
+const canPush = "serviceWorker" in navigator && "PushManager" in window;
+if (canPush && !ON_THIS_MACHINE) {
+  run(navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription()).then((sub) => ((pushOn = sub !== null), renderAlerts())));
+}
+/** The row that subscribes this phone; on iOS push exists only in the app added to the Home Screen. */
+function pushRow() {
+  const box = /** @type {HTMLInputElement} */ (h("input", { type: "checkbox", disabled: !canPush || pushOn === null }));
+  box.checked = pushOn === true;
+  box.addEventListener("change", () => run((box.checked ? subscribePush() : unsubscribePush()).then(() => ((pushOn = box.checked), renderAlerts())), renderAlerts));
+  return h("label", { class: canPush ? "" : "off" }, box, h("span", {}, TEXT.alerts.push), h("small", {}, canPush ? TEXT.alerts.pushHint : TEXT.alerts.pushInstall));
+}
+async function subscribePush() {
+  // Asked first, inside the tap: iOS grants the permission only from a gesture.
+  if ((await Notification.requestPermission()) !== "granted") throw new Error(TEXT.alerts.pushDenied);
+  const res = await fetch("/api/push/key");
+  if (!res.ok) throw new Error(`push key: ${res.status} ${res.statusText}`);
+  const { key } = /** @type {{ key: string }} */ (await res.json());
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)) });
+  await post("/api/push/subscribe", sub.toJSON());
+}
+async function unsubscribePush() {
+  const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+  if (!sub) return;
+  await post("/api/push/unsubscribe", { endpoint: sub.endpoint });
+  await sub.unsubscribe();
+}
+
 headerMenu("alerts", "alerts-menu", renderAlerts);
 renderAlerts();
 

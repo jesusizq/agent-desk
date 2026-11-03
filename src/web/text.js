@@ -232,6 +232,10 @@ export const TEXT = {
     soundHint: "A short chime when a question or permission prompt arrives",
     failures: "Failures too",
     failuresHint: "Also notify when an agent or a result fails",
+    push: "Notifications",
+    pushHint: "On this phone, even when locked: how many questions wait, never what they say",
+    pushInstall: "Add the desk to the Home Screen first (Share → Add to Home Screen), then open it from there",
+    pushDenied: "Notifications are not allowed for the desk: allow them in Settings → Notifications",
   },
   newResult: "New",
   /** @param {string} t */
