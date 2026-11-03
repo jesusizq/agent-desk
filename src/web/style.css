@@ -716,7 +716,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   .dhead > :is(a, button):not(.icon-btn) { order: 2; }
   /* The session panel keeps one head line: Go to session shrinks to its arrow beside Close. */
   dialog.sess .dhead > div:first-child { flex-basis: 0; }
-  dialog.sess .dhead > :is(a, button):not(.icon-btn) { order: 0; width: 44px; padding: 0; justify-content: center; }
+  dialog.sess .dhead > :is(a, button):not(.icon-btn) { order: 0; width: 44px; height: 30px; padding: 0; justify-content: center; flex: none; }
   dialog.sess .dhead .lbl { display: none; }
   .hitem { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   /* Three pictures or more swipe sideways, one at a time with the next peeking; a pair stays side by side. */

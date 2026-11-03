@@ -331,6 +331,20 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("fits Mark unread in a session's header on a phone, as an icon large enough to tap", async () => {
+    store.upsertSession({ id: "phone-head", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a long session title that needs two lines on a phone" });
+    store.updateSession("phone-head", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Report", at: new Date().toISOString() } }));
+    const page = await open(390, 800);
+    await page.click(".tabbar button", "Sessions");
+    await page.click(".scard", "a long session title");
+    const button = "[...document.querySelectorAll('#session .dhead button')].find((b) => b.getAttribute('aria-label') === 'Mark unread')";
+    await page.waitFor(button);
+    const size = await page.eval<{ w: number; h: number; inner: number; label: number }>(`(() => { const b = ${button}; const r = b.getBoundingClientRect(); return { w: r.width, h: r.height, inner: b.scrollWidth, label: b.querySelector('.lbl').getClientRects().length }; })()`);
+    assert.equal(size.label, 0, "only its icon: the words do not fit");
+    assert.ok(size.w >= 44 && size.h >= 30 && size.inner <= size.w, JSON.stringify(size));
+    await page.press("Escape");
+  });
+
   it("keeps in view a session that ended asking, until it is opened", async () => {
     store.upsertSession({ id: "ended-asking", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "gone mid question" });
     store.updateSession("ended-asking", (s) => ({ ...s, state: "ended", endedAsking: true, lastMessage: { text: "Should I delete it?", at: new Date().toISOString() } }));

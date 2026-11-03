@@ -1444,7 +1444,7 @@ function openSession(sid) {
       { class: "dhead" },
       h("div", {}, h("div", { class: "meta" }, where(s, s.provider)), h("h3", {}, sessionName(s))),
       h("span", { class: "spacer" }),
-      s.lastMessage && (isLive(s) || s.endedAsking) ? h("button", { class: "secondary", title: TEXT.markUnreadHint, onclick: () => markUnread(s) }, TEXT.markUnread) : null,
+      s.lastMessage && (isLive(s) || s.endedAsking) ? h("button", { class: "secondary", title: TEXT.markUnreadHint, "aria-label": TEXT.markUnread, onclick: () => markUnread(s) }, icon("unread"), h("span", { class: "lbl" }, TEXT.markUnread)) : null,
       goLink(s, "primary", icon("go"), h("span", { class: "lbl" }, TEXT.goTo)),
       h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x")),
     ),
