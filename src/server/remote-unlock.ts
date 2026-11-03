@@ -66,15 +66,19 @@ export class RemoteUnlock {
     return `${UNLOCK_COOKIE}=${token}; Path=/; Max-Age=${UNLOCK_HOURS * 3600}; HttpOnly; Secure; SameSite=Strict`;
   }
 
-  /** True while the request carries an unexpired cookie signed by this install. */
   unlocked(req: IncomingMessage): boolean {
+    return this.unlockedUntil(req) !== undefined;
+  }
+
+  /** When the unlock ends, while the request carries an unexpired cookie signed by this install. */
+  unlockedUntil(req: IncomingMessage): number | undefined {
     const cookie = (req.headers.cookie ?? "").split(/;\s*/).find((c) => c.startsWith(`${UNLOCK_COOKIE}=`));
     const token = cookie?.slice(UNLOCK_COOKIE.length + 1) ?? "";
     const [expires, signature] = token.split(".");
-    if (!expires || !signature || !/^\d+$/.test(expires) || Number(expires) < this.now()) return false;
+    if (!expires || !signature || !/^\d+$/.test(expires) || Number(expires) < this.now()) return undefined;
     const expected = Buffer.from(this.sign(expires));
     const got = Buffer.from(signature);
-    return expected.length === got.length && timingSafeEqual(expected, got);
+    return expected.length === got.length && timingSafeEqual(expected, got) ? Number(expires) : undefined;
   }
 
   private sign(value: string): string {

@@ -67,6 +67,12 @@ describe("push", () => {
     assert.ok(verify("sha256", Buffer.from(`${head}.${claims}`), { key: createPublicKey({ key: jwk, format: "jwk" }), dsaEncoding: "ieee-p1363" }, b64(signature ?? "")), "ES256 signature");
     assert.deepEqual(push.subscriptions().map((s) => s.endpoint), [APPLE], "the gone one is dropped");
 
+    sent.length = 0;
+    push.subscribe(subscription(phone()), Date.now() - 1000);
+    assert.deepEqual(await push.send("{}", post), []);
+    assert.equal(sent.length, 0, "a device whose PIN unlock ended gets nothing");
+    push.subscribe(subscription(phone()), Date.now() + 60_000);
+
     const failing = (async () => new Response("down", { status: 503 })) as unknown as typeof fetch;
     assert.match((await push.send("{}", failing))[0] ?? "", /web\.push\.apple\.com: HTTP 503 down/);
   });

@@ -8,7 +8,11 @@ import { readJson, withLock, writeJson } from "../store/fsx.ts";
 export const PUSH_HOSTS = /^(?:[a-z0-9-]+\.)*push\.apple\.com$/;
 
 export type Subscription = { endpoint: string; p256dh: string; auth: string };
-type PushFile = { vapid: { publicKey: string; privateKey: string }; subscriptions: Subscription[] };
+/** `until`: when the device's PIN unlock ends; a device without the PIN in gets no push. */
+type Subscribed = Subscription & { until: number };
+type PushFile = { vapid: { publicKey: string; privateKey: string }; subscriptions: Subscribed[] };
+/** A device on this machine, which never needs the PIN. */
+export const NO_PIN = Number.MAX_SAFE_INTEGER;
 
 const b64url = (b: Uint8Array) => Buffer.from(b).toString("base64url");
 
@@ -42,8 +46,8 @@ export class Push {
     return this.read().vapid.publicKey;
   }
 
-  subscribe(s: Subscription): void {
-    this.update((p) => ({ ...p, subscriptions: [...p.subscriptions.filter((x) => x.endpoint !== s.endpoint), s] }));
+  subscribe(s: Subscription, until: number = NO_PIN): void {
+    this.update((p) => ({ ...p, subscriptions: [...p.subscriptions.filter((x) => x.endpoint !== s.endpoint), { ...s, until }] }));
   }
 
   unsubscribe(endpoint: string): void {
@@ -51,7 +55,7 @@ export class Push {
   }
 
   /** Without creating the key: a desk nobody subscribed to keeps no push file. */
-  subscriptions(): Subscription[] {
+  subscriptions(): Subscribed[] {
     return withLock(this.file, () => {
       const raw = readJson(this.file);
       return raw === undefined ? [] : parsePushFile(raw, this.file).subscriptions;
@@ -59,7 +63,7 @@ export class Push {
   }
 
   /**
-   * Sends `payload` to every subscribed device. A subscription the service reports gone (404, 410)
+   * Sends `payload` to every subscribed device with its PIN in. A subscription the service reports gone (404, 410)
    * is dropped; any other failure is returned, one line each.
    */
   async send(payload: string, post: typeof fetch = fetch): Promise<string[]> {
@@ -67,6 +71,7 @@ export class Push {
     const key = createPrivateKey({ key: JSON.parse(vapid.privateKey) as JsonWebKey, format: "jwk" });
     const problems: string[] = [];
     for (const s of subscriptions) {
+      if (s.until <= Date.now()) continue;
       const url = new URL(s.endpoint);
       if (!PUSH_HOSTS.test(url.hostname)) continue; // checked when subscribed; a hand-edited file is not trusted either
       let res: Response;
@@ -120,7 +125,8 @@ function parsePushFile(raw: unknown, file: string): PushFile {
       // Stored flat; checked again as the page sends it, so a hand-edited file meets the same rules.
       subscriptions: subs.map((s) => {
         const f = fields(s, "subscription");
-        return subscription({ endpoint: f.endpoint, keys: { p256dh: f.p256dh, auth: f.auth } });
+        // Without a date, the device counts as locked until the page next opens unlocked.
+        return { ...subscription({ endpoint: f.endpoint, keys: { p256dh: f.p256dh, auth: f.auth } }), until: typeof f.until === "number" ? f.until : 0 };
       }),
     };
   } catch (error) {

@@ -66,6 +66,7 @@ const ui = {
   /** @type {Set<string>} runs of messages between tool calls unfolded, by their first message */ stepsOpen: new Set(),
   /** @type {Set<string> | null} failures already noticed */ failuresSeen: null,
   offline: false,
+  /** the desk answered that this device is not allowed */ refused: false,
   /** @type {string | null} when the desk shown was saved on this device, while the computer does not answer */ savedAt: null,
   loaded: false,
   /** @type {string | null} the session shown in the side panel */ panelSession: null,
@@ -222,9 +223,64 @@ function goLink(s, cls, ...content) {
 }
 
 // ---------- Server ----------
+const LOCKED_HEADER = "X-Agent-Desk-Locked";
+const DRAFTS_KEY = "agent-desk:drafts";
+/** Longer than the service worker's wait (sw.js), so its saved copy arrives first when there is one. */
+const NO_ANSWER_MS = 8000;
+
+/** What is being written stays on this device: a phone may close the app, and the desk may reload it. */
+function saveDrafts() {
+  const drafts = [...ui.drafts].filter(([, text]) => text);
+  const images = [...ui.draftImages].filter(([, ids]) => ids.length);
+  if (drafts.length || images.length) localStorage.setItem(DRAFTS_KEY, JSON.stringify({ drafts, images }));
+  else localStorage.removeItem(DRAFTS_KEY);
+}
+const savedDrafts = localStorage.getItem(DRAFTS_KEY);
+if (savedDrafts !== null) {
+  try {
+    const kept = /** @type {{ drafts: [string, string][], images: [string, string[]][] }} */ (JSON.parse(savedDrafts));
+    ui.drafts = new Map(kept.drafts);
+    ui.draftImages = new Map(kept.images);
+  } catch (error) {
+    localStorage.removeItem(DRAFTS_KEY);
+    toast(TEXT.pageError(`saved drafts unreadable, dropped: ${/** @type {Error} */ (error).message}`));
+  }
+}
+/** Drafts for a question already closed or a session already gone have nowhere to go. */
+function dropStaleDrafts() {
+  for (const key of [...ui.drafts.keys(), ...ui.draftImages.keys()]) {
+    const alive = data.questions.some((q) => q.status === "open" && key === `answer-${q.id}`) || data.sessions.some((s) => key === `message-${s.id}`);
+    if (alive) continue;
+    ui.drafts.delete(key);
+    ui.draftImages.delete(key);
+  }
+  saveDrafts();
+}
+
+/** The unlock ended (12 hours): the reload brings the PIN page, and the same view after it. @param {Response} res */
+const needsPin = (res) => res.status === 401 && res.headers.has(LOCKED_HEADER);
+
+/** A write to the desk; no connection is said as such, not as fetch's own "Load failed". @param {string} route @param {RequestInit} init */
+async function write(route, init) {
+  const res = await fetch(route, init).catch(() => {
+    throw new Error(offlineReason());
+  });
+  if (needsPin(res)) location.reload();
+  return res;
+}
+
+/** Why the desk does not answer, as far as this device can tell. */
+function offlineReason() {
+  if (ui.refused) return TEXT.offline.refused;
+  return ON_THIS_MACHINE ? TEXT.offline.desk : navigator.onLine ? TEXT.offline.computer : TEXT.offline.device;
+}
+function offlineText() {
+  return ui.savedAt ? `${offlineReason()} ${TEXT.offline.saved(dayLabel(ui.savedAt))}` : offlineReason();
+}
+
 /** @param {string} route @param {unknown} [body] */
 async function post(route, body = {}) {
-  const res = await fetch(route, {
+  const res = await write(route, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Agent-Desk-Secret": secret },
     body: JSON.stringify(body),
@@ -240,6 +296,7 @@ let etag = "";
 /** @type {string | null} */
 let loadedBuild = null;
 let latestRequest = 0;
+let requestsWaiting = 0;
 const SAVED_AT = "X-Agent-Desk-Saved-At";
 async function refresh() {
   const request = ++latestRequest;
@@ -247,8 +304,11 @@ async function refresh() {
   let savedAt = null;
   /** @type {DeskState | null} */
   let next = null;
+  requestsWaiting++;
   try {
-    const res = await fetch("/api/state", { headers: etag ? { "If-None-Match": etag } : {} });
+    const res = await fetch("/api/state", { headers: etag ? { "If-None-Match": etag } : {}, signal: AbortSignal.timeout(NO_ANSWER_MS) });
+    if (needsPin(res)) return location.reload();
+    ui.refused = res.status === 421;
     savedAt = res.headers.get(SAVED_AT);
     if (res.status !== 304) {
       if (!res.ok) throw new Error(`${res.status}`);
@@ -258,6 +318,8 @@ async function refresh() {
   } catch {
     if (request === latestRequest) setOffline(true); // shown in the strip; polling continues
     return;
+  } finally {
+    requestsWaiting--;
   }
   if (request !== latestRequest) return; // a newer request answers instead; this one may be stale
   ui.savedAt = savedAt;
@@ -269,9 +331,13 @@ async function refresh() {
     }
     return setOffline(true, true);
   }
+  renewPush();
   if (next) {
-    if (loadedBuild === null) loadedBuild = next.build;
-    else if (next.build !== loadedBuild) return location.reload(); // the desk restarted, maybe with new code
+    if (loadedBuild === null) {
+      loadedBuild = next.build;
+      data = next;
+      dropStaleDrafts();
+    } else if (next.build !== loadedBuild) return location.reload(); // the desk restarted, maybe with new code
     const before = shape();
     const firstLoad = !ui.loaded;
     data = next;
@@ -532,7 +598,7 @@ function renderStrip() {
     .filter(/** @returns {x is { s: Session, c: number }} */ (x) => x.c !== undefined && x.c >= CONTEXT_WARN);
   fill(
     byId("strip"),
-    ui.offline ? h("span", { class: "err" }, ui.savedAt ? TEXT.offlineSaved(hm(ui.savedAt)) : TEXT.offline) : null,
+    ui.offline ? h("span", { class: "err" }, offlineText()) : null,
     h("span", { class: "muted" }, summary),
     fresh.length ? h("button", { class: "linkish", onclick: () => run(post("/api/seen")) }, TEXT.markSeen) : null,
     h("span", { class: "spacer" }),
@@ -568,7 +634,7 @@ function column(key, count, body, { foot, quiet, aside } = {}) {
 function answerForm(q, middle = null) {
   if (!data.listening.includes(q.sessionId)) {
     const opts = q.options.map((o, i) => h("span", { class: "opt" }, h("b", {}, String(i + 1)), o));
-    return h("div", {}, q.options.length ? h("div", { class: "optline" }, h("span", { class: "faint" }, `${TEXT.options}:`), opts) : null, middle, h("div", { class: "faint" }, TEXT.notListening));
+    return h("div", {}, q.options.length ? h("div", { class: "optline" }, h("span", { class: "faint" }, `${TEXT.options}:`), opts) : null, middle, ui.offline ? null : h("div", { class: "faint" }, TEXT.notListening));
   }
   // A permission prompt or a choice dialog is settled by its hook, which takes text only.
   const textOnly = q.kind === "permission" || q.dialog === true;
@@ -577,7 +643,7 @@ function answerForm(q, middle = null) {
 
 /** Keeps an image in the store for the reply being written; returns its id. @param {Blob} file */
 async function uploadImage(file) {
-  const res = await fetch("/api/images", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "X-Agent-Desk-Secret": secret }, body: file });
+  const res = await write("/api/images", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "X-Agent-Desk-Secret": secret }, body: file });
   const body = /** @type {{ id?: unknown, error?: string }} */ (await res.json().catch(() => ({})));
   if (!res.ok) throw new Error(body.error ?? `${res.status} ${res.statusText}`);
   if (typeof body.id !== "string") throw new Error(`the desk kept the image but gave no id for it (${JSON.stringify(body)})`);
@@ -606,7 +672,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
   const attach = (files) => {
     for (const file of files.slice(0, ATTACHED_IMAGES_MAX - attached.length)) {
       ui.uploading.set(key, (ui.uploading.get(key) ?? 0) + 1);
-      run(uploadImage(file).then((id) => ui.draftImages.set(key, [...(ui.draftImages.get(key) ?? []), id])), () => ui.uploading.set(key, (ui.uploading.get(key) ?? 1) - 1));
+      run(uploadImage(file).then((id) => (ui.draftImages.set(key, [...(ui.draftImages.get(key) ?? []), id]), saveDrafts())), () => ui.uploading.set(key, (ui.uploading.get(key) ?? 1) - 1));
     }
     if (files.length > ATTACHED_IMAGES_MAX - attached.length) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
   };
@@ -629,6 +695,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     run(post(route, attached.length ? { text, images: attached } : { text }).then(() => {
       ui.drafts.delete(key);
       ui.draftImages.delete(key);
+      saveDrafts();
       if (ui.panelSession === sid) ui.panelHeard = null; // the panel fetches the conversation again, with this message
       toast(TEXT.sent(label(S(sid))));
     }), () => ui.sending.delete(key));
@@ -639,12 +706,14 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
   const pick = (o) => {
     box.value = o;
     ui.drafts.set(key, o);
+    saveDrafts();
     syncPressed();
     fit();
     box.focus();
   };
   box.addEventListener("input", () => {
     ui.drafts.set(key, box.value);
+    saveDrafts();
     syncPressed();
     fit();
   });
@@ -674,7 +743,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
               "span",
               { class: "thumb" },
               h("img", { src: `/images/${encodeURIComponent(id)}`, alt: TEXT.attachedImage }),
-              h("button", { class: "icon-btn", title: TEXT.removeImage, "aria-label": TEXT.removeImage, onclick: () => (ui.draftImages.set(key, attached.filter((x) => x !== id)), render()) }, icon("x")),
+              h("button", { class: "icon-btn", title: TEXT.removeImage, "aria-label": TEXT.removeImage, onclick: () => (ui.draftImages.set(key, attached.filter((x) => x !== id)), saveDrafts(), render()) }, icon("x")),
             ),
           ),
           ui.uploading.get(key) ? h("span", { class: "faint" }, TEXT.attaching) : null,
@@ -1440,6 +1509,7 @@ function panelShows(s) {
     projectOf(s),
     ui.conversations.get(s.id)?.length,
     [...ui.draftImages, ...ui.uploading, ...ui.sending], // the box below: images attached, a message on its way
+    ui.offline && offlineText(),
     [...ui.stepsOpen],
     Math.floor(Date.now() / 60_000), // times shown as "for 5 min"
   ]);
@@ -1469,6 +1539,8 @@ function chat(s) {
     h(
       "div",
       { class: "chat-footer" },
+      // The window covers the strip that says it elsewhere.
+      ui.offline ? h("div", { class: "offline-line", role: "status" }, offlineText()) : null,
       asking
         ? h(
             "div",
@@ -1479,7 +1551,9 @@ function chat(s) {
           )
         : canReply
           ? replyBox(`message-${s.id}`, [], `/api/sessions/${s.id}/message`, s.id, midTurn ? TEXT.workingPlaceholder : undefined, midTurn ? TEXT.sendHintWorking : undefined)
-          : h("div", { class: "faint" }, s.state === "working" ? TEXT.conversation.working : TEXT.notListening),
+          : ui.offline
+            ? null
+            : h("div", { class: "faint" }, s.state === "working" ? TEXT.conversation.working : TEXT.notListening),
     ),
   ];
 }
@@ -1526,9 +1600,13 @@ function workingNow(s, list) {
 /** Closes the session panel and shows the question large on the desk. @param {string} questionId */
 function answerOnDesk(questionId) {
   ui.sel = questionId;
+  showNeedsYou();
+}
+/** Back to the desk, on what needs the developer: nothing left open on top of it. */
+function showNeedsYou() {
   ui.view = "desk";
   ui.tab = "inbox";
-  dialog("session").close();
+  for (const id of ["result", "session", "zoom"]) dialog(id).close();
   render();
   revealNext("start");
 }
@@ -2084,9 +2162,18 @@ function headerMenu(buttonId, menuId, fill) {
 // ---------- Push: notifications on a phone that is locked, from the computer ----------
 /** Whether this device is subscribed; null until known. @type {boolean | null} */
 let pushOn = null;
+/** @type {PushSubscription | null} */
+let pushSubscription = null;
+let pushRenewed = false;
 const canPush = "serviceWorker" in navigator && "PushManager" in window;
 if (canPush && !ON_THIS_MACHINE) {
-  run(navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription()).then((sub) => ((pushOn = sub !== null), renderAlerts())));
+  run(navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription()).then((sub) => ((pushOn = sub !== null), (pushSubscription = sub), renderAlerts())));
+}
+/** Once per load, when the desk answers: tells it this device has the PIN in, and until when (a new unlock reloads the page). */
+function renewPush() {
+  if (pushRenewed || !pushSubscription) return;
+  pushRenewed = true;
+  run(post("/api/push/subscribe", pushSubscription.toJSON()));
 }
 /** The row that subscribes this phone; on iOS push exists only in the app added to the Home Screen. */
 function pushRow() {
@@ -2104,12 +2191,15 @@ async function subscribePush() {
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: Uint8Array.from(atob(key.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0)) });
   await post("/api/push/subscribe", sub.toJSON());
+  pushSubscription = sub;
+  pushRenewed = true;
 }
 async function unsubscribePush() {
   const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
   if (!sub) return;
   await post("/api/push/unsubscribe", { endpoint: sub.endpoint });
   await sub.unsubscribe();
+  pushSubscription = null;
 }
 
 headerMenu("alerts", "alerts-menu", renderAlerts);
@@ -2192,9 +2282,13 @@ for (const id of ["result", "session", "zoom"]) {
     if (e.target === d) d.close();
   });
 }
-/** Links into the page: #history, #s=<session id>, #r=<result id>. */
+/** Links into the page: #history, #needs, #s=<session id>, #r=<result id>. */
 function route() {
   const [k, v] = location.hash.slice(1).split("=");
+  if (k === "needs") {
+    ui.sel = null;
+    showNeedsYou();
+  }
   if (k === "history") {
     ui.view = "history";
     render();
@@ -2207,15 +2301,25 @@ function route() {
 addEventListener("hashchange", route);
 // The device keeps the last desk it saw, shown when the computer is off or asleep (sw.js). Some
 // browsers (third-party ones on iOS) have no service workers: the desk works there without it.
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch((/** @type {Error} */ e) => toast(TEXT.pageError(e.message)));
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch((/** @type {Error} */ e) => toast(TEXT.pageError(e.message)));
+  // A notification tapped while the app is open (sw.js).
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.show !== "needs") return;
+    ui.sel = null;
+    showNeedsYou();
+  });
+}
 renderDisplay();
 render();
 await refresh();
 route();
-setInterval(refresh, POLL_MS);
+// A new poll every tick over one still waiting would make the waiting one stale, and a hung
+// connection would never get to report itself: only NO_ANSWER_MS bounds the wait.
+setInterval(() => requestsWaiting === 0 && refresh(), POLL_MS);
 // A phone puts a hidden tab's timers to sleep: coming back, the desk is fetched at once, not at the next tick.
 document.addEventListener("visibilitychange", () => document.hidden || refresh());
 addEventListener("pageshow", (e) => /** @type {PageTransitionEvent} */ (e).persisted && refresh());
-addEventListener("online", () => refresh());
+for (const change of ["online", "offline"]) addEventListener(change, () => (render(), refresh()));
 setInterval(render, TICK_MS);
 setInterval(remindWaiting, TICK_MS);

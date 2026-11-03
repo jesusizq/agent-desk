@@ -171,6 +171,10 @@ question or permission prompt opens, the desk sends Apple's push service a notif
 how many wait ("2 need you"), encrypted for the phone (RFC 8291) and signed with this install's key
 (`push.json` in the store). It is the desk's only outbound call, and only to `*.push.apple.com`.
 
+A device gets notifications only while its PIN is in. When its 12 hours end they stop, and they start
+again when the PIN is entered. Tapping a notification opens "Needs you", and the app's icon shows how
+many questions were open at the last notification, corrected when the app is open.
+
 ### The terminal itself, from the phone (Termius)
 
 For anything the desk cannot do, open the session's terminal from an SSH app such as Termius.

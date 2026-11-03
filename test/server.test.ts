@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { Push } from "../src/server/push.ts";
 import type { Store } from "../src/store/store.ts";
 import { addSession, PNG, serve, tempHome, testStore } from "./helpers.ts";
 
@@ -44,6 +45,13 @@ describe("server", () => {
       }).on("error", reject);
     });
     assert.equal(status, 421);
+    const page = await new Promise<{ status: number; type: string }>((resolve, reject) => {
+      http.get({ host: "127.0.0.1", port, path: "/", headers: { Host: `evil.example:${port}` } }, (res) => {
+        res.resume();
+        resolve({ status: res.statusCode ?? 0, type: res.headers["content-type"] ?? "" });
+      }).on("error", reject);
+    });
+    assert.deepEqual(page, { status: 421, type: "text/plain; charset=utf-8" }, "opened directly, a sentence instead of JSON");
   });
 
   it("returns the state and a 304 while nothing changes", async () => {
@@ -282,6 +290,12 @@ describe("PIN in front of remote access", () => {
       assert.match(ok.cookie ?? "", /HttpOnly; Secure; SameSite=Strict/);
       const cookie = (ok.cookie ?? "").split(";")[0] ?? "";
       assert.equal((await call("GET", "/api/state", { Cookie: cookie })).status, 200);
+      const { createECDH } = await import("node:crypto");
+      const pushKeys = { p256dh: createECDH("prime256v1").generateKeys().toString("base64url"), auth: Buffer.alloc(16, 1).toString("base64url") };
+      const subscribed = await call("POST", "/api/push/subscribe", { Cookie: cookie, Origin: `https://${remote.host}`, "Content-Type": "application/json", "X-Agent-Desk-Secret": store.secret() }, JSON.stringify({ endpoint: "https://web.push.apple.com/pin", keys: pushKeys }));
+      assert.equal(subscribed.status, 200);
+      const [device] = new Push(store.paths.push).subscriptions();
+      assert.ok(device && device.until > Date.now() && device.until <= Date.now() + 12 * 3600_000, "push lasts as long as this device's unlock");
       const again = await call("POST", "/api/unlock", { Cookie: cookie, Origin: `https://${remote.host}`, "Content-Type": "application/json" }, '{"pin":"000000"}');
       assert.equal(again.status, 200, "an unlocked device sending the PIN again (an old PIN page) is told it is unlocked");
       assert.ok((await call("GET", "/", { Cookie: cookie })).body.includes(store.secret()), "unlocked, the device gets the desk");

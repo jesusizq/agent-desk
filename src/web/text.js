@@ -213,9 +213,14 @@ export const TEXT = {
     copyCleanup: "Copy the commands to remove them",
     cleanupNote: "The desk never removes anything: paste them in a terminal if you agree.",
   },
-  offline: "No connection to the desk: is \"agent-desk serve\" still running?",
-  /** @param {string} at */
-  offlineSaved: (at) => `The computer is not answering (off or asleep). This is the desk as it was at ${at}; answers need the computer.`,
+  offline: {
+    desk: "No connection to the desk: is \"agent-desk serve\" still running?",
+    device: "This device has no connection.",
+    refused: "This device is not allowed on this desk: sign in to Tailscale with the owner's account.",
+    computer: "Can't reach the computer: it may be off or asleep, or Tailscale may be off on this device.",
+    /** @param {string} at */
+    saved: (at) => `Last saved: ${at}. Answers need the connection back.`,
+  },
   /** @param {number} n */
   doneCount: (n) => `${n} done`,
   /** @param {string} m */
@@ -233,7 +238,7 @@ export const TEXT = {
     failures: "Failures too",
     failuresHint: "Also notify when an agent or a result fails",
     push: "Notifications",
-    pushHint: "On this phone, even when locked: how many questions wait, never what they say",
+    pushHint: "On this phone, even when it is locked, while the desk's PIN is in: how many questions wait, never what they say",
     pushInstall: "Add the desk to the Home Screen first (Share → Add to Home Screen), then open it from there",
     pushDenied: "Notifications are not allowed for the desk: allow them in Settings → Notifications",
   },
@@ -297,10 +302,10 @@ export const TEXT = {
   },
   unlock: {
     title: "Enter your PIN",
-    why: "This device reaches the desk through your tailnet. The PIN unlocks it here for 12 hours.",
     label: "PIN",
     placeholder: "PIN",
     submit: "Unlock",
+    noConnection: "Can't reach the desk: check this device's connection and Tailscale, then try again.",
   },
   zoom: { in: "Zoom in", out: "Zoom out", fit: "Fit", previous: "Previous picture (←)", next: "Next picture (→)" },
 };

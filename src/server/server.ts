@@ -9,7 +9,7 @@ import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { type DeskState, type DiskWarning, imageIds, type Session } from "../core/model.ts";
 import { endProcess, isAlive } from "../core/proc.ts";
-import { Push, subscription } from "./push.ts";
+import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
 import { RemoteUnlock } from "./remote-unlock.ts";
@@ -36,6 +36,7 @@ const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js",
 /** Marks what a locked device gets, so the device never keeps the PIN page as the desk (sw.js). */
 const LOCKED = { "X-Agent-Desk-Locked": "1" };
 const LOW_DISK_RATIO = 0.1;
+const REFUSED_PAGE = "This device is not allowed on this desk: it accepts only its owner's Tailscale account. Sign in to Tailscale with that account and open it again.\n";
 
 const BUILD = new Date().toISOString();
 
@@ -129,7 +130,11 @@ export function createDeskServer(store: Store, port: number, remote: Access["rem
 }
 
 async function handle(store: Store, access: Access, secret: string, unlock: RemoteUnlock, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!hostAllowed(req, access)) return sendJson(res, 421, { error: "unknown Host or Tailscale user" });
+  if (!hostAllowed(req, access)) {
+    // Opened directly, a sentence for the person; the page's own requests read the status.
+    if (req.url === "/") return send(res, 421, REFUSED_PAGE, "text/plain; charset=utf-8");
+    return sendJson(res, 421, { error: "unknown Host or Tailscale user" });
+  }
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${access.port}`);
   const route = url.pathname;
   if (isRemote(req, access) && !unlock.unlocked(req)) return locked(route, access, unlock, req, res);
@@ -160,7 +165,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     try {
       const body = await readBody(req);
       const push = new Push(store.paths.push);
-      if (route === "/api/push/subscribe") push.subscribe(subscription(body));
+      if (route === "/api/push/subscribe") push.subscribe(subscription(body), isRemote(req, access) ? (unlock.unlockedUntil(req) ?? 0) : NO_PIN);
       else push.unsubscribe(text(fields(body, "body").endpoint, "endpoint", 2048));
       return sendJson(res, 200, { ok: true });
     } catch (error) {

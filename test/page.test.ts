@@ -225,6 +225,91 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"], "sent once");
   });
 
+  it("asks for the PIN again when the unlock ends, with what was being written kept", async () => {
+    store.upsertSession({ id: "pin-ended", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "pin ended", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "pin ended");
+    await page.click("#session .chat-footer textarea");
+    await page.type("half a thought");
+    // What the server answers a device whose 12 hours ended; a reload loads the page's real fetch again.
+    await page.eval(`(() => {
+      window.beforeReload = true;
+      const real = window.fetch;
+      window.fetch = (url, init) => String(url) === "/api/state" ? Promise.resolve(new Response("{}", { status: 401, headers: { "X-Agent-Desk-Locked": "1" } })) : real(url, init);
+    })()`);
+    await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')");
+    await page.click(".scard", "pin ended");
+    await page.waitFor("document.querySelector('#session .chat-footer textarea')");
+    assert.equal(await page.eval<string>("document.querySelector('#session .chat-footer textarea').value"), "half a thought");
+    // As iOS closing the app: nothing warned the page, the draft is already on the device.
+    await page.goto(base + "/");
+    await page.waitFor("document.querySelector('.scard')");
+    await page.click(".scard", "pin ended");
+    await page.waitFor("document.querySelector('#session .chat-footer textarea')?.value === 'half a thought'");
+    await page.click("#session .chat-footer .primary");
+    await page.waitFor("localStorage.getItem('agent-desk:drafts') === null");
+    assert.deepEqual(store.takeInbox("pin-ended").map((e) => e.answer), ["half a thought"], "sent, and no longer kept");
+  });
+
+  it("drops a saved draft whose question closed or whose session is gone", async () => {
+    const page = await open();
+    await page.eval(`localStorage.setItem("agent-desk:drafts", JSON.stringify({ drafts: [["answer-closed", "too late"], ["message-gone", "nobody"]], images: [] }))`);
+    await page.goto(base + "/");
+    await page.waitFor("document.querySelector('.scard') && localStorage.getItem('agent-desk:drafts') === null");
+  });
+
+  it("says when the device is not allowed, and how old the saved desk is", async () => {
+    const page = await open();
+    await page.eval(`(() => {
+      window.realFetch = window.fetch;
+      window.fetch = (url, init) => String(url) === "/api/state" ? Promise.resolve(new Response("{}", { status: 421 })) : window.realFetch(url, init);
+    })()`);
+    await page.waitFor("document.querySelector('#strip .err')?.textContent.includes('not allowed')");
+    const yesterday = new Date(Date.now() - 864e5).toISOString();
+    await page.eval(`(() => {
+      window.fetch = async (url, init) => {
+        if (String(url) !== "/api/state") return window.realFetch(url, init);
+        const headers = new Headers({ "X-Agent-Desk-Saved-At": ${JSON.stringify(yesterday)} });
+        return new Response(await (await window.realFetch(url)).blob(), { headers });
+      };
+    })()`);
+    await page.waitFor("document.querySelector('#strip .err')?.textContent.includes('Last saved: Yesterday')");
+    await page.eval("window.fetch = window.realFetch");
+    await page.waitFor("!document.querySelector('#strip .err')");
+  });
+
+  it("a tapped notification shows what needs the developer, whatever was open", async () => {
+    const page = await open(390, 800);
+    const on = (tab: string) => `document.querySelector('.tabbar button[aria-pressed="true"]')?.textContent.includes(${JSON.stringify(tab)})`;
+    await page.click(".tabbar button", "History");
+    await page.waitFor(on("History"));
+    await page.eval(`navigator.serviceWorker.dispatchEvent(new MessageEvent("message", { data: { show: "needs" } }))`);
+    await page.waitFor(on("Inbox"));
+    await page.click(".tabbar button", "History");
+    await page.waitFor(on("History"));
+    await page.eval(`location.hash = "#needs"`);
+    await page.waitFor(on("Inbox"));
+    await page.eval(`location.hash = ""`);
+  });
+
+  it("says the connection is lost when requests hang, also inside a session, and recovers", async () => {
+    store.upsertSession({ id: "hung", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "hung line", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "hung line");
+    await page.waitFor("document.querySelector('#session .chat-footer textarea')");
+    // A computer asleep: no answer and no failure, only the page's own limit ends the wait (shortened here).
+    await page.eval(`(() => {
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      AbortSignal.timeout = () => timeout(300);
+      window.realFetch = window.fetch;
+      window.fetch = (url, init) => String(url) === "/api/state" ? new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason))) : window.realFetch(url, init);
+    })()`);
+    await page.waitFor("document.querySelector('#strip .err')?.textContent.includes('agent-desk serve')");
+    await page.waitFor("document.querySelector('#session .offline-line')?.textContent.includes('agent-desk serve')");
+    await page.eval("window.fetch = window.realFetch");
+    await page.waitFor("!document.querySelector('#strip .err') && !document.querySelector('#session .offline-line')");
+  });
+
   it("sends an image pasted into the box with the message", async () => {
     store.upsertSession({ id: "with-image", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "hero picture", takesMessagesWhileWorking: true });
     const page = await open();
