@@ -40,7 +40,7 @@ const TERMINAL_NAMES = /** @type {Record<string, string>} */ ({ vscode: "VS Code
 const secret = document.querySelector('meta[name="agent-desk-secret"]')?.getAttribute("content") ?? "";
 
 /** @type {DeskState} */
-let data = { sessions: [], questions: [], agents: [], results: [], services: [], metrics: [], seen: undefined, problems: [], now: new Date().toISOString(), gone: [], listening: [], disk: [], projects: [], build: "" };
+let data = { sessions: [], questions: [], agents: [], results: [], services: [], metrics: [], seen: undefined, problems: [], now: new Date().toISOString(), gone: [], listening: [], disk: [], planForecasts: [], projects: [], build: "" };
 
 const ui = {
   view: /** @type {"desk" | "history"} */ ("desk"),
@@ -131,6 +131,8 @@ const entering = (id, where) => {
 };
 /** @param {Session} s */
 const isLive = (s) => s.state !== "ended" && !data.gone.includes(s.id);
+/** Ended with a question open and not looked at since: its question must not vanish unseen. @param {Session} s */
+const endedUnseen = (s) => s.endedAsking === true && unread(s);
 
 // ---------- Small pieces ----------
 /** @param {DotState} st */
@@ -498,7 +500,7 @@ function renderHeader() {
     ),
   );
   // A project is offered while one of its sessions runs or still has something for the developer.
-  const current = (/** @type {Session} */ s) => isLive(s) || data.questions.some((q) => q.status === "open" && q.sessionId === s.id) || data.results.some((r) => r.sessionId === s.id && isNew(r));
+  const current = (/** @type {Session} */ s) => isLive(s) || endedUnseen(s) || data.questions.some((q) => q.status === "open" && q.sessionId === s.id) || data.results.some((r) => r.sessionId === s.id && isNew(r));
   const names = [...new Set(data.sessions.filter(current).map((s) => s.project.name))].sort();
   if (ui.project !== null && !names.includes(ui.project)) ui.project = null;
   const projects = byId("projects");
@@ -605,6 +607,7 @@ function renderStrip() {
     data.problems.length ? h("span", { class: "chip warn problems", title: data.problems.join("\n") }, TEXT.problems(data.problems.length)) : null,
     data.disk.map((d) => h("span", { class: "chip warn", title: d.dir }, TEXT.disk(gb(d.freeBytes), d.projects.join(", ")))),
     contexts.map(({ s, c }) => h("button", { class: "chip warn", onclick: () => openSession(s.id) }, TEXT.contextWarn(label(s), c))),
+    data.planForecasts.map((f) => h("span", { class: "chip warn" }, TEXT.limitForecast(f.label, ago(data.now, f.fullAt), ago(data.now, f.resetsAt)))),
     projectsInView()
       .filter((p) => worthWarning(p))
       .map((p) => {
@@ -1093,6 +1096,7 @@ const sessionAgents = (sid) => data.agents.filter((a) => a.sessionId === sid).so
 /** @param {Session} s */
 const sessionWeight = (s) =>
   data.questions.filter((q) => q.status === "open" && q.sessionId === s.id).length * 10 +
+  (endedUnseen(s) ? 10 : 0) +
   sessionAgents(s.id).filter((a) => ["failed", "blocked", "idle"].includes(a.state) || agentQuiet(a) || failing(a)).length +
   (sessionQuiet(s) || failing(s) ? 1 : 0);
 
@@ -1218,6 +1222,7 @@ function attachLine({ socket, pane }) {
 
 /** What a session is up to, in one quiet line: its current tool call, or that it waits for instructions. @param {Session} s */
 function quietLine(s) {
+  if (endedUnseen(s)) return h("div", { class: "quiet-line unread", title: s.lastMessage ? firstLine(s.lastMessage.text) : "" }, h("span", { class: "badge k-new" }, TEXT.endedAsking), s.lastMessage ? firstLine(s.lastMessage.text) : "");
   if (s.state === "waiting" && s.lastMessage && unread(s)) return h("div", { class: "quiet-line unread", title: firstLine(s.lastMessage.text) }, readBadge(s), firstLine(s.lastMessage.text));
   if (s.state === "waiting") return h("div", { class: "quiet-line" }, readBadge(s), TEXT.awaiting(s.lastMessage ? ago(s.lastMessage.at) : ""));
   if (s.activity) return h("div", { class: "quiet-line", title: s.activity }, TEXT.sessionLine.now, " ", h("code", {}, s.activity));
@@ -1229,7 +1234,7 @@ function readBadge(s) {
   return unread(s) ? h("span", { class: "badge k-new" }, TEXT.newBadge) : h("span", { class: "badge k-seen", title: s.readAt ? TEXT.seenAt(hm(s.readAt)) : "" }, TEXT.seenBadge);
 }
 function sessionsColumn() {
-  const list = data.sessions.filter((s) => isLive(s) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
+  const list = data.sessions.filter((s) => (isLive(s) || endedUnseen(s)) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
   const legend = h("div", { class: "legend" }, LEGEND.map((st) => h("span", {}, dot(st), TEXT.state[st])));
   return column("sessions", list.length, list.length ? h("div", { class: "slist" }, list.map(sessionCard)) : h("div", { class: "empty" }, TEXT.emptyRunning), { foot: legend, quiet: true });
 }
@@ -1439,6 +1444,7 @@ function openSession(sid) {
       { class: "dhead" },
       h("div", {}, h("div", { class: "meta" }, where(s, s.provider)), h("h3", {}, sessionName(s))),
       h("span", { class: "spacer" }),
+      s.lastMessage && (isLive(s) || s.endedAsking) ? h("button", { class: "secondary", title: TEXT.markUnreadHint, onclick: () => markUnread(s) }, TEXT.markUnread) : null,
       goLink(s, "primary", icon("go"), h("span", { class: "lbl" }, TEXT.goTo)),
       h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x")),
     ),
@@ -1595,6 +1601,13 @@ function workingNow(s, list) {
         )
       : null,
   );
+}
+
+/** Back to the list with the session new again: left open, the panel would mark it read at once. @param {Session} s */
+function markUnread(s) {
+  dialog("session").close();
+  ui.readFor.delete(s.id);
+  run(post(`/api/sessions/${encodeURIComponent(s.id)}/unread`));
 }
 
 /** Closes the session panel and shows the question large on the desk. @param {string} questionId */

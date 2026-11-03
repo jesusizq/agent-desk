@@ -7,6 +7,7 @@ import { gzipSync } from "node:zlib";
 import { fields, InputError, oneOf, optional, text } from "../core/check.ts";
 import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
+import { planForecasts } from "../core/limits.ts";
 import { type DeskState, type DiskWarning, imageIds, type Session } from "../core/model.ts";
 import { endProcess, isAlive } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
@@ -50,6 +51,7 @@ export function deskState(store: Store, now = new Date()): DeskState {
     gone: goneSessions(snap.sessions),
     listening: snap.sessions.filter((s) => store.isListening(s.id, snap.problems)).map((s) => s.id),
     disk: diskWarnings(snap.sessions, snap.problems),
+    planForecasts: planForecasts(store.planHistory(snap.problems), now),
     build: BUILD,
   };
 }
@@ -96,6 +98,7 @@ const ACTIONS: Record<string, Action> = {
   "questions/dismiss": (store, target) => store.dismiss(target),
   "results/seen": (store, target) => store.markResultSeen(target),
   "sessions/read": (store, target) => store.markSessionRead(target),
+  "sessions/unread": (store, target) => store.markSessionUnread(target),
   "sessions/message": (store, target, body) => store.messageFromDesk(target, ...reply(body)),
   "sessions/keys": (store, target, body) => {
     const action = oneOf(Object.keys(TMUX_ACTIONS) as TmuxAction[])(fields(body, "body").action, "action");
@@ -173,7 +176,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
       throw error;
     }
   }
-  const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read|end)$/.exec(route);
+  const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read|unread|end)$/.exec(route);
   const action = m ? ACTIONS[`${m[1]}/${m[3]}`] : undefined;
   if (!m?.[2] || !action) return sendJson(res, 404, { error: "not found" });
   if (!ID_PATTERN.test(m[2])) return sendJson(res, 400, { error: "invalid id" });
@@ -301,11 +304,24 @@ export function pushNewQuestions(store: Store, push: Push, post: typeof fetch = 
   };
 }
 
+/** Keeps how the plan windows fill, from the freshest report of any session. */
+export function recordPlanUsage(store: Store): void {
+  const latest = store.listMetrics().filter((m) => m.planWindows).sort((a, b) => a.at.localeCompare(b.at)).at(-1);
+  if (latest?.planWindows) store.recordPlan(latest.planWindows, latest.at);
+}
+
 export function startServer(store: Store, port: number): Promise<Server> {
   const server = createDeskServer(store, port);
-  const checkPush = pushNewQuestions(store, new Push(store.paths.push));
+  const push = new Push(store.paths.push);
+  const checkPush = pushNewQuestions(store, push);
   setInterval(() => {
-    checkPush().catch((error: unknown) => process.stderr.write(`agent-desk: push failed: ${(error as Error).stack ?? String(error)}\n`));
+    const failed = (what: string) => (error: unknown) => process.stderr.write(`agent-desk: ${what} failed: ${(error as Error).stack ?? String(error)}\n`);
+    checkPush().catch(failed("push"));
+    try {
+      recordPlanUsage(store);
+    } catch (error) {
+      failed("recording plan usage")(error);
+    }
   }, PUSH_EVERY_MS).unref();
   archiveOld(store);
   setInterval(() => {

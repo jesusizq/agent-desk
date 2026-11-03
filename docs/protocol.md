@@ -116,6 +116,7 @@ The server binds 127.0.0.1 and refuses any request whose `Host` is not `127.0.0.
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |
 | `POST /api/sessions/<id>/keys` `{ "action": "compact" \| "interrupt" \| "enter" \| "option-1"…"option-5" }` | sends those keys to the session's tmux pane (see `.claude/rules/security.md`) |
+| `POST /api/sessions/<id>/unread` | its last message is new again on every device, until the session is opened |
 | `POST /api/sessions/<id>/end` | sends SIGTERM to the session's own process, only while its pid still has the start time the session recorded (see `.claude/rules/security.md`) |
 | `GET /api/push/key` | this install's VAPID public key, which the phone subscribes with |
 | `POST /api/push/subscribe` (a `PushSubscription` as JSON), `POST /api/push/unsubscribe` `{ "endpoint": "…" }` | the phone that gets "N need you" when a question opens; only `https://*.push.apple.com` endpoints are accepted |

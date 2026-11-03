@@ -48,6 +48,8 @@ export type Session = {
   lastMessage?: { text: string; at: string };
   /** When the developer last read this session's conversation on the desk (any device). */
   readAt?: string;
+  /** It ended with a question still open, so it stays in view until the developer opens it. */
+  endedAsking?: boolean;
   /**
    * Messages the developer sent while the session was working (latest last), and when the turn
    * that received them ended; the session's last message says how it applied them.
@@ -151,6 +153,8 @@ export const SUGGESTION_REASONS = ["context-full"] as const;
 export type Suggestion = { reason: (typeof SUGGESTION_REASONS)[number]; command: string };
 
 export type PlanWindow = { label: string; percent: number; resetsAt?: string };
+/** A plan window that fills before it resets, at the pace of the last while. */
+export type PlanForecast = { label: string; percent: number; fullAt: string; resetsAt: string };
 
 /** What a session's status line shows; every field is optional because providers differ. */
 export type Metrics = {
@@ -239,6 +243,8 @@ export type DeskState = {
   now: string;
   /** Sessions still marked running whose process has disappeared. */
   gone: string[];
+  /** Plan windows that fill before they reset at the recent pace. */
+  planForecasts: PlanForecast[];
   /** Sessions with a listener waiting for answers from the desk right now. */
   listening: string[];
   disk: DiskWarning[];

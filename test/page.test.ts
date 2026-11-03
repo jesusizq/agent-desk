@@ -1,6 +1,7 @@
 // The page in a real headless Chrome, over the demo store: what it draws, its windows and its layout.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { Store } from "../src/store/store.ts";
@@ -308,6 +309,48 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("document.querySelector('#session .offline-line')?.textContent.includes('agent-desk serve')");
     await page.eval("window.fetch = window.realFetch");
     await page.waitFor("!document.querySelector('#strip .err') && !document.querySelector('#session .offline-line')");
+  });
+
+  it("marks a session unread back to the list, and opening it reads it again", async () => {
+    store.upsertSession({ id: "come-back", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "come back later" });
+    store.updateSession("come-back", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Here is the long report", at: new Date().toISOString() } }));
+    const page = await open();
+    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('come back later'))`;
+    await page.waitFor(`${card}?.textContent.includes('New message')`);
+    await page.click(".scard", "come back later");
+    await page.waitFor(`document.querySelector('#session .dhead')?.textContent.includes('Mark unread')`);
+    await page.waitFor(`${card}?.textContent.includes('Seen')`);
+    assert.ok(store.getSession("come-back")?.readAt, "opened: read");
+    await page.click("#session .dhead button", "Mark unread");
+    await page.waitFor(`!document.getElementById('session').open && ${card}?.textContent.includes('New message')`);
+    assert.equal(store.getSession("come-back")?.readAt, undefined);
+    await page.click(".scard", "come back later");
+    await page.waitFor(`${card}?.textContent.includes('Seen')`);
+    await page.press("Escape");
+  });
+
+  it("keeps in view a session that ended asking, until it is opened", async () => {
+    store.upsertSession({ id: "ended-asking", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "gone mid question" });
+    store.updateSession("ended-asking", (s) => ({ ...s, state: "ended", endedAsking: true, lastMessage: { text: "Should I delete it?", at: new Date().toISOString() } }));
+    const page = await open();
+    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('gone mid question'))`;
+    await page.waitFor(`${card}?.textContent.includes('It ended while asking')`);
+    await page.click(".scard", "gone mid question");
+    await page.waitFor(`document.getElementById('session').open`);
+    await page.waitFor(`document.querySelector('#session .dhead')?.textContent.includes('Mark unread')`);
+    await page.press("Escape");
+    await page.waitFor(`!${card}`);
+  });
+
+  it("warns only when a plan window fills before it resets", async () => {
+    const page = await open();
+    const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    const resetsAt = new Date(Date.now() + 3 * 3600_000).toISOString();
+    store.recordPlan([{ label: "5 h", percent: 50, resetsAt }], at(40));
+    store.recordPlan([{ label: "5 h", percent: 70, resetsAt }], at(1));
+    await page.waitFor(`document.querySelector('#strip')?.textContent.includes('5 h limit: full in about')`);
+    fs.rmSync(store.paths.plan);
+    await page.waitFor(`!document.querySelector('#strip')?.textContent.includes('5 h limit')`);
   });
 
   it("sends an image pasted into the box with the message", async () => {

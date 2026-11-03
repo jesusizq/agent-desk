@@ -23,6 +23,7 @@ export class StorePaths {
   get seen() { return path.join(this.home, "seen.json"); }
   /** The VAPID key and the phones subscribed to push. */
   get push() { return path.join(this.home, "push.json"); }
+  get plan() { return path.join(this.home, "plan.json"); }
   get sessionsDir() { return path.join(this.home, "sessions"); }
   get questionsDir() { return path.join(this.home, "questions"); }
   get resultsDir() { return path.join(this.home, "results"); }

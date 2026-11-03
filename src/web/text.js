@@ -128,6 +128,9 @@ export const TEXT = {
   /** @param {string} where */
   newMessage: (where) => `New message from ${where}`,
   newBadge: "New message",
+  markUnread: "Mark unread",
+  markUnreadHint: "Keep it as a new message until you open it again",
+  endedAsking: "It ended while asking",
   seenBadge: "Seen",
   /** @param {string} t */
   seenAt: (t) => `Opened at ${t}`,
@@ -192,6 +195,8 @@ export const TEXT = {
   disk: (free, projects) => `Disk: ${free} free (${projects})`,
   /** @param {string} where @param {number} c */
   contextWarn: (where, c) => `${where}: context at ${Math.round(c)}%`,
+  /** @param {string} label @param {string} full @param {string} reset */
+  limitForecast: (label, full, reset) => `${label} limit: full in about ${full} at this pace, resets in ${reset}`,
   /** @param {number} n */
   problems: (n) => plural(n, "unreadable file", "unreadable files"),
   /** @param {string} name @param {string} size @param {number} merged @param {string} reclaim */

@@ -150,9 +150,11 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
 
     case "SessionEnd":
       store.withdrawInbox(sid);
+      const asking = store.openQuestions(sid, problems).length > 0;
       store.closeOpen(sid, { status: "dismissed", problems });
       syncPermissionMarker(store, problems);
-      store.updateSession(sid, (s) => ({ ...s, state: "ended", endedAt: new Date().toISOString() }));
+      // A question that goes with its session must not vanish unseen: the session stays in view, unread.
+      store.updateSession(sid, ({ readAt, ...s }) => ({ ...s, ...(asking ? { endedAsking: true } : readAt ? { readAt } : {}), state: "ended", endedAt: new Date().toISOString() }));
       return { code: 0 };
 
     default:

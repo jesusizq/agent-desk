@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { compact, fields, InputError, int, isoTime, text } from "../core/check.ts";
 import { id, newId } from "../core/ids.ts";
+import { addSamples, type PlanHistory } from "../core/limits.ts";
 import { isAlive, procInfo } from "../core/proc.ts";
 import {
   type Agent,
@@ -21,6 +22,8 @@ import {
   readAgent,
   readInboxEntry,
   readMetrics,
+  readPlanHistory,
+  type PlanWindow,
   readConversationEntry,
   readProjectScan,
   readQuestion,
@@ -144,6 +147,11 @@ export class Store {
   /** The developer read the session's conversation on the desk: its last message is no longer new. */
   markSessionRead(sessionId: string): Session {
     return this.updateSession(sessionId, (s) => ({ ...s, readAt: this.stamp() }));
+  }
+
+  /** The developer wants to come back to it: its last message is new again, until it is opened. */
+  markSessionUnread(sessionId: string): Session {
+    return this.updateSession(sessionId, ({ readAt: _readAt, ...s }) => s);
   }
 
   listSessions(problems?: string[]): Session[] {
@@ -582,6 +590,25 @@ export class Store {
       const next = readMetrics({ ...current, ...metrics, at: this.stamp() }, file);
       writeJson(file, next);
       return next;
+    });
+  }
+
+  /** How the plan windows have filled lately; an unreadable file only costs the forecast. */
+  planHistory(problems?: string[]): PlanHistory {
+    try {
+      const raw = readJson(this.paths.plan);
+      return raw === undefined ? {} : readPlanHistory(raw, this.paths.plan);
+    } catch (error) {
+      problems?.push(`${this.paths.plan}: ${(error as Error).message}`);
+      return {};
+    }
+  }
+
+  recordPlan(windows: PlanWindow[], at: string): void {
+    withLock(this.paths.plan, () => {
+      const before = this.planHistory();
+      const after = addSamples(before, windows, at);
+      if (JSON.stringify(after) !== JSON.stringify(before)) writeJson(this.paths.plan, after);
     });
   }
 

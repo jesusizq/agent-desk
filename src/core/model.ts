@@ -1,6 +1,7 @@
 // Validators that read protocol records back from untrusted files and input.
 import { bool, compact, fields, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
 import { id } from "./ids.ts";
+import type { PlanHistory } from "./limits.ts";
 import {
   AGENT_STATES,
   ANSWER_CHANNELS,
@@ -54,6 +55,7 @@ export function readSession(value: unknown, where = "session"): Session {
     failedWhat: optional(f.failedWhat, `${where}.failedWhat`, line),
     lastMessage: optional(f.lastMessage, `${where}.lastMessage`, readMessage),
     readAt: optional(f.readAt, `${where}.readAt`, isoTime),
+    endedAsking: optional(f.endedAsking, `${where}.endedAsking`, bool),
     sentWhileWorking: optional(f.sentWhileWorking, `${where}.sentWhileWorking`, (v, w) => list(v, w, readSent, 20)),
   });
 }
@@ -296,4 +298,20 @@ function readWorktree(value: unknown, where: string): Worktree {
 
 export function readSeen(value: unknown, where = "seen"): Seen {
   return { since: isoTime(fields(value, where).since, `${where}.since`) };
+}
+
+/** The plan windows' recent history (src/core/limits.ts), checked. */
+export function readPlanHistory(value: unknown, where: string): PlanHistory {
+  const history: PlanHistory = {};
+  for (const [label, entry] of Object.entries(fields(value, where))) {
+    const f = fields(entry, `${where}.${label}`);
+    history[label] = compact({
+      resetsAt: optional(f.resetsAt, `${where}.${label}.resetsAt`, isoTime),
+      samples: list(f.samples, `${where}.${label}.samples`, (v, w) => {
+        const sample = fields(v, w);
+        return { at: isoTime(sample.at, `${w}.at`), percent: num(sample.percent, `${w}.percent`, 0, 100) };
+      }, 200),
+    });
+  }
+  return history;
 }

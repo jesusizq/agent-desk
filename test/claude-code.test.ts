@@ -351,6 +351,7 @@ describe("Claude Code hooks", () => {
     handleHook(event("SessionEnd", { reason: "prompt_input_exit" }), ctx(store));
     assert.equal(store.getSession("cc-1")?.state, "ended");
     assert.equal(store.listQuestions()[0]?.status, "dismissed");
+    assert.equal(store.getSession("cc-1")?.endedAsking, true, "it stays in view until the developer opens it");
   });
 
   it("rejects hook input without a valid session id", () => {
