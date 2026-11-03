@@ -354,6 +354,44 @@ describe("Claude Code hooks", () => {
     assert.equal(store.getSession("cc-1")?.endedAsking, true, "it stays in view until the developer opens it");
   });
 
+  it("forgets how a session ended when it starts again", () => {
+    const store = testStore();
+    handleHook(event("Stop", { last_assistant_message: "Next?" }), ctx(store));
+    handleHook(event("SessionEnd", { reason: "other" }), ctx(store));
+    assert.equal(store.getSession("cc-1")?.endedAsking, true);
+    handleHook(event("SessionStart", { source: "resume" }), ctx(store));
+    const s = store.getSession("cc-1");
+    assert.equal(s?.state, "waiting");
+    assert.equal(s?.endedAsking, undefined);
+    assert.equal(s?.endedAt, undefined);
+  });
+
+  it("ends a session whose conversation continued in another one, and only that", () => {
+    const store = testStore();
+    const dir = tempHome();
+    const line = (o: object) => `${JSON.stringify(o)}\n`;
+    const write = (id: string, ...lines: object[]) => fs.writeFileSync(path.join(dir, `${id}.jsonl`), lines.map(line).join(""));
+    const turn = { type: "user", message: {} };
+    const moved = { type: "continued-in", continuedInSessionId: "cc-1" };
+    write("old", turn, { type: "cost-state" }, moved);
+    write("resumed", moved, { type: "attachment" }, turn);
+    write("plain", turn, { type: "system" });
+    const other = (id: string, dirOf = "/home/demo/Projects/shop") => store.upsertSession({ id, provider: "Claude Code", project: { name: "shop", dir: dirOf } });
+    handleHook(event("SessionStart", {}), ctx(store));
+    const project = store.getSession("cc-1")?.project.dir ?? "";
+    for (const id of ["old", "resumed", "plain", "no-transcript"]) other(id, project);
+    write("elsewhere", turn, moved);
+    other("elsewhere");
+    store.upsertAgent("old", "stuck", { state: "working" });
+    const open = store.ask({ sessionId: "old", kind: "question", text: "Still there?" });
+    handleHook(event("Stop", { last_assistant_message: "Done.", transcript_path: path.join(dir, "cc-1.jsonl") }), ctx(store));
+    assert.equal(store.getSession("old")?.state, "ended");
+    assert.equal(store.getSession("old")?.endedAsking, undefined, "nothing to look at: it goes on in the other session");
+    assert.equal(store.listAgents("old")[0]?.state, "done");
+    assert.equal(store.listQuestions().find((q) => q.id === open.id)?.status, "dismissed");
+    for (const id of ["resumed", "plain", "no-transcript", "elsewhere"]) assert.notEqual(store.getSession(id)?.state, "ended", id);
+  });
+
   it("rejects hook input without a valid session id", () => {
     assert.throws(() => readHookInput("{}"), /session_id/);
     assert.throws(() => readHookInput('{"session_id":"../x","hook_event_name":"Stop","cwd":"/"}'), /session_id/);

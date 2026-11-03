@@ -65,7 +65,9 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
   const f = input.raw;
   switch (input.event) {
     case "SessionStart":
-      store.updateSession(sid, (s) => ({ ...s, state: "waiting" }));
+      // Started again (resumed, or the plugins reloaded): what its last end left no longer holds.
+      store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, ...s }) => ({ ...s, state: "waiting" }));
+      retireContinued(input, ctx, problems);
       return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: instructions() } }) };
 
     case "UserPromptSubmit": {
@@ -144,6 +146,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       return { code: 0 };
 
     case "Stop":
+      retireContinued(input, ctx, problems);
       endTurn(input, ctx, problems);
       ctx.startScan?.(ctx.env.CLAUDE_PROJECT_DIR || input.cwd);
       return { code: 0 };
@@ -160,6 +163,42 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
     default:
       return { code: 0 };
   }
+}
+
+/**
+ * A conversation sent to the background goes on under a new session id, and the old one never gets
+ * a SessionEnd: its terminal stays open. Its transcript says so; the session is ended here.
+ */
+function retireContinued(input: Common, ctx: HookContext, problems: string[]): void {
+  const { store } = ctx;
+  const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
+  if (!transcript) return;
+  const dir = ctx.env.CLAUDE_PROJECT_DIR || input.cwd;
+  for (const s of store.listSessions(problems)) {
+    if (s.id === input.sessionId || s.state === "ended" || s.project.dir !== dir) continue;
+    if (!continuedElsewhere(path.join(path.dirname(transcript), `${s.id}.jsonl`))) continue;
+    store.withdrawInbox(s.id);
+    store.closeOpen(s.id, { status: "dismissed", problems });
+    for (const agent of store.listAgents(s.id)) {
+      if (agent.state === "working") store.upsertAgent(s.id, agent.name, { state: "done", activity: "The session continued elsewhere" });
+    }
+    store.updateSession(s.id, (old) => ({ ...old, state: "ended", endedAt: new Date().toISOString() }));
+  }
+}
+
+/** Whether the transcript's last word is that it continued elsewhere: a conversation resumed since has written on. */
+function continuedElsewhere(transcript: string): boolean {
+  for (const line of readTail(transcript, 8192).split("\n").reverse()) {
+    let type: unknown;
+    try {
+      type = (JSON.parse(line) as { type?: unknown }).type;
+    } catch {
+      continue; // the blank last line, or the first one, cut by the tail
+    }
+    if (type === "continued-in") return true;
+    if (type === "user" || type === "assistant") return false;
+  }
+  return false;
 }
 
 /** Every event refreshes who and where the session is: it may have been resumed in another terminal. */

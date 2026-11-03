@@ -200,6 +200,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const agents = await page.eval<string[]>("[...document.querySelectorAll('#session .working-now .agoal')].map((g) => g.textContent)");
     assert.ok(agents.includes("Order summary beside the cart"), "its agents at work are listed under it");
     assert.ok(!agents.includes("Three pay button variants"), "finished ones are not");
+    // The conversation arrives after the panel opens and moves everything: a click before it lands elsewhere.
+    await page.waitFor("document.querySelector('#session .session-body')?.dataset.fetched === 'yes'");
     const fold = "document.querySelector('#session .working-now .agents-fold')";
     assert.equal(await page.eval<boolean>(`${fold}.open`), false, "the agents are folded under one line");
     assert.match(await page.eval<string>(`${fold}.querySelector('summary').textContent`), /^\d+ agents/);
@@ -340,6 +342,10 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor(`document.querySelector('#session .dhead')?.textContent.includes('Mark unread')`);
     await page.press("Escape");
     await page.waitFor(`!${card}`);
+    // Started again, it is an ordinary live session even if an old mark is left on it.
+    store.updateSession("ended-asking", (s) => ({ ...s, state: "waiting", readAt: undefined as never, lastMessage: { text: "Should I delete it?", at: new Date().toISOString() } }));
+    await page.waitFor(`${card}?.textContent.includes('New message')`);
+    assert.ok(!(await page.eval<string>(`${card}.textContent`)).includes("It ended while asking"));
   });
 
   it("warns only when a plan window fills before it resets", async () => {

@@ -132,7 +132,7 @@ const entering = (id, where) => {
 /** @param {Session} s */
 const isLive = (s) => s.state !== "ended" && !data.gone.includes(s.id);
 /** Ended with a question open and not looked at since: its question must not vanish unseen. @param {Session} s */
-const endedUnseen = (s) => s.endedAsking === true && unread(s);
+const endedUnseen = (s) => s.state === "ended" && s.endedAsking === true && unread(s);
 
 // ---------- Small pieces ----------
 /** @param {DotState} st */
