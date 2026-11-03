@@ -107,6 +107,7 @@ export const TEXT = {
   sendHintWorking: "It reaches this session at its next step, exactly as written, as if typed in its terminal.",
   send: "Send to the session",
   sendShort: "Send",
+  sending: "Sending…",
   sendKeys: "Ctrl+Enter sends.",
   sendHint: "It reaches this session exactly as written.",
   notListening: "This session is not listening for answers right now: answer in its terminal.",

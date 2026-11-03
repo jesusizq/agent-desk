@@ -218,9 +218,11 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.click("#session .chat-footer textarea");
     assert.equal(await page.eval<string>("document.querySelector('#session .chat-footer textarea').placeholder"), "Write to it while it works…");
     await page.type("and push it when the tests pass");
-    await page.click("#session .chat-footer .primary");
+    // A second click before the answer arrives (a slow phone network) sends nothing more.
+    const button = "document.querySelector('#session .chat-footer .primary')";
+    assert.equal(await page.eval<string>(`(() => { const b = ${button}; b.click(); b.click(); return ${button}.textContent; })()`), "Sending…");
     await page.waitFor("document.querySelector('#toasts')?.textContent.includes('release notes')");
-    assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"]);
+    assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"], "sent once");
   });
 
   it("sends an image pasted into the box with the message", async () => {

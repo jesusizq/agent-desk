@@ -590,7 +590,8 @@ async function uploadImage(file) {
  * @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder] @param {string} [hint] @param {boolean} [images] @param {Child} [middle] shown between the options and the box
  */
 function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null) {
-  const box = /** @type {HTMLTextAreaElement} */ (h("textarea", { "data-key": key, placeholder, "aria-label": placeholder }));
+  // What is on its way stays as sent: an edit made meanwhile would be lost with the draft.
+  const box = /** @type {HTMLTextAreaElement} */ (h("textarea", { "data-key": key, placeholder, "aria-label": placeholder, readonly: ui.sending.has(key) }));
   box.value = ui.drafts.get(key) ?? "";
   // The box grows with what is written, up to 40% of the window; past that it scrolls.
   const fit = () => {
@@ -621,8 +622,10 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
   picker.addEventListener("change", () => attach([...(picker.files ?? [])]));
   const send = () => {
     const text = box.value;
-    if ((!text.trim() && attached.length === 0) || busy) return;
+    // Read now, not as last drawn: a second click before the redraw must not send twice.
+    if ((!text.trim() && attached.length === 0) || ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0) return;
     ui.sending.add(key);
+    render(); // the button shows at once that the message is on its way
     run(post(route, attached.length ? { text, images: attached } : { text }).then(() => {
       ui.drafts.delete(key);
       ui.draftImages.delete(key);
@@ -685,7 +688,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
         "div",
         { class: "send-col" },
         images ? [picker, h("button", { class: "icon-btn", title: TEXT.attachImage, "aria-label": TEXT.attachImage, onclick: () => picker.click() }, icon("image"))] : null,
-        h("button", { class: "primary", title: TEXT.send, onclick: send, disabled: busy }, icon("send"), TEXT.sendShort),
+        h("button", { class: "primary", title: TEXT.send, onclick: send, disabled: busy }, icon("send"), ui.sending.has(key) ? TEXT.sending : TEXT.sendShort),
       ),
       h("span", { class: "faint send-hint" }, h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), hint, images ? ` ${TEXT.pasteImages}` : ""),
     ),
@@ -1436,7 +1439,7 @@ function panelShows(s) {
     data.results.filter(mine).map((r) => r.id),
     projectOf(s),
     ui.conversations.get(s.id)?.length,
-    [...ui.draftImages, ...ui.uploading], // images attached to the box below
+    [...ui.draftImages, ...ui.uploading, ...ui.sending], // the box below: images attached, a message on its way
     [...ui.stepsOpen],
     Math.floor(Date.now() / 60_000), // times shown as "for 5 min"
   ]);
