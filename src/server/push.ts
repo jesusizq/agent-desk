@@ -67,11 +67,22 @@ export class Push {
    * is dropped; any other failure is returned, one line each.
    */
   async send(payload: string, post: typeof fetch = fetch): Promise<string[]> {
-    const { vapid, subscriptions } = this.read();
+    return this.deliver(this.read().subscriptions.filter((s) => s.until > Date.now()), payload, post);
+  }
+
+  /** Sends `payload` once to each device whose unlock has just ended, which then counts as told. */
+  async sendEnded(payload: string, post: typeof fetch = fetch): Promise<string[]> {
+    const ended = this.subscriptions().filter((s) => s.until > 0 && s.until <= Date.now());
+    if (ended.length === 0) return [];
+    this.update((p) => ({ ...p, subscriptions: p.subscriptions.map((s) => (ended.some((e) => e.endpoint === s.endpoint) ? { ...s, until: 0 } : s)) }));
+    return this.deliver(ended, payload, post);
+  }
+
+  private async deliver(devices: Subscribed[], payload: string, post: typeof fetch): Promise<string[]> {
+    const { vapid } = this.read();
     const key = createPrivateKey({ key: JSON.parse(vapid.privateKey) as JsonWebKey, format: "jwk" });
     const problems: string[] = [];
-    for (const s of subscriptions) {
-      if (s.until <= Date.now()) continue;
+    for (const s of devices) {
       const url = new URL(s.endpoint);
       if (!PUSH_HOSTS.test(url.hostname)) continue; // checked when subscribed; a hand-edited file is not trusted either
       let res: Response;

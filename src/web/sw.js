@@ -55,14 +55,16 @@ async function stamped(res) {
 
 // A push says only how many questions wait (src/server/push.ts); what they ask is read in the desk.
 sw.addEventListener("push", (e) => {
-  let count = 0;
+  /** @type {{ count?: unknown, pinEnded?: unknown }} */
+  let message = {};
   try {
-    count = Number(/** @type {{ count?: unknown }} */ (e.data?.json() ?? {}).count) || 0;
+    message = e.data?.json() ?? {};
   } catch {
-    count = 0; // an unreadable payload still says something waits: iOS requires a notification for every push
+    message = {}; // an unreadable payload still says something waits: iOS requires a notification for every push
   }
-  const body = count > 1 ? `${count} need you` : "Something needs you";
-  const shown = sw.registration.showNotification("Agent Desk", { body, tag: "needs-you", icon: "/icon-192.png" });
+  const count = Number(message.count) || 0;
+  const body = message.pinEnded === true ? "Enter the PIN to keep getting notifications" : count > 1 ? `${count} need you` : "Something needs you";
+  const shown = sw.registration.showNotification("Agent Desk", { body, tag: message.pinEnded === true ? "pin-ended" : "needs-you", icon: "/icon-192.png" });
   // The number is a nicety: a browser that refuses it still shows the notification.
   e.waitUntil(Promise.all([shown, count > 0 && "setAppBadge" in sw.navigator ? sw.navigator.setAppBadge(count).catch(() => {}) : null]));
 });

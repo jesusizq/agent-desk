@@ -1,12 +1,12 @@
 // A PIN in front of remote access: a device reaching the desk through the tailnet must unlock it
-// first; the unlock lasts 12 hours on that device. Requests from this machine never need it.
+// first; the unlock lasts 24 hours on that device. Requests from this machine never need it.
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { fields, InputError, text } from "../core/check.ts";
 import { readJson, writeJson } from "../store/fsx.ts";
 
 export const UNLOCK_COOKIE = "agent_desk_unlock";
-export const UNLOCK_HOURS = 12;
+export const UNLOCK_HOURS = 24;
 const MIN_PIN = 6;
 const MAX_FAILURES = 5;
 const LOCKOUT_MS = 15 * 60_000;

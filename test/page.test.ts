@@ -232,7 +232,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.click(".scard", "pin ended");
     await page.click("#session .chat-footer textarea");
     await page.type("half a thought");
-    // What the server answers a device whose 12 hours ended; a reload loads the page's real fetch again.
+    // What the server answers a device whose 24 hours ended; a reload loads the page's real fetch again.
     await page.eval(`(() => {
       window.beforeReload = true;
       const real = window.fetch;

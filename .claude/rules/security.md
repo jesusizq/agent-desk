@@ -11,8 +11,9 @@ command.
   caller's `Tailscale-User-Login`.
 - No outbound network calls, with one opt-in exception: Web Push to the phones the developer
   subscribed from the page (`src/server/push.ts`). Only `https://*.push.apple.com` endpoints are
-  accepted, checked when subscribing and again before each send; the payload is a count of open
-  questions, never their text, encrypted for the phone (RFC 8291) and signed with this install's
+  accepted, checked when subscribing and again before each send; a device gets pushes only while
+  its PIN is in; the payload is a count of open questions, or a fixed notice that the PIN ended, never
+  a session's text, encrypted for the phone (RFC 8291) and signed with this install's
   VAPID key, kept in the store with 0600 permissions.
 - Reject requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding),
   except the configured tailnet host (`AGENT_DESK_REMOTE_HOST`) carrying the configured Tailscale

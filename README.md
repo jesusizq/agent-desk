@@ -157,7 +157,7 @@ internet, and the desk lets in only your Tailscale login, after a PIN.
    ```
 
 5. On the phone, open `https://<machine>.<tailnet>.ts.net:8443` and enter the PIN. The unlock lasts
-   12 hours on that device. After five wrong PINs, the desk refuses every attempt for 15 minutes.
+   24 hours on that device. After five wrong PINs, the desk refuses every attempt for 15 minutes.
 
 From the phone you can answer questions, allow or deny permission prompts, and send keys to tmux
 sessions. "Go to session" is hidden, and local previews (`localhost` URLs) are named, not linked,
@@ -171,8 +171,8 @@ question or permission prompt opens, the desk sends Apple's push service a notif
 how many wait ("2 need you"), encrypted for the phone (RFC 8291) and signed with this install's key
 (`push.json` in the store). It is the desk's only outbound call, and only to `*.push.apple.com`.
 
-A device gets notifications only while its PIN is in. When its 12 hours end they stop, and they start
-again when the PIN is entered. Tapping a notification opens "Needs you", and the app's icon shows how
+A device gets notifications only while its PIN is in. When its 24 hours end it is told once, they
+stop, and they start again when the PIN is entered. Tapping a notification opens "Needs you", and the app's icon shows how
 many questions were open at the last notification, corrected when the app is open.
 
 ### The terminal itself, from the phone (Termius)

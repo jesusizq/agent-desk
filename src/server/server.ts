@@ -310,6 +310,11 @@ export function recordPlanUsage(store: Store): void {
   if (latest?.planWindows) store.recordPlan(latest.planWindows, latest.at);
 }
 
+/** Tells a device once that its PIN ended, since from then on it hears nothing more. */
+export async function pushEndedUnlocks(push: Push, post: typeof fetch = fetch): Promise<void> {
+  for (const problem of await push.sendEnded(JSON.stringify({ pinEnded: true }), post)) process.stderr.write(`agent-desk: ${problem}\n`);
+}
+
 export function startServer(store: Store, port: number): Promise<Server> {
   const server = createDeskServer(store, port);
   const push = new Push(store.paths.push);
@@ -317,6 +322,7 @@ export function startServer(store: Store, port: number): Promise<Server> {
   setInterval(() => {
     const failed = (what: string) => (error: unknown) => process.stderr.write(`agent-desk: ${what} failed: ${(error as Error).stack ?? String(error)}\n`);
     checkPush().catch(failed("push"));
+    pushEndedUnlocks(push).catch(failed("push of the ended PIN"));
     try {
       recordPlanUsage(store);
     } catch (error) {

@@ -8,7 +8,7 @@ See @AGENTS.md for the product specification and @BRIEF.md for where the work st
 - Provider-independent: no provider name or SDK in the core (protocol, store, server, UI). Provider
   specifics live only in `adapters/<provider>/`.
 - Local only: the server binds 127.0.0.1, loads no remote assets, and makes no outbound network
-  calls except the opt-in Web Push to Apple's push service (a count, never content).
+  calls except the opt-in Web Push to Apple's push service (never a session's text).
   Full rules in `.claude/rules/security.md`.
 - Data outside every repository: `~/.cache/agent-desk/` (override with `AGENT_DESK_HOME`). The desk
   never writes into the projects it follows.

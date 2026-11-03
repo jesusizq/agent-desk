@@ -73,6 +73,14 @@ describe("push", () => {
     assert.equal(sent.length, 0, "a device whose PIN unlock ended gets nothing");
     push.subscribe(subscription(phone()), Date.now() + 60_000);
 
+    push.subscribe(subscription(phone("https://web.push.apple.com/ended")), Date.now() - 1000);
+    sent.length = 0;
+    assert.deepEqual(await push.sendEnded(JSON.stringify({ pinEnded: true }), post), []);
+    assert.deepEqual(sent.map((s) => s.url), ["https://web.push.apple.com/ended"], "told when its unlock ends");
+    assert.deepEqual(await push.sendEnded("{}", post), []);
+    assert.equal(sent.length, 1, "and only once");
+    push.unsubscribe("https://web.push.apple.com/ended");
+
     const failing = (async () => new Response("down", { status: 503 })) as unknown as typeof fetch;
     assert.match((await push.send("{}", failing))[0] ?? "", /web\.push\.apple\.com: HTTP 503 down/);
   });

@@ -249,7 +249,7 @@ describe("remote access through Tailscale Serve", () => {
 });
 
 describe("PIN in front of remote access", () => {
-  it("shows only the PIN page until the right PIN, then lets the device in for 12 hours", async () => {
+  it("shows only the PIN page until the right PIN, then lets the device in for 24 hours", async () => {
     const store = testStore();
     addSession(store);
     const remote = { host: "laptop.tail1234.ts.net:8443", user: "dev@example.com" };
@@ -295,7 +295,7 @@ describe("PIN in front of remote access", () => {
       const subscribed = await call("POST", "/api/push/subscribe", { Cookie: cookie, Origin: `https://${remote.host}`, "Content-Type": "application/json", "X-Agent-Desk-Secret": store.secret() }, JSON.stringify({ endpoint: "https://web.push.apple.com/pin", keys: pushKeys }));
       assert.equal(subscribed.status, 200);
       const [device] = new Push(store.paths.push).subscriptions();
-      assert.ok(device && device.until > Date.now() && device.until <= Date.now() + 12 * 3600_000, "push lasts as long as this device's unlock");
+      assert.ok(device && device.until > Date.now() && device.until <= Date.now() + 24 * 3600_000, "push lasts as long as this device's unlock");
       const again = await call("POST", "/api/unlock", { Cookie: cookie, Origin: `https://${remote.host}`, "Content-Type": "application/json" }, '{"pin":"000000"}');
       assert.equal(again.status, 200, "an unlocked device sending the PIN again (an old PIN page) is told it is unlocked");
       assert.ok((await call("GET", "/", { Cookie: cookie })).body.includes(store.secret()), "unlocked, the device gets the desk");
