@@ -5,11 +5,60 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
+import * as vm from "node:vm";
 import { Browser, findChrome } from "./browser.ts";
 
 const chrome = findChrome();
 const SW = fs.readFileSync(path.join(import.meta.dirname, "../src/web/sw.js"));
 const PAGE = `<!doctype html><title>desk</title><script>navigator.serviceWorker.register("/sw.js");</script>`;
+
+type Shown = { body: string; close: () => void };
+
+/** The worker on a device that, like iOS (WebKit bug 258922), stacks notifications whatever their tag. */
+function workerOnIos(getNotifications?: () => Promise<Shown[]>) {
+  const screen: Shown[] = [];
+  const listeners = new Map<string, (e: unknown) => void>();
+  const registration = {
+    getNotifications: getNotifications ?? (async () => [...screen]),
+    showNotification: async (_title: string, options: { body: string }) => {
+      const shown: Shown = { body: options.body, close: () => void screen.splice(screen.indexOf(shown), 1) };
+      screen.push(shown);
+    },
+  };
+  const self = { addEventListener: (type: string, fn: (e: unknown) => void) => listeners.set(type, fn), registration, navigator: {} };
+  const logged: unknown[][] = [];
+  vm.runInNewContext(SW.toString(), { self, console: { error: (...args: unknown[]) => logged.push(args) } });
+  const push = async (message: object) => {
+    const waits: Promise<unknown>[] = [];
+    listeners.get("push")?.({ data: { json: () => message }, waitUntil: (p: Promise<unknown>) => waits.push(p) });
+    await Promise.all(waits);
+  };
+  return { push, logged, bodies: () => screen.map((n) => n.body) };
+}
+
+describe("service worker notifications", () => {
+  it("keeps one notification on the screen, with the latest count", async () => {
+    const { push, bodies } = workerOnIos();
+    await push({ count: 2 });
+    await push({ count: 3 });
+    await push({ count: 4 });
+    assert.deepEqual(bodies(), ["4 need you"]);
+  });
+
+  it("replaces the count with the notice that the PIN ended", async () => {
+    const { push, bodies } = workerOnIos();
+    await push({ count: 2 });
+    await push({ pinEnded: true });
+    assert.deepEqual(bodies(), ["Enter the PIN to keep getting notifications"]);
+  });
+
+  it("still shows the notification when the old ones cannot be listed, since iOS requires one for every push", async () => {
+    const { push, bodies, logged } = workerOnIos(() => Promise.reject(new Error("no list")));
+    await push({ count: 2 });
+    assert.deepEqual(bodies(), ["2 need you"]);
+    assert.match(String(logged[0]), /no list/);
+  });
+});
 
 describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROME)" }, () => {
   let browser: Browser;

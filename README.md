@@ -170,6 +170,7 @@ open the desk from that icon, then turn on "Notifications" in the bell menu. Whe
 question or permission prompt opens, the desk sends Apple's push service a notification saying only
 how many wait ("2 need you"), encrypted for the phone (RFC 8291) and signed with this install's key
 (`push.json` in the store). It is the desk's only outbound call, and only to `*.push.apple.com`.
+Each notification replaces the previous one, so the lock screen holds one with the latest count.
 
 A device gets notifications only while its PIN is in. When its 24 hours end it is told once, they
 stop, and they start again when the PIN is entered. Tapping a notification opens "Needs you", and the app's icon shows how

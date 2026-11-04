@@ -64,10 +64,24 @@ sw.addEventListener("push", (e) => {
   }
   const count = Number(message.count) || 0;
   const body = message.pinEnded === true ? "Enter the PIN to keep getting notifications" : count > 1 ? `${count} need you` : "Something needs you";
-  const shown = sw.registration.showNotification("Agent Desk", { body, tag: message.pinEnded === true ? "pin-ended" : "needs-you", icon: "/icon-192.png" });
   // The number is a nicety: a browser that refuses it still shows the notification.
-  e.waitUntil(Promise.all([shown, count > 0 && "setAppBadge" in sw.navigator ? sw.navigator.setAppBadge(count).catch(() => {}) : null]));
+  e.waitUntil(Promise.all([replaceNotification(body), count > 0 && "setAppBadge" in sw.navigator ? sw.navigator.setAppBadge(count).catch(() => {}) : null]));
 });
+
+/**
+ * Leaves one notification on the screen. iOS stacks them whatever their `tag` (WebKit bug 258922), and a
+ * same-tag one drops the older from getNotifications while it stays on screen, out of reach: so no tag.
+ * @param {string} body
+ */
+async function replaceNotification(body) {
+  try {
+    for (const old of await sw.registration.getNotifications()) old.close();
+  } catch (error) {
+    console.error("agent-desk: could not clear the previous notifications:", error); // old ones stay on screen; iOS still requires a notification for this push
+  }
+  await sw.registration.showNotification("Agent Desk", { body, icon: "/icon-192.png" });
+}
+
 sw.addEventListener("notificationclick", (e) => {
   e.notification.close();
   e.waitUntil(
