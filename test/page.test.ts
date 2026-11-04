@@ -313,6 +313,21 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("!document.querySelector('#strip .err') && !document.querySelector('#session .offline-line')");
   });
 
+  it("shows a question asked during a turn only when the turn has finished writing it", async () => {
+    store.upsertSession({ id: "still-writing", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "still writing" });
+    store.updateSession("still-writing", (s) => ({ ...s, state: "working" }));
+    const q = store.ask({ sessionId: "still-writing", kind: "question", text: "Half-written question?", writing: true });
+    const page = await open();
+    const seen = "document.body.textContent.includes('Half-written question?')";
+    await page.waitFor("document.querySelector('.scard')");
+    await new Promise((r) => setTimeout(r, 1800)); // more than a poll
+    assert.equal(await page.eval<boolean>(seen), false, "held while its turn runs");
+    store.addContext(q.id, "The whole explanation.");
+    store.releaseQuestions("still-writing");
+    await page.waitFor(seen);
+    store.dismiss(q.id);
+  });
+
   it("marks a session unread back to the list, and opening it reads it again", async () => {
     store.upsertSession({ id: "come-back", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "come back later" });
     store.updateSession("come-back", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Here is the long report", at: new Date().toISOString() } }));

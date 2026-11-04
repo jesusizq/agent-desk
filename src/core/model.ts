@@ -98,6 +98,7 @@ export function readQuestion(value: unknown, where = "question"): Question {
     sessionId: id(f.sessionId, `${where}.sessionId`),
     kind: oneOf(QUESTION_KINDS)(f.kind, `${where}.kind`),
     text: nonEmpty(f.text, `${where}.text`),
+    writing: optional(f.writing, `${where}.writing`, bool),
     context: optional(f.context, `${where}.context`, text),
     options: list(f.options ?? [], `${where}.options`, (v, w) => nonEmpty(v, w, 500), 20),
     askedAt: isoTime(f.askedAt, `${where}.askedAt`),

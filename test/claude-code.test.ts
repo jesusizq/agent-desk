@@ -354,6 +354,35 @@ describe("Claude Code hooks", () => {
     assert.equal(store.getSession("cc-1")?.endedAsking, true, "it stays in view until the developer opens it");
   });
 
+  it("holds a question asked during a turn until the turn's end completes it, and never longer than a few minutes", () => {
+    const store = testStore();
+    const live: HookContext = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
+    handleHook(event("SessionStart", {}), live);
+    const q = store.ask({ sessionId: "cc-1", kind: "question", text: "Which layout?", options: ["A", "B"], writing: true });
+    assert.ok(store.heldQuestions().has(q.id), "held while the turn runs");
+    assert.equal(store.heldQuestions(Date.parse(q.askedAt) + 6 * 60_000).has(q.id), false, "a turn that never ends does not hide it");
+    const permission = store.ask({ sessionId: "cc-1", kind: "permission", text: "Bash: ls" });
+    assert.equal(store.heldQuestions().has(permission.id), false, "a prompt that stops the session shows at once");
+    handleHook(event("Stop", { last_assistant_message: "Two layouts fit.\n\nWhich layout?" }), live);
+    assert.equal(store.heldQuestions().size, 0);
+    const open = store.openQuestions("cc-1").find((o) => o.id === q.id);
+    assert.equal(open?.writing, undefined);
+    assert.match(open?.context ?? "", /Two layouts fit/, "shown with its message");
+  });
+
+  it("does not hold what a session asked if the session ended or its process died", () => {
+    const store = testStore();
+    const live: HookContext = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
+    handleHook(event("SessionStart", {}), live);
+    const q = store.ask({ sessionId: "cc-1", kind: "question", text: "Which?", writing: true });
+    assert.equal(store.heldQuestions().has(q.id), true);
+    handleHook(event("SessionEnd", { reason: "other" }), live);
+    assert.equal(store.heldQuestions().has(q.id), false, "ended");
+    handleHook(event("SessionStart", {}), ctx(store)); // pid 4242: nothing runs there
+    const dead = store.ask({ sessionId: "cc-1", kind: "question", text: "Still?", writing: true });
+    assert.equal(store.heldQuestions().has(dead.id), false, "its process is gone");
+  });
+
   it("forgets how a session ended when it starts again", () => {
     const store = testStore();
     handleHook(event("Stop", { last_assistant_message: "Next?" }), ctx(store));

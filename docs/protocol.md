@@ -60,7 +60,10 @@ The adapter records the session's own process (`process.pid` with its start time
 ## What needs the developer
 
 "Needs you" holds open questions: asked by the model (`agent-desk ask`), permission prompts, the
-provider's own dialogs, and turns that end with a question. A turn that ends with a report is kept
+provider's own dialogs, and turns that end with a question. A question asked with `agent-desk ask`
+during a turn is held (`writing`) until the turn ends and adds its message to it, or for 5 minutes at
+most, so it never shows half written; permission prompts and dialogs stop the session and show at
+once. A turn that ends with a report is kept
 as the session's last message and shown quietly on its card ("Finished · waiting for your next
 instruction"); the session panel always shows it in full, also after its item was dismissed, and can
 reply to it while the session takes messages (see below).

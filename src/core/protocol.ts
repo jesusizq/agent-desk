@@ -87,6 +87,11 @@ export type Question = {
    * goes only to the provider hook that waits for it, as a permission answer does.
    */
   dialog?: boolean;
+  /**
+   * Asked while the session's turn still runs: the message that explains it comes when the turn ends,
+   * so the desk holds the question until then.
+   */
+  writing?: boolean;
 };
 
 export const AGENT_STATES = ["working", "waiting", "blocked", "idle", "done", "failed"] as const;

@@ -37,9 +37,11 @@ type Command = (args: string[], store: Store) => void | Promise<void>;
 const COMMANDS: Record<string, Command> = {
   ask(args, store) {
     const { values, positionals } = parse(args, { option: { type: "string", multiple: true }, context: { type: "string" } }, 1);
+    const sessionId = resolveSession(store, values.session);
     const q = store.ask({
-      sessionId: resolveSession(store, values.session),
+      sessionId,
       kind: "question",
+      writing: store.getSession(sessionId)?.state === "working",
       text: nonEmpty(positionals[0], "question"),
       ...(values.context === undefined ? {} : { context: values.context }),
       options: values.option ?? [],
@@ -126,7 +128,8 @@ const COMMANDS: Record<string, Command> = {
   needs(args, store) {
     parse(args, {}, 0);
     const sessions = new Map(store.listSessions().map((s) => [s.id, s]));
-    const open = store.openQuestions();
+    const held = store.heldQuestions();
+    const open = store.openQuestions().filter((q) => !held.has(q.id));
     if (open.length === 0) return print("Nothing needs you.");
     for (const q of open) {
       const s = sessions.get(q.sessionId);

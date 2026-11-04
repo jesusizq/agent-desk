@@ -106,5 +106,13 @@ describe("push", () => {
     await check();
     await check();
     assert.equal(bodies.length, 1);
+    store.updateSession("s1", (s) => ({ ...s, process: { pid: process.pid, ancestors: [] } }));
+    const writing = store.ask({ sessionId: "s1", kind: "question", text: "Being written?", writing: true });
+    await check();
+    assert.equal(bodies.length, 1, "nothing about a question still being written");
+    store.releaseQuestions("s1");
+    await check();
+    assert.equal(bodies.length, 2, "told once it is complete");
+    assert.equal(store.heldQuestions().has(writing.id), false);
   });
 });

@@ -148,6 +148,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
     case "Stop":
       retireContinued(input, ctx, problems);
       endTurn(input, ctx, problems);
+      store.releaseQuestions(sid, problems); // last: with the turn's message already on them
       ctx.startScan?.(ctx.env.CLAUDE_PROJECT_DIR || input.cwd);
       return { code: 0 };
 

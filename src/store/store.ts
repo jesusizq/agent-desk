@@ -71,6 +71,9 @@ export const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 export const IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" } as const;
 export type ImageExt = keyof typeof IMAGE_TYPES;
 
+/** How long a question asked during a turn waits for that turn's end before it shows anyway. */
+const WRITING_MAX_MS = 5 * 60_000;
+
 export class Store {
   readonly paths: StorePaths;
   private readonly now: Clock;
@@ -170,7 +173,7 @@ export class Store {
     return undefined;
   }
 
-  ask(input: { sessionId: string; kind: QuestionKind; text: string; context?: string; options?: string[]; dialog?: boolean }): Question {
+  ask(input: { sessionId: string; kind: QuestionKind; text: string; context?: string; options?: string[]; dialog?: boolean; writing?: boolean }): Question {
     this.requireSession(input.sessionId);
     const question = readQuestion({
       id: newId("q"),
@@ -182,9 +185,31 @@ export class Store {
       askedAt: this.stamp(),
       status: "open",
       dialog: input.dialog || undefined,
+      writing: input.writing || undefined,
     });
     writeJson(this.paths.question(question.id, "open"), question);
     return question;
+  }
+
+  /** The session's turn ended: what it asked during the turn is complete, and can be shown. */
+  releaseQuestions(sessionId: string, problems?: string[]): void {
+    for (const q of this.openQuestions(sessionId, problems)) {
+      if (q.writing) this.changeQuestion(q.id, ({ writing: _writing, ...rest }) => rest);
+    }
+  }
+
+  /**
+   * Questions still being written, not to be shown yet. A session that died, or a turn that never
+   * ends, must not hide what it asked: past a few minutes it shows as it is.
+   */
+  heldQuestions(now = this.now().getTime()): Set<string> {
+    const sessions = new Map(this.listSessions().map((s) => [s.id, s]));
+    const held = this.openQuestions().filter((q) => {
+      const s = sessions.get(q.sessionId);
+      const live = s !== undefined && s.state !== "ended" && (!s.process || isAlive(s.process.pid, s.process.start));
+      return q.writing === true && live && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
+    });
+    return new Set(held.map((q) => q.id));
   }
 
   openQuestions(sessionId?: string, problems?: string[]): Question[] {

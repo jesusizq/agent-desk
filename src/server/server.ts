@@ -43,10 +43,11 @@ const BUILD = new Date().toISOString();
 
 export function deskState(store: Store, now = new Date()): DeskState {
   const snap = store.snapshot();
+  const held = store.heldQuestions(now.getTime());
   return {
     ...snap,
     // The page shows a question's context only while it is open; the history needs no more.
-    questions: snap.questions.map(({ context, ...q }) => (q.status === "open" && context !== undefined ? { ...q, context } : q)),
+    questions: snap.questions.filter((q) => !held.has(q.id)).map(({ context, ...q }) => (q.status === "open" && context !== undefined ? { ...q, context } : q)),
     now: now.toISOString(),
     gone: goneSessions(snap.sessions),
     listening: snap.sessions.filter((s) => store.isListening(s.id, snap.problems)).map((s) => s.id),
@@ -294,9 +295,13 @@ const PUSH_EVERY_MS = 5_000;
  * Questions open when the desk starts were already there to see. Returns the check, for tests.
  */
 export function pushNewQuestions(store: Store, push: Push, post: typeof fetch = fetch): () => Promise<void> {
-  const known = new Set(store.openQuestions().map((q) => q.id));
+  const shown = () => {
+    const held = store.heldQuestions();
+    return store.openQuestions().filter((q) => !held.has(q.id));
+  };
+  const known = new Set(shown().map((q) => q.id));
   return async () => {
-    const open = store.openQuestions();
+    const open = shown();
     const fresh = open.filter((q) => !known.has(q.id));
     for (const q of open) known.add(q.id);
     if (fresh.length === 0 || push.subscriptions().length === 0) return;
