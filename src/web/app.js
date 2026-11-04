@@ -467,7 +467,8 @@ function noticeMessages() {
 
 /** A desktop notification while the page is hidden, when the developer allowed them. @param {string} title @param {string} body @param {string} tag @param {() => void} open */
 function notify(title, body, tag, open) {
-  if (!document.hidden || !alertOn("notify") || !("Notification" in window) || Notification.permission !== "granted") return;
+  // A phone is told by the push alone: the permission push needs would also put the question's text on its lock screen.
+  if (!ON_THIS_MACHINE || !document.hidden || !alertOn("notify") || !("Notification" in window) || Notification.permission !== "granted") return;
   const n = new Notification(title, { body: body.slice(0, 200), tag });
   n.onclick = () => {
     window.focus();

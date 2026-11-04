@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as http from "node:http";
+import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { Store } from "../src/store/store.ts";
@@ -279,6 +281,44 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("document.querySelector('#strip .err')?.textContent.includes('Last saved: Yesterday')");
     await page.eval("window.fetch = window.realFetch");
     await page.waitFor("!document.querySelector('#strip .err')");
+  });
+
+  it("a hidden page notifies on the computer, and on a phone leaves it to the push, which carries no text", async () => {
+    // Forwards to the desk under the Host it accepts, so the page runs at an address that is not this machine's.
+    const target = new URL(base);
+    const proxy = http.createServer((req, res) => {
+      const out = http.request({ host: target.hostname, port: target.port, path: req.url, method: req.method, headers: { ...req.headers, host: target.host } }, (up) => {
+        res.writeHead(up.statusCode ?? 502, up.headers);
+        up.pipe(res);
+      });
+      out.on("error", (error) => res.writeHead(502).end(error.message));
+      req.pipe(out);
+    });
+    await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
+    const remote = `http://desk.localhost:${(proxy.address() as AddressInfo).port}/`;
+    /** The titles of the page's own notifications when a question opens while it is hidden. @param url where the page runs */
+    const notified = async (url: string, text: string) => {
+      const page = await browser.newPage(390, 800);
+      pages.push(page);
+      await page.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `Object.defineProperty(document, "hidden", { get: () => true });
+          window.raised = [];
+          window.Notification = class { static permission = "granted"; constructor(title) { raised.push(title); } };`,
+      });
+      await page.goto(url);
+      await page.waitFor("document.title.endsWith('Agent Desk') && document.querySelector('.next')");
+      const q = store.ask({ sessionId: "demo-iva", kind: "question", text });
+      await page.waitFor(`document.body.textContent.includes(${JSON.stringify(text)})`);
+      store.dismiss(q.id);
+      return page.eval<string[]>("raised");
+    };
+    try {
+      assert.match((await notified(base + "/", "Asked on the computer?")).join(), /New question/);
+      assert.deepEqual(await notified(remote, "Asked on the phone?"), []);
+    } finally {
+      proxy.closeAllConnections();
+      await new Promise((r) => proxy.close(r));
+    }
   });
 
   it("a tapped notification shows what needs the developer, whatever was open", async () => {
