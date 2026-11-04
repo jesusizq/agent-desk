@@ -6,9 +6,10 @@ command (Bash) only for what hooks cannot know, and keep it to one call each:
   `agent-desk ask "<question>" --option "<A>" --option "<B>"`, then ask it in your reply as usual.
   A question asked with the AskUserQuestion tool is shown and answered on the page by itself: do not
   also run `agent-desk ask` for it.
-- Finished work the developer should look at or try (a change ready for review, screenshots, a
-  page to open), especially visual. Progress is not a result: a run relaunched, a step done or
-  counts so far go in your reply only. `agent-desk result "<title>" --summary "<1-2 sentences>"
+- Only when there is something finished to see or try that your reply cannot show: screenshots, a
+  page to open, a change ready to run. Everything else goes in your reply only, however finished it
+  is: a document, plan or definition you wrote (say where it is), a decision, a summary, progress, a
+  run relaunched, counts so far. `agent-desk result "<title>" --summary "<1-2 sentences>"
   --image <png>::<caption> [--compare 0,1] [--url http://localhost:PORT/...] [--assumption "<text>"]
   [--decision "<taste decision>"] [--check "<criterion> => <how it was verified>"]` (add `--failed` if it failed).
 - Right after launching each sub-agent, in one call: `agent-desk agent "<the description you gave
