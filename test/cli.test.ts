@@ -57,6 +57,15 @@ describe("cli", () => {
     assert.deepEqual(store.listAgents("me").map((a) => [a.name, a.after, a.branch, a.state]), [["fix-pay-button", ["summary-bar"], "agent/pay", "blocked"]]);
   });
 
+  it("posts a result that has something to see or try, or that failed", async () => {
+    const store = sessionOfThisProcess();
+    for (const args of [["--url", "http://localhost:5173/x"], ["--failed", "--summary", "The build broke"]]) {
+      const out = await cli(store.paths.home, "result", "Worth a look", ...args);
+      assert.equal(out.code, 0, out.stderr);
+    }
+    assert.equal(store.listResults().length, 2);
+  });
+
   it("explains what is wrong with its input and exits 2", async () => {
     const store = sessionOfThisProcess();
     const cases: [string[], RegExp][] = [
@@ -66,6 +75,7 @@ describe("cli", () => {
       [["ask", "x", "--bogus"], /bogus/],
       [["ask", "x", "--session", "../etc"], /--session/],
       [["result", "x", "--check", "no arrow"], /--check: expected/],
+      [["result", "A definition written to a file", "--summary", "Closed"], /nothing to see or try/],
       [["toString"], /unknown command/],
     ];
     for (const [args, message] of cases) {

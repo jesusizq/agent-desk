@@ -64,17 +64,23 @@ const COMMANDS: Record<string, Command> = {
       },
       1,
     );
+    const images = (values.image ?? []).map(splitCaption);
+    const checks = (values.check ?? []).map(parseCheck);
+    // To review holds what can be seen or tried; the rest is read in the session's message.
+    if (images.length === 0 && values.url === undefined && !values.failed) {
+      throw new InputError("nothing to see or try: pass --image or --url, or --failed if it failed. A document, plan, decision, summary or progress goes in your reply, not here.");
+    }
     const r = store.addResult({
       sessionId: resolveSession(store, values.session),
       title: nonEmpty(positionals[0], "title", 300),
       status: values.failed ? "failed" : "ok",
       ...(values.summary === undefined ? {} : { summary: values.summary }),
       ...(values.url === undefined ? {} : { url: localUrl(values.url, "--url") }),
-      images: (values.image ?? []).map(splitCaption),
+      images,
       ...(values.compare === undefined ? {} : { compare: parsePair(values.compare) }),
       assumptions: values.assumption ?? [],
       decisions: values.decision ?? [],
-      checks: (values.check ?? []).map(parseCheck),
+      checks,
     });
     print(`posted ${r.id}${r.images.length ? ` with ${r.images.length} image(s)` : ""}`);
   },

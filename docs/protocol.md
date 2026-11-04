@@ -99,7 +99,7 @@ it works, both reach the session. When the session ends, the question is dismiss
 | Command | Record |
 | --- | --- |
 | `ask "<question>" --option A --option B [--context T]` | an open question with options |
-| `result "<title>" --summary S --image <path>[::caption] [--compare 0,1] [--url U] [--failed] [--assumption A] [--decision D] [--check "<criterion> => <verification>"]` | a result; images are copied |
+| `result "<title>" --summary S --image <path>[::caption] [--compare 0,1] [--url U] [--failed] [--assumption A] [--decision D] [--check "<criterion> => <verification>"]` | a result; images are copied; refused without `--image` or `--url`, unless `--failed` |
 | `agent "<description>" [--summary] [--goal] [--state] [--activity] [--branch] [--commit] [--after "<description>"]` | creates or updates the agent named after the description (the same name the hooks give it) |
 | `service <name> <url>` / `service <name> --stop` | a local server of the session |
 | `interpret "<text>"` | how the session understood its latest answer |

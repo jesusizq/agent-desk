@@ -12,6 +12,7 @@ command (Bash) only for what hooks cannot know, and keep it to one call each:
   run relaunched, counts so far. `agent-desk result "<title>" --summary "<1-2 sentences>"
   --image <png>::<caption> [--compare 0,1] [--url http://localhost:PORT/...] [--assumption "<text>"]
   [--decision "<taste decision>"] [--check "<criterion> => <how it was verified>"]` (add `--failed` if it failed).
+  It is refused without an `--image` or `--url`, unless it failed.
 - Right after launching each sub-agent, in one call: `agent-desk agent "<the description you gave
   the Agent tool>" --summary "<one plain sentence: what it must deliver>"`, adding
   `--after "<other agent's description>"` and `--branch <name>` when they apply;
