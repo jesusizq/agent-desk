@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Strict types before a commit that touches code; takes seconds, the tests wait for pre-push.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+if ! git diff --cached --name-only --diff-filter=d | grep -qvE '(\.md$|^docs/)'; then
+    exit 0
+fi
+
+if ! npm run --silent check; then
+    echo "pre-commit: 'npm run check' failed — commit aborted. Fix the errors above and commit again." >&2
+    exit 1
+fi

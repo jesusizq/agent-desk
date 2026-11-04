@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Strict types and the whole test suite before code leaves this machine.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+# git exports GIT_DIR and friends to hooks; the tests that create their own repositories must not inherit them.
+unset $(git rev-parse --local-env-vars)
+
+ZERO=0000000000000000000000000000000000000000
+
+# git feeds one line per ref: "<local ref> <local sha> <remote ref> <remote sha>".
+changed=""
+check_all=false
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ "$local_sha" = "$ZERO" ] && continue # branch deletion: nothing to test
+    if [ "$remote_sha" = "$ZERO" ] || ! range=$(git diff --name-only "$remote_sha" "$local_sha" 2>/dev/null); then
+        check_all=true # new branch, or a remote sha unknown here: no range to diff against
+    else
+        changed="$changed$range"$'\n'
+    fi
+done
+
+if [ "$check_all" = false ] && ! printf '%s' "$changed" | grep -qvE '(\.md$|^$|^docs/)'; then
+    echo "pre-push: no code in this push — skipping checks."
+    exit 0
+fi
+
+step() {
+    if ! npm run --silent "$1"; then
+        echo >&2
+        echo "pre-push: 'npm run $1' failed — push aborted. Fix it and push again." >&2
+        exit 1
+    fi
+}
+
+step check
+step test

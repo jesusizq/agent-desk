@@ -202,6 +202,10 @@ The page tests drive Chrome through its DevTools protocol, with no test dependen
 `google-chrome` or `chromium` from `PATH`, or the browser in `AGENT_DESK_CHROME`; without one they
 are skipped, except in CI, where they fail.
 
+`git config core.hooksPath .githooks` turns on the repository's hooks, once per clone: `pre-commit`
+runs `npm run check`, `pre-push` runs `npm run check` and `npm test`. Commits and pushes that touch
+only Markdown or `docs/` skip them.
+
 The server moves what is older than 60 days (closed questions, results with their images, finished
 sessions) to `archive/` in the store, at start and every 6 hours.
 
