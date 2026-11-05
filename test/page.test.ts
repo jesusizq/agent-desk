@@ -555,6 +555,54 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     });
   });
 
+  it("on a phone, keeps the box being typed in above a keyboard that covers the page, as iOS's does", async () => {
+    store.upsertSession({ id: "covered", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "covered by the keyboard", state: "waiting" });
+    const stop = store.listen("covered");
+    const asked = store.ask({ sessionId: "covered", kind: "question", text: "Is the box still in view?", options: ["Yes", "No"] });
+    store.upsertSession({ id: "covered-chat", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "chat under the keyboard", takesMessagesWhileWorking: true });
+    try {
+      const page = await browser.newPage(390, 844);
+      pages.push(page);
+      // iOS leaves the page's height alone with its keyboard open: only the visual viewport shrinks.
+      await page.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `(() => {
+          const vv = new EventTarget();
+          window.covered = 0;
+          Object.defineProperties(vv, { height: { get: () => innerHeight - covered }, offsetTop: { value: 0 }, scale: { value: 1 } });
+          Object.defineProperty(window, "visualViewport", { value: vv });
+          window.setKeyboard = (px) => { covered = px; vv.dispatchEvent(new Event("resize")); };
+        })()`,
+      });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('.next')");
+      const inView = (box: string) => page.eval<boolean>(`(() => { const r = ${box}.getBoundingClientRect(); return r.top >= 0 && r.bottom <= visualViewport.height; })()`);
+
+      await page.click(".qrow", "Is the box still in view?");
+      await page.waitFor("document.querySelector('.next')?.textContent.includes('Is the box still in view?')");
+      const onCard = "document.querySelector('.next textarea')";
+      // Covers the box's last 20 px, whatever its place on the page.
+      await page.eval(`(() => { ${onCard}.focus(); window.scrollTo(0, 0); setKeyboard(innerHeight - ${onCard}.getBoundingClientRect().bottom + 20); })()`);
+      assert.equal(await inView(onCard), true, "on the inbox's card");
+      await page.eval(`(() => { setKeyboard(0); ${onCard}.blur(); })()`);
+
+      // Not a real click: the desk may be running a view transition, which swallows one.
+      await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Sessions")).click()`);
+      await page.click(".scard", "chat under the keyboard");
+      const inChat = "document.querySelector('#session .chat-footer textarea')";
+      await page.waitFor(inChat);
+      await page.eval(`(() => { ${inChat}.focus(); setKeyboard(340); })()`);
+      assert.equal(await inView(inChat), true, "in a session's chat");
+      // Waited for: the window slides in as it opens.
+      await page.waitFor("document.querySelector('#session').getBoundingClientRect().bottom <= visualViewport.height");
+      await page.eval("setKeyboard(0)");
+      await page.waitFor("document.querySelector('#session').getBoundingClientRect().height === innerHeight");
+      await page.press("Escape");
+    } finally {
+      store.dismiss(asked.id);
+      stop();
+    }
+  });
+
   it("folds what a session wrote between its tool calls once something followed it", async () => {
     store.upsertSession({ id: "steps", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "steps folded", state: "working" });
     store.addMessage({ sessionId: "steps", from: "developer", text: "fix the build", via: "terminal" });

@@ -617,7 +617,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   .answer .row .primary { flex-direction: column; gap: 3px; max-width: 96px; line-height: 1.2; padding: 8px 12px; }
 
   /* Dialogs fill the screen; the head stays, the body scrolls. */
-  dialog.result, dialog.sess { margin: 0; inset: 0; width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  dialog.result, dialog.sess { margin: 0; inset: var(--viewport-top, 0px) 0 auto; width: 100%; max-width: 100%; height: calc(100dvh - var(--keyboard, 0px)); max-height: calc(100dvh - var(--keyboard, 0px)); border-radius: 0; }
   dialog.result[open], dialog.sess[open] { display: flex; flex-direction: column; }
   dialog.zoom { height: 100dvh; }
   .dhead { flex: none; gap: 8px; align-items: center; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }
@@ -668,7 +668,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
     padding: 0 max(12px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px, env(safe-area-inset-left)); font-size: 0.6875rem; border-top: 0; }
   .credits .i { width: 13px; height: 13px; }
   /* While the developer writes, the keyboard needs the room: the tab bar and the credits step aside. */
-  body:has(textarea:focus) { --foot: 0px; padding-bottom: env(safe-area-inset-bottom); }
+  body:has(textarea:focus) { --foot: 0px; padding-bottom: calc(env(safe-area-inset-bottom) + var(--keyboard, 0px)); }
   body:has(textarea:focus) :is(.tabbar, .credits) { display: none; }
   .tabbar button { flex: 1 1 0; position: relative; border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 2px; min-height: 54px; font: 500 0.6875rem var(--sans); color: var(--muted); }

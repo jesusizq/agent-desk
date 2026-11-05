@@ -2121,6 +2121,31 @@ addEventListener("error", (e) => {
   if (e.filename.startsWith(`${location.origin}/`) && e.filename.endsWith(".js")) toast(TEXT.pageError(e.message));
 });
 addEventListener("unhandledrejection", (e) => toast(TEXT.pageError(e.reason instanceof Error ? e.reason.message : String(e.reason))));
+/**
+ * iOS ignores interactive-widget: its keyboard covers the page, whose height stays. Only the visual
+ * viewport knows what is left, so the layout is told, and the box being typed in brought above it.
+ */
+function followKeyboard() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  let covered = 0;
+  const follow = () => {
+    if (vv.scale > 1.01) return; // a pinch shrinks the visual viewport too, with no keyboard
+    const keyboard = Math.max(0, Math.round(innerHeight - vv.height));
+    document.documentElement.style.setProperty("--keyboard", `${keyboard}px`);
+    document.documentElement.style.setProperty("--viewport-top", `${Math.round(vv.offsetTop)}px`);
+    if (keyboard === covered) return;
+    covered = keyboard;
+    const box = document.activeElement;
+    if (keyboard === 0 || !(box instanceof HTMLTextAreaElement)) return;
+    const chat = box.closest(".session-body");
+    if (chat) chat.scrollTop = chat.scrollHeight;
+    else window.scrollBy(0, Math.max(0, box.getBoundingClientRect().bottom + 16 - (vv.offsetTop + vv.height)));
+  };
+  vv.addEventListener("resize", follow);
+  vv.addEventListener("scroll", follow);
+}
+
 // ---------- Alerts: desktop notifications and sound, each switched off on the page ----------
 const ALERTS = { notify: "agent-desk:notify", sound: "agent-desk:sound", failures: "agent-desk:failures" };
 const ALERTS_ON = { notify: true, sound: true, failures: false };
@@ -2357,6 +2382,7 @@ route();
 // A new poll every tick over one still waiting would make the waiting one stale, and a hung
 // connection would never get to report itself: only NO_ANSWER_MS bounds the wait.
 setInterval(() => requestsWaiting === 0 && refresh(), POLL_MS);
+followKeyboard();
 // A phone puts a hidden tab's timers to sleep: coming back, the desk is fetched at once, not at the next tick.
 document.addEventListener("visibilitychange", () => document.hidden || refresh());
 addEventListener("pageshow", (e) => /** @type {PageTransitionEvent} */ (e).persisted && refresh());
