@@ -33,4 +33,4 @@ See @AGENTS.md for the product specification and @BRIEF.md for where the work st
   constraints, 1-2 lines.
 - Root cause always, never a workaround; no test is weakened to pass.
 - Rules files (this file, AGENTS.md, `.claude/rules`, skills) change only with the owner's explicit approval.
-- Nothing is pushed or published without the owner's approval.
+- Commit finished work without asking.
