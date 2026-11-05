@@ -45,6 +45,6 @@ agent updates, and answering means finding the right terminal and scrolling back
 - **Local and private.** Runs on the user's machine only, bound to 127.0.0.1, no account, no
   network calls, no telemetry, no third-party CDN; the developer's own devices reach it through
   their Tailscale tailnet when they enable it. The one exception, opt-in: a locked phone is told how
-  many questions wait through Apple's push service, encrypted for the phone and with no content. Its data lives outside every project repository.
+  many questions wait through its push service (Apple's, Google's or Mozilla's), encrypted for the phone and with no content. Its data lives outside every project repository.
 - **Never writes into the projects it follows** (no state files, no rules files, no commits).
 - **Calm.** Only what needs the user is loud; everything else is one glance away.

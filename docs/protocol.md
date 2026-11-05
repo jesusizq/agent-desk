@@ -122,7 +122,7 @@ The server binds 127.0.0.1 and refuses any request whose `Host` is not `127.0.0.
 | `POST /api/sessions/<id>/unread` | its last message is new again on every device, until the session is opened |
 | `POST /api/sessions/<id>/end` | sends SIGTERM to the session's own process, only while its pid still has the start time the session recorded (see `.claude/rules/security.md`) |
 | `GET /api/push/key` | this install's VAPID public key, which the phone subscribes with |
-| `POST /api/push/subscribe` (a `PushSubscription` as JSON), `POST /api/push/unsubscribe` `{ "endpoint": "…" }` | the phone that gets "N need you" when a question opens; only `https://*.push.apple.com` endpoints are accepted |
+| `POST /api/push/subscribe` (a `PushSubscription` as JSON), `POST /api/push/unsubscribe` `{ "endpoint": "…" }` | the phone that gets "N need you" when a question opens; only `https://*.push.apple.com`, `https://fcm.googleapis.com` and `https://updates.push.services.mozilla.com` endpoints are accepted |
 | `GET /images/<id>` | a stored image, served with `Content-Security-Policy: default-src 'none'; sandbox` |
 | `POST /api/images` (the image itself, `Content-Type: image/*`, 20 MB at most) | keeps an image pasted or picked on the page; returns `{ "id": "…" }` |
 | `POST /api/questions/<id>/answer` `{ "text": "…", "images"?: ["<id>"] }` | answer from the page, with up to 10 attached images |

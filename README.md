@@ -31,7 +31,7 @@ It knows nothing about any one AI tool: each tool reports through a thin adapter
 over a plain file-and-CLI protocol. Claude Code has one today; Codex, Grok or any other agent CLI
 needs its own adapter, and nothing else changes.
 
-It runs on 127.0.0.1, makes no network calls except the opt-in push to a locked iPhone (below), and keeps its data in `~/.cache/agent-desk/` (override
+It runs on 127.0.0.1, makes no network calls except the opt-in push to a locked phone (below), and keeps its data in `~/.cache/agent-desk/` (override
 with `AGENT_DESK_HOME`). Product specification in [AGENTS.md](AGENTS.md); protocol in
 [docs/protocol.md](docs/protocol.md).
 
@@ -163,13 +163,19 @@ From the phone you can answer questions, allow or deny permission prompts, and s
 sessions. "Go to session" is hidden, and local previews (`localhost` URLs) are named, not linked,
 because they run on the computer.
 
-### Notifications on a locked iPhone
+### Notifications on a locked phone
 
-A locked phone runs no page, so only Web Push reaches it. In Safari, Share → Add to Home Screen,
-open the desk from that icon, then turn on "Notifications" in the bell menu. When a
-question or permission prompt opens, the desk sends Apple's push service a notification saying only
-how many wait ("2 need you"), encrypted for the phone (RFC 8291) and signed with this install's key
-(`push.json` in the store). It is the desk's only outbound call, and only to `*.push.apple.com`.
+A locked phone runs no page, so only Web Push reaches it, and that always goes through the push
+service of the phone's browser, outside the tailnet.
+
+- **iPhone:** in Safari, Share → Add to Home Screen, then open the desk from that icon.
+- **Android:** open the desk in Chrome or Firefox. Not yet tried on a real Android phone.
+
+Then turn on "Notifications" in the bell menu. When a question or permission prompt opens, the desk
+sends the push service a notification saying only how many wait ("2 need you"), encrypted for the
+phone (RFC 8291) and signed with this install's key (`push.json` in the store). It is the desk's only
+outbound call, and only to `*.push.apple.com`, `fcm.googleapis.com` or
+`updates.push.services.mozilla.com`.
 Each notification replaces the previous one, so the lock screen holds one with the latest count.
 
 A device gets notifications only while its PIN is in. When its 24 hours end it is told once, they

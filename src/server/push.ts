@@ -4,8 +4,8 @@ import { createCipheriv, createECDH, createPrivateKey, generateKeyPairSync, hkdf
 import { fields, InputError, text } from "../core/check.ts";
 import { readJson, withLock, writeJson } from "../store/fsx.ts";
 
-/** The push services a subscription may name: Apple's, which iOS home-screen apps use. */
-export const PUSH_HOSTS = /^(?:[a-z0-9-]+\.)*push\.apple\.com$/;
+/** The push services a subscription may name: Apple's (iOS), Google's (Chrome on Android) and Mozilla's (Firefox). */
+export const PUSH_HOSTS = /^(?:(?:[a-z0-9-]+\.)*push\.apple\.com|fcm\.googleapis\.com|updates\.push\.services\.mozilla\.com)$/;
 
 export type Subscription = { endpoint: string; p256dh: string; auth: string };
 /** `until`: when the device's PIN unlock ends; a device without the PIN in gets no push. */
@@ -26,7 +26,7 @@ export function subscription(body: unknown): Subscription {
   } catch {
     throw new InputError(`endpoint: not a URL: ${endpoint.slice(0, 100)}`);
   }
-  if (url.protocol !== "https:" || !PUSH_HOSTS.test(url.hostname)) throw new InputError(`endpoint: only Apple's push service is allowed, got ${url.host}`);
+  if (url.protocol !== "https:" || !PUSH_HOSTS.test(url.hostname)) throw new InputError(`endpoint: only the push services of Apple, Google and Mozilla are allowed, got ${url.host}`);
   const keys = fields(f.keys, "keys");
   const p256dh = text(keys.p256dh, "keys.p256dh", 200);
   const auth = text(keys.auth, "keys.auth", 100);

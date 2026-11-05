@@ -10,7 +10,8 @@ command.
   Tailscale Serve on their own tailnet (never Funnel): Serve proxies to 127.0.0.1 and adds the
   caller's `Tailscale-User-Login`.
 - No outbound network calls, with one opt-in exception: Web Push to the phones the developer
-  subscribed from the page (`src/server/push.ts`). Only `https://*.push.apple.com` endpoints are
+  subscribed from the page (`src/server/push.ts`). Only `https://*.push.apple.com`,
+  `https://fcm.googleapis.com` and `https://updates.push.services.mozilla.com` endpoints are
   accepted, checked when subscribing and again before each send; a device gets pushes only while
   its PIN is in; the payload is a count of open questions, or a fixed notice that the PIN ended, never
   a session's text, encrypted for the phone (RFC 8291) and signed with this install's

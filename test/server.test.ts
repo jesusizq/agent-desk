@@ -176,7 +176,7 @@ describe("server", () => {
     assert.equal(await exited, "SIGTERM");
   });
 
-  it("subscribes a phone to push only from the page, and only to Apple's push service", async () => {
+  it("subscribes a phone to push only from the page, and only to a known push service", async () => {
     const { createECDH } = await import("node:crypto");
     const keys = { p256dh: createECDH("prime256v1").generateKeys().toString("base64url"), auth: Buffer.alloc(16, 1).toString("base64url") };
     const key = ((await (await fetch(`${base}/api/push/key`)).json()) as { key: string }).key;
@@ -184,7 +184,7 @@ describe("server", () => {
     assert.equal((await post("/api/push/subscribe", { endpoint: "https://web.push.apple.com/x", keys }, { Origin: "http://evil.example" })).status, 403);
     const other = await post("/api/push/subscribe", { endpoint: "https://collector.example/x", keys });
     assert.equal(other.status, 400);
-    assert.match(((await other.json()) as { error: string }).error, /only Apple's push service/);
+    assert.match(((await other.json()) as { error: string }).error, /only the push services of Apple, Google and Mozilla/);
     assert.equal((await post("/api/push/subscribe", { endpoint: "https://web.push.apple.com/x", keys })).status, 200);
     assert.equal((await post("/api/push/unsubscribe", { endpoint: "https://web.push.apple.com/x" })).status, 200);
   });

@@ -32,12 +32,43 @@ describe("push", () => {
     );
   });
 
-  it("accepts only Apple's push service, over https, with well-formed keys", () => {
+  it("accepts only the push services of Apple, Google and Mozilla, over https, with well-formed keys", () => {
     assert.equal(subscription(phone()).endpoint, APPLE);
-    for (const endpoint of ["https://fcm.googleapis.com/fcm/send/x", "http://web.push.apple.com/x", "https://push.apple.com.evil.example/x", "https://evilpush.apple.com/x", "not a url"]) {
+    for (const endpoint of ["https://fcm.googleapis.com/fcm/send/x", "https://updates.push.services.mozilla.com/wpush/v2/x"]) {
+      assert.equal(subscription(phone(endpoint)).endpoint, endpoint);
+    }
+    const refused = [
+      "http://web.push.apple.com/x",
+      "https://push.apple.com.evil.example/x",
+      "https://evilpush.apple.com/x",
+      "http://fcm.googleapis.com/fcm/send/x",
+      "https://fcm.googleapis.com.evil.example/x",
+      "https://evil.fcm.googleapis.com/x",
+      "https://storage.googleapis.com/x",
+      "http://updates.push.services.mozilla.com/x",
+      "https://evil.updates.push.services.mozilla.com/x",
+      "https://mozilla.com/x",
+      "not a url",
+    ];
+    for (const endpoint of refused) {
       assert.throws(() => subscription(phone(endpoint)), /endpoint/, endpoint);
     }
     assert.throws(() => subscription({ endpoint: APPLE, keys: { p256dh: "AAAA", auth: "AAAA" } }), /keys/);
+  });
+
+  it("sends to an Android phone's service as to an iPhone's, signed for that service", async () => {
+    const store = testStore();
+    const push = new Push(store.paths.push);
+    const endpoint = "https://fcm.googleapis.com/fcm/send/android";
+    push.subscribe(subscription(phone(endpoint)));
+    const sent: { url: string; audience: unknown }[] = [];
+    const post = (async (url: string, init: RequestInit) => {
+      const token = /^vapid t=([^,]+),/.exec((init.headers as Record<string, string>).Authorization ?? "")?.[1] ?? "";
+      sent.push({ url, audience: JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString()).aud });
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+    assert.deepEqual(await push.send(JSON.stringify({ count: 2 }), post), []);
+    assert.deepEqual(sent, [{ url: endpoint, audience: "https://fcm.googleapis.com" }]);
   });
 
   it("signs each push for its service, and drops a subscription the service reports gone", async () => {
