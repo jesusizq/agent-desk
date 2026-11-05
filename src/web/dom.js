@@ -30,7 +30,64 @@ export function fill(el, ...kids) {
   append(el, kids);
 }
 
-/** @param {Element} el @param {readonly unknown[]} kids */
+/** @type {WeakMap<Element, (live: HTMLTextAreaElement | HTMLInputElement) => void>} */
+const whenKept = new WeakMap();
+/** Called when `redraw` keeps the box already on the page in place of this new one. @param {Element} fresh @param {(live: HTMLTextAreaElement | HTMLInputElement) => void} fn */
+export function onKept(fresh, fn) {
+  whenKept.set(fresh, fn);
+}
+
+/**
+ * Replaces an element's content around the box being typed in. Out of the page even for a moment,
+ * the box loses what iOS's keyboard holds for it: the autocorrect's context and the paste menu.
+ * @param {Element} root @param {Child[]} kids
+ */
+export function redraw(root, ...kids) {
+  const fresh = new DocumentFragment();
+  append(fresh, kids);
+  const live = document.activeElement;
+  const key = (live instanceof HTMLTextAreaElement || live instanceof HTMLInputElement) && root.contains(live) ? live.dataset.key : undefined;
+  const twin = key === undefined ? null : fresh.querySelector(`[data-key="${CSS.escape(key)}"]`);
+  if (!(live instanceof HTMLElement) || !twin || !sameTrail(live, twin, root)) return root.replaceChildren(fresh);
+  /** @type {Element} */ let keptNode = live;
+  /** @type {Element} */ let freshNode = twin;
+  while (keptNode !== root) {
+    const keptParent = /** @type {Element} */ (keptNode.parentElement);
+    const freshParent = /** @type {ParentNode} */ (freshNode.parentNode);
+    const siblings = [...freshParent.childNodes];
+    const at = siblings.indexOf(freshNode);
+    for (const old of [...keptParent.childNodes]) if (old !== keptNode) old.remove();
+    keptNode.before(...siblings.slice(0, at));
+    keptNode.after(...siblings.slice(at + 1));
+    if (keptParent !== root && freshParent instanceof Element) copyAttributes(freshParent, keptParent);
+    keptNode = keptParent;
+    if (freshParent instanceof Element) freshNode = freshParent;
+  }
+  whenKept.get(twin)?.(/** @type {HTMLTextAreaElement | HTMLInputElement} */ (live));
+}
+
+/** Whether both sit at the same depth under `root` (the new one, under its fragment), through the same tags. @param {Element} live @param {Element} twin @param {Element} root */
+function sameTrail(live, twin, root) {
+  /** @type {Element | null} */ let a = live;
+  /** @type {Element | null} */ let b = twin;
+  while (a && b && a !== root) {
+    if (a.tagName !== b.tagName) return false;
+    a = a.parentElement;
+    b = b.parentElement;
+  }
+  return a === root && b === null;
+}
+
+/** @param {Element} from @param {Element} to */
+function copyAttributes(from, to) {
+  for (const name of to.getAttributeNames()) if (!from.hasAttribute(name)) to.removeAttribute(name);
+  for (const name of from.getAttributeNames()) {
+    const value = from.getAttribute(name) ?? "";
+    if (to.getAttribute(name) !== value) to.setAttribute(name, value);
+  }
+}
+
+/** @param {ParentNode} el @param {readonly unknown[]} kids */
 function append(el, kids) {
   for (const c of kids) {
     if (c === null || c === undefined || c === false) continue;

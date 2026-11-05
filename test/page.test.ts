@@ -471,6 +471,90 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), true);
   });
 
+  describe("the box being typed in stays the same element while the desk changes around it", () => {
+    /** Watches the box: iOS drops its autocorrect and its paste menu when the element leaves the page or the focus. */
+    const watch = (page: Page, box: string) =>
+      page.eval(`(() => {
+        window.kept = ${box};
+        window.blurs = 0;
+        kept.addEventListener("blur", () => blurs++);
+        window.drops = 0;
+        new MutationObserver((changes) => {
+          for (const c of changes) for (const n of c.removedNodes) if (n === kept || n.contains(kept)) drops++;
+        }).observe(document, { childList: true, subtree: true });
+      })()`);
+    const untouched = async (page: Page, box: string) => {
+      assert.deepEqual(
+        await page.eval(`({ same: ${box} === kept, focused: document.activeElement === kept, blurs, drops })`),
+        { same: true, focused: true, blurs: 0, drops: 0 },
+      );
+    };
+
+    it("in a session's chat, and what is sent is what it holds", async () => {
+      store.upsertSession({ id: "writing", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "writing on a phone", takesMessagesWhileWorking: true });
+      const page = await open(390, 844);
+      await page.click(".tabbar button", "Sessions");
+      await page.click(".scard", "writing on a phone");
+      await page.click("#session .chat-footer textarea");
+      await page.type("half a thought");
+      const box = "document.querySelector('#session .chat-footer textarea')";
+      await watch(page, box);
+      await page.eval("kept.setSelectionRange(4, 4)");
+
+      store.upsertAgent("writing", "helper", { goal: "Redraw around the box" });
+      await page.waitFor("document.querySelector('#session').textContent.includes('Redraw around the box')");
+      await untouched(page, box);
+      assert.deepEqual(await page.eval("[kept.value, kept.selectionStart, kept.selectionEnd]"), ["half a thought", 4, 4]);
+
+      // The buttons drawn around it act on the box that stayed.
+      await page.type(" more");
+      await page.eval("document.querySelector('#session .chat-footer .primary').click()"); // a tap on iOS leaves the focus in the box
+      await page.waitFor(`document.querySelector('#toasts')?.textContent.includes('writing on a phone') && ${box}?.value === ''`);
+      assert.deepEqual(store.takeInbox("writing").map((e) => e.answer), ["half more a thought"]);
+      assert.equal(await page.eval<boolean>(`${box} === kept`), true, "the box empties, it is not replaced");
+    });
+
+    it("on the inbox's large card, whose options still fill it", async () => {
+      store.upsertSession({ id: "answering", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "answering a question", state: "waiting" });
+      const stop = store.listen("answering");
+      const asked = store.ask({ sessionId: "answering", kind: "question", text: "Which colour for the button?", options: ["Green", "Blue"] });
+      try {
+        const page = await open();
+        await page.click(".qrow", "Which colour for the button?");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('Which colour for the button?')");
+        const box = "document.querySelector('.next textarea')";
+        await page.waitFor("document.getAnimations().length === 0"); // a card still moving in takes the click elsewhere
+        await page.click(".next textarea");
+        await page.waitFor(`document.activeElement === ${box}`);
+        await page.type("my own answer");
+        await watch(page, box);
+
+        const other = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Asked while the other was being answered?" });
+        await page.waitFor("document.body.textContent.includes('Asked while the other was being answered?')");
+        await untouched(page, box);
+        assert.equal(await page.eval<string>("kept.value"), "my own answer");
+        store.dismiss(other.id);
+
+        await page.click(".next .opts button", "Blue");
+        assert.equal(await page.eval<string>("kept.value"), "Blue");
+        assert.equal(await page.eval<string>(`[...document.querySelectorAll('.next .opts button')].find((b) => b.textContent.includes("Blue")).getAttribute("aria-pressed")`), "true");
+      } finally {
+        store.dismiss(asked.id);
+        stop();
+      }
+    });
+
+    it("gives way when what it answers closes, with the rest of the desk drawn", async () => {
+      store.upsertSession({ id: "closing", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "closing under the box", takesMessagesWhileWorking: true });
+      const page = await open();
+      await page.click(".scard", "closing under the box");
+      await page.click("#session .chat-footer textarea");
+      store.updateSession("closing", (s) => ({ ...s, state: "waiting" }));
+      await page.waitFor("!document.querySelector('#session .chat-footer textarea')");
+      await page.press("Escape");
+    });
+  });
+
   it("folds what a session wrote between its tool calls once something followed it", async () => {
     store.upsertSession({ id: "steps", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "steps folded", state: "working" });
     store.addMessage({ sessionId: "steps", from: "developer", text: "fix the build", via: "terminal" });

@@ -1,6 +1,6 @@
 // @ts-check
 // The desk page: polls the store through the local server and renders it. All strings live in text.js.
-import { byId, dialog, fill, h, icon, md, mdBlocks, svgEl } from "./dom.js";
+import { byId, dialog, fill, h, icon, md, mdBlocks, onKept, redraw, svgEl } from "./dom.js";
 import { TEXT } from "./text.js";
 
 // The most images one answer or message carries, as the server allows (ATTACHED_IMAGES_MAX in protocol.ts).
@@ -661,7 +661,9 @@ async function uploadImage(file) {
  */
 function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null) {
   // What is on its way stays as sent: an edit made meanwhile would be lost with the draft.
-  const box = /** @type {HTMLTextAreaElement} */ (h("textarea", { "data-key": key, placeholder, "aria-label": placeholder, readonly: ui.sending.has(key) }));
+  /** The box on the page: this new one, or the one being typed in that `redraw` kept. @type {HTMLTextAreaElement | HTMLInputElement} */
+  let box = h("textarea", { "data-key": key, placeholder, "aria-label": placeholder, readonly: ui.sending.has(key) });
+  const drawn = box;
   box.value = ui.drafts.get(key) ?? "";
   // The box grows with what is written, up to 40% of the window; past that it scrolls.
   const fit = () => {
@@ -669,7 +671,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     box.style.height = "auto";
     box.style.height = `${Math.min(box.scrollHeight + 2, Math.round(innerHeight * 0.4))}px`;
   };
-  requestAnimationFrame(fit);
+  requestAnimationFrame(() => box === drawn && fit());
   const attached = images ? (ui.draftImages.get(key) ?? []) : [];
   const busy = ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0;
   /** @param {Blob[]} files */
@@ -680,14 +682,13 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     }
     if (files.length > ATTACHED_IMAGES_MAX - attached.length) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
   };
-  if (images) {
-    box.addEventListener("paste", (e) => {
-      const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
-      if (files.length === 0) return; // text is pasted as usual
-      e.preventDefault();
-      attach(files);
-    });
-  }
+  /** @param {ClipboardEvent} e */
+  const onPaste = (e) => {
+    const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
+    if (files.length === 0) return; // text is pasted as usual
+    e.preventDefault();
+    attach(files);
+  };
   const picker = /** @type {HTMLInputElement} */ (h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true }));
   picker.addEventListener("change", () => attach([...(picker.files ?? [])]));
   const send = () => {
@@ -715,13 +716,14 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     fit();
     box.focus();
   };
-  box.addEventListener("input", () => {
+  const onInput = () => {
     ui.drafts.set(key, box.value);
     saveDrafts();
     syncPressed();
     fit();
-  });
-  box.addEventListener("keydown", (e) => {
+  };
+  /** @param {KeyboardEvent} e */
+  const onKeydown = (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       send();
@@ -731,6 +733,27 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     if (option !== undefined && (box.value === "" || options.includes(box.value))) {
       e.preventDefault();
       pick(option);
+    }
+  };
+  // Properties, not listeners: each drawing's replace the last on a box that stays.
+  /** @param {HTMLTextAreaElement | HTMLInputElement} el */
+  const listen = (el) => {
+    el.onpaste = images ? onPaste : null;
+    el.oninput = onInput;
+    el.onkeydown = onKeydown;
+  };
+  listen(box);
+  onKept(box, (live) => {
+    box = live;
+    listen(live);
+    live.readOnly = ui.sending.has(key);
+    live.placeholder = placeholder;
+    live.setAttribute("aria-label", placeholder);
+    // Written only when it differs (a message sent empties it): setting a value resets the keyboard too.
+    const draft = ui.drafts.get(key) ?? "";
+    if (live.value !== draft) {
+      live.value = draft;
+      fit();
     }
   });
   return h(
@@ -1439,7 +1462,8 @@ function openSession(sid) {
       ? h("div", { class: "ppart" }, h("button", { class: "linkish back", onclick: () => ((ui.panelPart = null), openSession(sid)) }, TEXT.backToConversation), panelPart(s, m, d))
       : chat(s),
   );
-  d.replaceChildren(
+  redraw(
+    d,
     h(
       "div",
       { class: "dhead" },
@@ -1453,9 +1477,11 @@ function openSession(sid) {
   );
   // The conversation reads bottom up: it opens at the latest message and follows new ones, unless
   // the developer scrolled up to read. A part that just unfolded is shown from its top.
-  if (samePart) body.scrollTop = scrolled;
+  // `body` is not on the page when the box being typed in kept the old one.
+  const shownBody = d.querySelector(".session-body");
+  if (samePart && shownBody) shownBody.scrollTop = scrolled;
   // The chip row scrolls sideways on a phone: a tap on a chip keeps it where it was.
-  const chips = body.querySelector(".pchips");
+  const chips = shownBody?.querySelector(".pchips");
   if (chips && !fresh) chips.scrollLeft = chipsLeft;
   if (fresh || (samePart && atBottom) || (!samePart && !ui.panelPart)) {
     // After layout, on whichever body is shown then: opening draws the panel twice in one go.
@@ -1993,7 +2019,7 @@ function renderView() {
   const scrolls = new Map();
   for (const el of view.querySelectorAll("[data-scroll]")) if (el instanceof HTMLElement && el.dataset.scroll) scrolls.set(el.dataset.scroll, el.scrollTop);
   const pageScroll = window.scrollY;
-  keepFocus(view, () => view.replaceChildren(!ui.loaded ? skeleton() : ui.view === "history" ? historyView() : board()));
+  keepFocus(view, () => redraw(view, !ui.loaded ? skeleton() : ui.view === "history" ? historyView() : board()));
   for (const el of view.querySelectorAll("[data-scroll]")) {
     const top = el instanceof HTMLElement && el.dataset.scroll ? scrolls.get(el.dataset.scroll) : undefined;
     if (top !== undefined) el.scrollTop = top;
@@ -2007,7 +2033,7 @@ function keepFocus(root, rebuild) {
   const key = active instanceof HTMLElement && root.contains(active) ? active.dataset.key : undefined;
   const caret = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? { from: active.selectionStart, to: active.selectionEnd, top: active.scrollTop } : null;
   rebuild();
-  if (!key) return;
+  if (!key || document.activeElement === active) return; // `redraw` kept it: restoring the caret would reset the keyboard
   const again = root.querySelector(`[data-key="${CSS.escape(key)}"]`);
   if (again instanceof HTMLTextAreaElement || again instanceof HTMLInputElement) {
     again.focus({ preventScroll: true });
