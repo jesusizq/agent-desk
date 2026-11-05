@@ -486,7 +486,9 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 [data-copy]:hover { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
 .md .md-h { margin-top: 6px; color: var(--accent); }
 .md-table { overflow-x: auto; }
-.md table { border-collapse: collapse; font-size: .95em; display: block; max-width: 100%; overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: .95em; }
+/* A column of long text never narrows into a tower of short lines: past this, the table scrolls sideways. */
+.md-long { min-width: min(18em, 62vw); }
 .md th, .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
 .md th { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); font-weight: 650; color: var(--text); }
 .scard { min-width: 0; overflow: hidden; cursor: pointer; }
@@ -592,7 +594,9 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
   .strip > * { flex: none; }
   .strip .spacer { display: none; }
-  .strip .err { order: -2; }
+  /* An error is read whole: it takes its own lines, and what follows wraps under it. */
+  .strip:has(.err) { flex-wrap: wrap; }
+  .strip .err { order: -2; flex: 1 1 100%; white-space: normal; }
   .strip .chip { order: -1; } /* warnings first: the summary repeats the Results count */
   .chip { max-width: 100%; min-width: 0; }
   .board { padding: 10px max(10px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); gap: 10px; }

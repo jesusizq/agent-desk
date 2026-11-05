@@ -603,6 +603,37 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     }
   });
 
+  it("on a phone, the connection's error wraps inside the screen", async () => {
+    const page = await open(390, 844);
+    await page.eval(`(() => {
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      AbortSignal.timeout = () => timeout(200);
+      window.realFetch = window.fetch;
+      window.fetch = (url, init) => String(url) === "/api/state" ? new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason))) : window.realFetch(url, init);
+    })()`);
+    await page.waitFor("document.querySelector('#strip .err')");
+    assert.ok(await page.eval<boolean>("document.querySelector('#strip .err').getBoundingClientRect().right <= innerWidth"), "the whole text is in view, with no sideways scroll");
+    assert.ok(await page.eval<boolean>("document.querySelector('#strip .err').getBoundingClientRect().height > 20"), "on several lines");
+    await page.eval("window.fetch = window.realFetch");
+    await page.waitFor("!document.querySelector('#strip .err')");
+  });
+
+  it("gives a table's long columns room to read, scrolling sideways when they do not fit", async () => {
+    const long = "A long explanation that a narrow column would break into a very tall tower of a few words on each line";
+    store.upsertSession({ id: "tables", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a wide table", state: "waiting" });
+    store.addMessage({ sessionId: "tables", from: "session", text: `Summary:\n\n| # | What | Why | Next |\n|---|---|---|---|\n| 1 | ${long} | ${long} | ${long} |` });
+    const page = await open(390, 844);
+    await page.click(".tabbar button", "Sessions");
+    await page.click(".scard", "a wide table");
+    await page.waitFor("document.querySelector('#session .md-table td')");
+    const widths = await page.eval<number[]>("[...document.querySelectorAll('#session .md-table td')].map((c) => c.getBoundingClientRect().width)");
+    assert.ok((widths[0] ?? 999) < 60, `a short column stays short: ${widths}`);
+    for (const w of widths.slice(1)) assert.ok(w >= 220, `a long column has room: ${widths}`);
+    assert.ok(await page.eval<boolean>("(() => { const t = document.querySelector('#session .md-table'); return t.scrollWidth > t.clientWidth && t.getBoundingClientRect().right <= innerWidth; })()"), "the table scrolls inside the screen");
+    assert.equal(await page.eval<boolean>("document.querySelector('#session .session-body').scrollWidth <= document.querySelector('#session .session-body').clientWidth"), true, "the conversation does not");
+    await page.press("Escape");
+  });
+
   it("folds what a session wrote between its tool calls once something followed it", async () => {
     store.upsertSession({ id: "steps", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "steps folded", state: "working" });
     store.addMessage({ sessionId: "steps", from: "developer", text: "fix the build", via: "terminal" });

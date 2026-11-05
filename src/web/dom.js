@@ -96,6 +96,9 @@ function append(el, kids) {
   }
 }
 
+/** Long text goes in a block with a minimum width, which a table's column respects where a cell's own may not. @param {string} text */
+const tableCell = (text) => (text.length > 24 ? h("div", { class: "md-long" }, md(text)) : md(text));
+
 // Links leave the desk only to local previews and session links built by the desk.
 const SAFE_HREF = /^(https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?(\/|$)|vscode:\/\/agent-desk\.agent-desk\/|#|\/(?!\/))/;
 /** @param {string} href */
@@ -183,7 +186,7 @@ export function mdBlocks(text, { breaks = false } = {}) {
       i--;
       const [head, ...body] = rows;
       out.push(
-        h("div", { class: "md-table" }, h("table", {}, head ? h("thead", {}, h("tr", {}, head.map((c) => h("th", {}, md(c))))) : null, h("tbody", {}, body.map((r) => h("tr", {}, r.map((c) => h("td", {}, md(c)))))))),
+        h("div", { class: "md-table" }, h("table", {}, head ? h("thead", {}, h("tr", {}, head.map((c) => h("th", {}, tableCell(c))))) : null, h("tbody", {}, body.map((r) => h("tr", {}, r.map((c) => h("td", {}, tableCell(c)))))))),
       );
       continue;
     }
