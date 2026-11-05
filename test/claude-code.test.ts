@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -378,7 +378,8 @@ describe("Claude Code hooks", () => {
     assert.equal(store.heldQuestions().has(q.id), true);
     handleHook(event("SessionEnd", { reason: "other" }), live);
     assert.equal(store.heldQuestions().has(q.id), false, "ended");
-    handleHook(event("SessionStart", {}), ctx(store)); // pid 4242: nothing runs there
+    const ended = spawnSync(process.execPath, ["--version"]).pid; // a fixed pid may belong to anything on this machine
+    handleHook(event("SessionStart", {}), { ...ctx(store), sessionProcess: () => ({ pid: ended, ancestors: [] }) });
     const dead = store.ask({ sessionId: "cc-1", kind: "question", text: "Still?", writing: true });
     assert.equal(store.heldQuestions().has(dead.id), false, "its process is gone");
   });
