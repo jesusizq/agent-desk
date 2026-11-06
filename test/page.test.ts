@@ -563,13 +563,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     try {
       const page = await browser.newPage(390, 844);
       pages.push(page);
-      // iOS leaves the page's height alone with its keyboard open: only the visual viewport shrinks.
+      // As iOS: the layout keeps its height with the keyboard open, while the visual viewport and
+      // innerHeight, which follows it there, shrink.
       await page.send("Page.addScriptToEvaluateOnNewDocument", {
         source: `(() => {
           const vv = new EventTarget();
           window.covered = 0;
-          Object.defineProperties(vv, { height: { get: () => innerHeight - covered }, offsetTop: { value: 0 }, scale: { value: 1 } });
+          Object.defineProperties(vv, { height: { get: () => 844 - covered }, offsetTop: { value: 0 }, scale: { value: 1 } });
           Object.defineProperty(window, "visualViewport", { value: vv });
+          Object.defineProperty(window, "innerHeight", { get: () => vv.height, configurable: true });
           window.setKeyboard = (px) => { covered = px; vv.dispatchEvent(new Event("resize")); };
         })()`,
       });
@@ -595,7 +597,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       // Waited for: the window slides in as it opens.
       await page.waitFor("document.querySelector('#session').getBoundingClientRect().bottom <= visualViewport.height");
       await page.eval("setKeyboard(0)");
-      await page.waitFor("document.querySelector('#session').getBoundingClientRect().height === innerHeight");
+      await page.waitFor("document.querySelector('#session').getBoundingClientRect().height === 844");
       await page.press("Escape");
     } finally {
       store.dismiss(asked.id);

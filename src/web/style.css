@@ -621,7 +621,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   .answer .row .primary { flex-direction: column; gap: 3px; max-width: 96px; line-height: 1.2; padding: 8px 12px; }
 
   /* Dialogs fill the screen; the head stays, the body scrolls. */
-  dialog.result, dialog.sess { margin: 0; inset: var(--viewport-top, 0px) 0 auto; width: 100%; max-width: 100%; height: calc(100dvh - var(--keyboard, 0px)); max-height: calc(100dvh - var(--keyboard, 0px)); border-radius: 0; }
+  dialog.result, dialog.sess { margin: 0; inset: var(--viewport-top, 0px) 0 auto; width: 100%; max-width: 100%; height: var(--viewport-height, 100dvh); max-height: var(--viewport-height, 100dvh); border-radius: 0; }
   dialog.result[open], dialog.sess[open] { display: flex; flex-direction: column; }
   dialog.zoom { height: 100dvh; }
   .dhead { flex: none; gap: 8px; align-items: center; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }

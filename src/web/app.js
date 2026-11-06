@@ -2122,8 +2122,8 @@ addEventListener("error", (e) => {
 });
 addEventListener("unhandledrejection", (e) => toast(TEXT.pageError(e.reason instanceof Error ? e.reason.message : String(e.reason))));
 /**
- * iOS ignores interactive-widget: its keyboard covers the page, whose height stays. Only the visual
- * viewport knows what is left, so the layout is told, and the box being typed in brought above it.
+ * iOS ignores interactive-widget: its keyboard covers the page, whose layout keeps its height. Only the
+ * visual viewport knows what is left, so the layout is told, and the box being typed in brought above it.
  */
 function followKeyboard() {
   const vv = window.visualViewport;
@@ -2131,9 +2131,14 @@ function followKeyboard() {
   let covered = 0;
   const follow = () => {
     if (vv.scale > 1.01) return; // a pinch shrinks the visual viewport too, with no keyboard
-    const keyboard = Math.max(0, Math.round(innerHeight - vv.height));
-    document.documentElement.style.setProperty("--keyboard", `${keyboard}px`);
-    document.documentElement.style.setProperty("--viewport-top", `${Math.round(vv.offsetTop)}px`);
+    // Against the layout's height: on iOS innerHeight shrinks with the keyboard too. Less than this is a browser's toolbar.
+    const gap = Math.round(document.documentElement.clientHeight - vv.height);
+    const keyboard = gap > 80 ? gap : 0;
+    const root = document.documentElement.style;
+    root.setProperty("--keyboard", `${keyboard}px`);
+    root.setProperty("--viewport-top", `${Math.round(vv.offsetTop)}px`);
+    if (keyboard) root.setProperty("--viewport-height", `${Math.round(vv.height)}px`);
+    else root.removeProperty("--viewport-height");
     if (keyboard === covered) return;
     covered = keyboard;
     const box = document.activeElement;
