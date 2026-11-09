@@ -1078,7 +1078,7 @@ function failureRow(r) {
     mark: dot("failed"),
     line: [badge("failed"), " ", r.title],
     meta: [label(S(r.sessionId)), r.summary ? firstLine(r.summary) : ""].filter(Boolean).join(" · "),
-    when: h("span", { class: "age quiet" }, hm(r.at)),
+    when: h("span", { class: "age quiet", title: hm(r.at) }, ago(r.at)),
     open: () => openResult(r),
     end: h("button", { class: "rdismiss icon-btn", "aria-label": TEXT.dismissResult, title: TEXT.dismissResult, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(post(`/api/results/${r.id}/seen`))) }, icon("x")),
   });
