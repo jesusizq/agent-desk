@@ -195,9 +195,14 @@ export const TEXT = {
     attach: "Open this terminal over SSH (e.g. Termius):",
     /** @param {string} what */
     confirm: (what) => `Send ${what}?`,
+    /** A key short enough that "Send" would double its button. @param {string} what */
+    confirmShort: (what) => `${what}?`,
     /** @param {string} what @param {string} where */
     sent: (what, where) => `Sent ${what} to ${where}.`,
+    session: "Session",
     end: "End session",
+    endConfirm: "End the session?",
+    endHint: "Stops its process, as closing its terminal would.",
     /** @param {string} where */
     ended: (where) => `Asked ${where} to end. It closes in a moment.`,
   },

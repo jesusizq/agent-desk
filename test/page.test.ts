@@ -1094,11 +1094,11 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         assert.equal(await page.eval<boolean>("bar.getAnimations().some((a) => a.transitionProperty === 'width')"), true, "its width slides");
         await page.click("#session .pchips .chip", "More");
         await page.click("#session .danger");
-        const armed = await page.eval<string>("document.querySelector('#session .danger').textContent");
+        const armed = await page.eval<string>("document.querySelector('#session .danger').innerText");
         assert.notEqual(armed, "End session", "the first click asks for a second");
         store.mergeMetrics({ sessionId: "confirming", contextPercent: 60 });
         await page.waitFor("!document.querySelector('#session .mini.warn')");
-        assert.equal(await page.eval<string>("document.querySelector('#session .danger').textContent"), armed, "still asking after the redraw");
+        assert.equal(await page.eval<string>("document.querySelector('#session .danger').innerText"), armed, "still asking after the redraw");
         await page.press("Escape");
       } finally {
         store.updateSession("confirming", (s) => ({ ...s, state: "ended" }));

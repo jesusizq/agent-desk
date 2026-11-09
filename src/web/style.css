@@ -680,12 +680,24 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   dialog, dialog::backdrop, .scard, .rrow, .qrow, .rcard, .toast.leaving, .bar i, .mini i { transition: none; }
   .scard:hover, .rrow:hover, .qrow:hover { transform: none; }
   :is(button, a).primary:active, :is(button, a).secondary:active, .answer .opts button:active, .icon-btn:active { transform: none; }
-  .skel, .answer .send[aria-busy="true"] .spin { animation: none; }
+  .skel, .answer .send[aria-busy="true"] .spin, .arm.armed::after { animation: none; }
 }
 .wt-list { max-height: 340px; overflow: auto; }
 .wt-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
 /* Ending a session cannot be undone: set apart, in the colour of what stops. */
-.wt-actions .danger { color: var(--danger); margin-left: auto; }
+.wt-actions .danger { color: var(--danger); }
+/* A control that asks for a second click: both labels in one cell, so its width never changes; armed, it is
+   filled and a line runs out over the 3 s it waits (ARM_MS in app.js). */
+.arm { position: relative; overflow: hidden; }
+.arm-lbl { display: inline-grid; }
+.arm-lbl > * { grid-area: 1 / 1; justify-self: center; }
+.arm .arm-ask, .arm.armed .arm-idle { visibility: hidden; }
+.arm.armed .arm-ask { visibility: visible; }
+button.secondary.arm.armed { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+button.secondary.danger.arm.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
+.arm.armed::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: currentColor; opacity: .55;
+  transform-origin: left; animation: arm-out 3s linear forwards; }
+@keyframes arm-out { to { transform: scaleX(0); } }
 .next .qfull { color: var(--text); }
 .conversation { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; padding: 4px 2px; }
 .conversation.long { max-height: 560px; }
