@@ -393,6 +393,7 @@ function noticeArrivals() {
     // What already waits long when the page opens is in sight: no reminder for it.
     for (const q of open) if (Date.now() - Date.parse(q.askedAt) >= REMIND_MS) ui.reminded.add(q.id);
     ui.failuresSeen = new Set(failures());
+    noticeMessages(); // what each session last said when the page opened: only what follows is new
     return;
   }
   noticeFailures();
