@@ -345,6 +345,8 @@ export const TEXT = {
     understood: "Understood as: ",
     /** @param {string} q */
     none: (q) => (q ? `Nothing matches "${q}".` : "Nothing in the history yet."),
+    /** @param {number} n */
+    more: (n) => `Show ${n} older`,
     today: "Today",
     yesterday: "Yesterday",
   },
