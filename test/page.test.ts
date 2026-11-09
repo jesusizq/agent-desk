@@ -1473,6 +1473,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const page = await touchPanel();
     const heights = await page.eval<number[]>("[...document.querySelectorAll('#session .pchips > .chip')].map((c) => Math.round(c.getBoundingClientRect().height))");
     assert.equal(new Set(heights).size, 1, `one height: ${heights}`);
+    // The chips scroll sideways: the first button may start past the screen's edge, behind the metrics.
+    await page.eval("document.querySelector('#session .pchips button.chip').scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })");
     assert.ok(
       await page.eval<boolean>("(() => { const b = document.querySelector('#session .pchips button.chip'); const r = b.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.top - 5)?.closest('button.chip') === b; })()"),
       "a button chip still takes a tap just outside its pill",
