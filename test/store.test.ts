@@ -291,16 +291,19 @@ describe("questions", () => {
     assert.throws(() => store.addImage(Buffer.from("<svg onload=alert(1)>")), /not a PNG, JPEG, WebP or GIF/);
   });
 
-  it("reopens the question when the answer cannot reach the inbox", () => {
+  it("reopens the question, and takes its message back, when the answer cannot reach the inbox", () => {
     const store = testStore();
     addSession(store);
     const q = store.ask({ sessionId: "s1", kind: "question", text: "Ok?" });
     fs.mkdirSync(store.paths.inboxDir, { recursive: true });
     fs.writeFileSync(store.paths.sessionInbox("s1"), "not a directory");
     store.isListening = () => true; // the listener check cannot read a broken inbox; this test is about the write
+    const count = store.getSession("s1")?.messageCount;
     assert.throws(() => store.answerFromDesk(q.id, "yes"), /question is open again/);
     assert.equal(store.getQuestion(q.id)?.status, "open");
     assert.equal(store.getQuestion(q.id)?.answer, undefined);
+    assert.deepEqual(store.listMessages("s1"), [], "its conversation shows no answer as sent");
+    assert.equal(store.getSession("s1")?.messageCount ?? 0, count ?? 0);
   });
 
   it("attaches the session's interpretation to its latest answer", () => {

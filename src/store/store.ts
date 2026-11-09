@@ -309,13 +309,16 @@ export class Store {
       return { ...q, status: "answered", closedAt: at, answer: compact({ text, at, via: "desk" as const, images: attached }) };
     });
     const entry: InboxEntry = compact({ questionId, question: answered.text, answer: text, at: answered.closedAt ?? this.stamp(), images: attached });
-    this.addMessage(compact({ sessionId: answered.sessionId, from: "developer" as const, text, via: "desk" as const, images: attached }));
+    let message: ConversationEntry | undefined;
     try {
+      message = this.addMessage(compact({ sessionId: answered.sessionId, from: "developer" as const, text, via: "desk" as const, images: attached }));
       writeJson(this.paths.inboxEntry(answered.sessionId, questionId), entry);
       this.syncInboxMarker();
     } catch (error) {
+      // Its conversation must not show as sent an answer that never reached the session.
       const original = before;
       try {
+        if (message) this.takeBackMessage(message);
         if (original) this.changeQuestion(questionId, () => original);
       } catch (rollback) {
         throw new AggregateError([error, rollback], `could not deliver the answer to session ${answered.sessionId}, nor reopen question ${questionId}`);
@@ -732,6 +735,12 @@ export class Store {
     const names = listJson(this.paths.messageDir(entry.sessionId));
     for (const old of names.slice(0, Math.max(0, names.length - MESSAGES_KEPT))) fs.rmSync(path.join(this.paths.messageDir(entry.sessionId), old), { force: true });
     return entry;
+  }
+
+  /** Removes a message just added, whose delivery failed. */
+  private takeBackMessage(entry: ConversationEntry): void {
+    fs.rmSync(this.paths.message(entry.sessionId, entry.id), { force: true });
+    this.updateSession(entry.sessionId, (s) => ({ ...s, messageCount: Math.max(0, (s.messageCount ?? 1) - 1) }));
   }
 
   /** The session's conversation, oldest first. */
