@@ -53,6 +53,8 @@ export function animateLists(scope, update) {
   if (reducedMotion() || document.hidden) return update();
   const lists = [...scope.querySelectorAll("[data-list]")].filter(shown);
   const before = lists.map((list) => ({ list, items: itemsOf(list).filter(shown).map((el) => ({ el, rect: el.getBoundingClientRect() })) }));
+  /** @type {Map<Element, number>} */
+  const grows = new Map([...scope.querySelectorAll("[data-grow]")].map((el) => [el, el.getBoundingClientRect().height]));
   update();
   /** @typedef {{ el: HTMLElement, rect: DOMRect }} Seen */
   /** @type {Map<string, Seen & { list: Element }>} cards no longer in their list, by what they show */
@@ -88,15 +90,16 @@ export function animateLists(scope, update) {
     // A redraw that changed nothing here leaves what is still moving alone.
     if (!change.added.length && !leaving.length && !moved) continue;
     if (getComputedStyle(change.list).display === "grid") animateGrid(change, leaving, t);
-    else animateColumn(change, leaving, outOf, t);
+    else animateColumn(change, leaving, outOf, grows, t);
   }
 }
 
 /**
  * @param {{ list: Element, items: { el: HTMLElement, rect: DOMRect }[], was: Map<HTMLElement, DOMRect>, now: HTMLElement[], added: HTMLElement[] }} change
- * @param {{ el: HTMLElement, rect: DOMRect }[]} leaving @param {Map<HTMLElement, { el: HTMLElement, rect: DOMRect }>} outOf @param {Tokens} t
+ * @param {{ el: HTMLElement, rect: DOMRect }[]} leaving @param {Map<HTMLElement, { el: HTMLElement, rect: DOMRect }>} outOf
+ * @param {Map<Element, number>} grows the heights of the `data-grow` blocks before the redraw @param {Tokens} t
  */
-function animateColumn({ list, items, was, now, added }, leaving, outOf, t) {
+function animateColumn({ list, items, was, now, added }, leaving, outOf, grows, t) {
   for (const el of now) stop(el);
   // Gone cards come back for the length of their exit, where they were among the others.
   for (const g of [...leaving].reverse()) {
@@ -108,10 +111,15 @@ function animateColumn({ list, items, was, now, added }, leaving, outOf, t) {
   const ends = new Map(added.map((el) => [el, tall(el)]));
   const options = { duration: t.move, easing: t.easing, id: MOTION };
   // A card that stays but grows or shrinks (answered, a line more) changes height along the same curve.
+  // A block marked `data-grow` that opened or changed inside it grows itself instead: what follows it in
+  // the card (its answer box) is carried down, never clipped by the card's own height.
   for (const el of now) {
     const old = was.get(el);
     const height = el.getBoundingClientRect().height;
-    if (old && Math.abs(old.height - height) > 0.5) el.animate([{ height: `${old.height}px`, overflow: "hidden" }, { height: `${height}px`, overflow: "hidden" }], options);
+    if (!old || Math.abs(old.height - height) <= 0.5) continue;
+    const inner = [...el.querySelectorAll("[data-grow]")].map((g) => ({ g, from: grows.get(g) ?? 0, to: g.getBoundingClientRect().height })).filter(({ from, to }) => Math.abs(from - to) > 0.5);
+    if (!inner.length) el.animate([{ height: `${old.height}px`, overflow: "hidden" }, { height: `${height}px`, overflow: "hidden" }], options);
+    for (const { g, from, to } of inner) g.animate([{ height: `${from}px`, overflow: "hidden" }, { height: `${to}px`, overflow: "hidden" }], options);
   }
   for (const g of leaving) {
     const side = gapSide(g.el);

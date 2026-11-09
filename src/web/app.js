@@ -1031,10 +1031,13 @@ function earlierConversation(q) {
       renderView();
     },
   }, open ? TEXT.conversation.hideEarlier : TEXT.conversation.showEarlier);
-  if (!open) return toggle;
-  // Everything said before this question; its own message is already on the card.
-  const before = (ui.conversations.get(q.sessionId) ?? []).filter((m) => m.at < q.askedAt).slice(0, -1).slice(-8);
-  return [toggle, h("div", { class: "conversation", "data-scroll": `conv-${q.id}` }, before.length ? conversationView(before) : h("div", { class: "faint" }, TEXT.conversation.none))];
+  const list = ui.conversations.get(q.sessionId);
+  // Drawn once fetched: an empty block first would say "nothing earlier" and then grow.
+  if (!open || !list) return toggle;
+  // A turn that ends asking: the question is its message's last part, already on the card with the rest as context.
+  const own = (/** @type {ConversationEntry} */ m) => m.from === "session" && m.text.trim().endsWith(q.text.replace(/^…/, "").trim());
+  const before = list.filter((m) => m.at <= q.askedAt && !own(m)).slice(-8);
+  return [toggle, h("div", { class: "conversation", "data-scroll": `conv-${q.id}`, "data-grow": true }, before.length ? conversationView(before) : h("div", { class: "faint" }, TEXT.conversation.none))];
 }
 
 /** What the session said around a question, folded when long. @param {Question} q */
