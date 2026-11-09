@@ -31,10 +31,11 @@ const STATIC: Record<string, string> = {
   "/apple-touch-icon.png": "image/png",
   "/icon-192.png": "image/png",
   "/icon-512.png": "image/png",
+  "/icon-maskable-512.png": "image/png",
 };
 const BODY_LIMIT = 64 * 1024;
 /** What the PIN page may load before the device is unlocked. */
-const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/favicon.svg", "/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png"]);
+const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/favicon.svg", "/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"]);
 /** Marks what a locked device gets, so the device never keeps the PIN page as the desk (sw.js). */
 const LOCKED = { "X-Agent-Desk-Locked": "1" };
 const LOW_DISK_RATIO = 0.1;
