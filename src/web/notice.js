@@ -10,6 +10,15 @@ import { openResult } from "./result.js";
 import { openSession } from "./session.js";
 import { asksOf, data, itemKey, itemOf, label, page, S, ui, unread } from "./state.js";
 
+/** @typedef {import("../core/protocol.ts").Question} Question */
+
+/** What a notification of a question opens: its item, large on the desk. @param {Question} q */
+const showOnDesk = (q) => () => {
+  ui.view = "desk";
+  ui.sel = itemKey(q);
+  page.render();
+};
+
 export function noticeArrivals() {
   const open = data.questions.filter((q) => q.status === "open");
   if (ui.known === null) {
@@ -37,11 +46,7 @@ export function noticeArrivals() {
     // Where it is already in sight, it comes in there; elsewhere a small bubble tells of it.
     if (panelShowsConversation(q.sessionId)) ui.panelArrival = itemKey(q);
     else if (!inSight(q)) ui.arrivals = [...ui.arrivals.filter((k) => k !== itemKey(q)), itemKey(q)];
-    notify(TEXT.newQuestion(where), q.text, q.id, () => {
-      ui.view = "desk";
-      ui.sel = itemKey(q);
-      page.render();
-    });
+    notify(TEXT.newQuestion(where), q.text, q.id, showOnDesk(q));
   }
   noticeMessages();
 }
@@ -56,11 +61,7 @@ export function remindWaiting() {
     const where = label(S(q.sessionId));
     toast(TEXT.reminder(where));
     chime();
-    notify(TEXT.reminder(where), q.text, `again-${q.id}`, () => {
-      ui.view = "desk";
-      ui.sel = itemKey(q);
-      page.render();
-    });
+    notify(TEXT.reminder(where), q.text, `again-${q.id}`, showOnDesk(q));
   }
 }
 

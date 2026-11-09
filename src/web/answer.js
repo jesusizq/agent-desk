@@ -63,6 +63,12 @@ export function replyBox(key, options, sid, { placeholder = options.length ? TEX
   const route = routeOf(key);
   if (!route) throw new Error(`a reply box for ${key}, which names no question or session`);
   const boxes = () => boxesOf(key);
+  const empty = () => {
+    for (const el of boxes()) {
+      el.value = "";
+      fitBox(el);
+    }
+  };
   const attached = images && !leftTheBox(key) ? (ui.draftImages.get(key) ?? []) : [];
   const uploading = (ui.uploading.get(key) ?? 0) > 0;
   /** @param {Blob[]} files */
@@ -84,10 +90,7 @@ export function replyBox(key, options, sid, { placeholder = options.length ? TEX
       ui.drafts.delete(key);
       ui.draftImages.delete(key);
       saveDrafts();
-      for (const el of boxes()) {
-        el.value = "";
-        fitBox(el);
-      }
+      empty();
       landed(key, sid);
       if (!answer || !(e instanceof KeyboardEvent)) return;
       if (from === "arrival") ui.arrivalFocus = true;
@@ -97,11 +100,7 @@ export function replyBox(key, options, sid, { placeholder = options.length ? TEX
     if (from === "session") {
       // In the conversation, as a chat app: the text leaves the box for a bubble that says how its delivery goes.
       const fromBox = text === box.value;
-      if (fromBox)
-        for (const el of boxes()) {
-          el.value = "";
-          fitBox(el);
-        }
+      if (fromBox) empty();
       deliver({ id: `out-${++outgoingSeq}`, key, sid, text, images: attached, state: "sending", before: 0, fromBox }, delivered);
       return;
     }
