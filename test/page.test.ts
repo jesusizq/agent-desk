@@ -958,6 +958,28 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    it("swaps the large card for a picked question: the old card folds away, never a row painted over the new one", async () => {
+      const page = await open();
+      await page.waitFor("document.getAnimations().length === 0");
+      // Frozen mid-way: the old question's row opens at a row's height below the new card, which nothing covers.
+      const midway = (pick: string) =>
+        page.eval<Record<string, boolean>>(`(() => {
+          const old = document.querySelector('.next').dataset.flip;
+          ${pick};
+          for (const a of document.getAnimations()) (a.pause(), (a.currentTime = 140));
+          const next = document.querySelector('.next:not([data-leaving])').getBoundingClientRect();
+          const back = document.querySelector('.qrow[data-flip="' + old + '"]');
+          const row = back.getBoundingClientRect();
+          const hit = document.elementFromPoint(next.left + next.width / 2, next.top + 12);
+          for (const a of document.getAnimations()) a.finish();
+          return { rowSized: row.height <= back.getBoundingClientRect().height + 0.5, below: row.top >= next.bottom - 1, newOnTop: !!hit?.closest('.next:not([data-leaving])') };
+        })()`);
+      const clean = { rowSized: true, below: true, newOnTop: true };
+      assert.deepEqual(await midway("document.querySelector('.qrow[data-flip]').click()"), clean, "picked with a click");
+      assert.deepEqual(await midway("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }))"), clean, "picked with a key");
+      assert.deepEqual(await midway("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))"), clean, "and back");
+    });
+
     it("slides a toast up when another arrives below it", async () => {
       const page = await open();
       const first = store.ask({ sessionId: "demo-pagos", kind: "question", text: "First of two toasts?" });

@@ -45,8 +45,8 @@ function tall(el, height = el.getBoundingClientRect().height) {
  * Runs `update` (a redraw) and animates what it changed in the lists under `scope`, the elements
  * marked `data-list`, whose cards carry `data-key`. In a column, a new card opens from no height and a
  * gone one folds to none, so its neighbours glide with the layout; cards that changed places slide
- * from where they were. A new card whose `data-flip` names one that just left (a question's row
- * becoming the large card) grows out of it. In a grid, gone cards fade where they were.
+ * from where they were. A new card whose `data-flip` names a smaller one that just left (a question's
+ * row becoming the large card) grows out of it. In a grid, gone cards fade where they were.
  * @param {Element} scope @param {() => void} update
  */
 export function animateLists(scope, update) {
@@ -70,7 +70,9 @@ export function animateLists(scope, update) {
   for (const { added } of changes) {
     for (const el of added) {
       const g = gone.get(flipId(el));
-      if (!g) continue;
+      // Only a card growing out of a smaller one (a row picked up): a large card squeezed into a row
+      // would show an empty box over its neighbours, so it folds away and the row opens on its own.
+      if (!g || g.rect.height > el.getBoundingClientRect().height + 0.5) continue;
       outOf.set(el, g);
       gone.delete(flipId(el));
     }
