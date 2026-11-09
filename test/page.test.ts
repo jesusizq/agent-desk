@@ -1482,6 +1482,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("on a phone, shows a session's failed agents first among its chips, in view without scrolling", async () => {
+    const page = await touchPanel();
+    const [first, right, edge] = await page.eval<[string, number, number]>(`(() => {
+      const chip = document.querySelector('#session .pchips > .chip');
+      return [chip.textContent, chip.getBoundingClientRect().right, document.querySelector('#session .pchips').getBoundingClientRect().right];
+    })()`);
+    assert.match(first, /failed/);
+    assert.ok(right <= edge, `the failed agents chip ends inside the row: ${right} <= ${edge}`);
+    await page.press("Escape");
+  });
+
   it("on a touch phone, opens a part of the session panel from its top, right under the way back", async () => {
     const page = await touchPanel();
     await page.click("#session .pchips button.chip", "agents");

@@ -1538,8 +1538,9 @@ function sessionsColumn() {
 /** @typedef {"agents" | "results" | "services" | "more"} PanelPart */
 
 /**
- * The session's state in one line of chips: context and plan, the command its context calls for,
- * then its agents, results, servers and the rest, each unfolding under the chips.
+ * The session's state in one line of chips: first what asks for action (the command its context
+ * calls for, an ended session, failed agents), then context and plan, then its agents, results,
+ * servers and the rest, each unfolding under the chips.
  * Every field is optional: a provider that does not report one leaves it out.
  * @param {Session} s @param {Metrics | undefined} m
  */
@@ -1557,14 +1558,17 @@ function panelChips(s, m) {
       content,
       part === "more" ? null : h("span", { class: "caret", "aria-hidden": "true" }, "▾"),
     );
+  const agents = as.length ? unfold("agents", [failed ? dot("failed") : null, TEXT.chips.agents(as.length, failed)], failed ? "bad" : "") : null;
+  // What asks for action leads: on a phone the row scrolls sideways and its end starts off-screen.
   return h(
     "div",
     { class: "pchips" },
-    m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
-    (m?.planWindows ?? []).map((w) => h("span", { class: "chip", title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, bar(w.percent), TEXT.planChip(w.label, w.percent, w.resetsAt ? clockAt(w.resetsAt) : ""))),
     m?.suggestion && command ? suggestionChip(m.suggestion, m.contextPercent ?? 0, command) : null,
     s.state === "ended" || data.gone.includes(s.id) ? h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone) : null,
-    as.length ? unfold("agents", [failed ? dot("failed") : null, TEXT.chips.agents(as.length, failed)], failed ? "bad" : "") : null,
+    failed ? agents : null,
+    m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
+    (m?.planWindows ?? []).map((w) => h("span", { class: "chip", title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, bar(w.percent), TEXT.planChip(w.label, w.percent, w.resetsAt ? clockAt(w.resetsAt) : ""))),
+    failed ? null : agents,
     results ? unfold("results", TEXT.chips.results(results)) : null,
     services ? unfold("services", TEXT.chips.live(services)) : null,
     unfold("more", TEXT.chips.more),
