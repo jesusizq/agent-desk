@@ -190,7 +190,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .s-l1 > .dot, .s-l1 > .live .dot { width: 10px; height: 10px; }
 .s-meta { margin-left: auto; padding-left: 8px; flex: none; color: var(--faint); font: 400 0.7812rem var(--sans); white-space: nowrap; }
 .s-ask, .s-bad, .s-more, .s-l3, .scard > .quiet-line { padding-left: 17px; font-size: 0.8125rem; min-width: 0; }
-.s-ask { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-ask { color: var(--text); display: flex; align-items: baseline; gap: 6px; }
+.s-ask-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-ask-more { flex: none; color: var(--faint); font-size: 0.75rem; }
 .s-label { color: var(--accent); font-weight: 650; }
 .s-bad { color: var(--danger); display: flex; align-items: baseline; gap: 6px; }
 .s-bad .dot { width: 9px; height: 9px; flex: none; transform: translateY(1px); }
@@ -347,7 +349,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .next .answer .opts button { text-align: left; padding: 9px 12px; background: var(--surface-2); border-radius: 8px; }
 .answer-middle { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .next .actions .go-link { display: inline-flex; align-items: center; gap: 5px; text-decoration: none; }
-.next .qctx { font-size: 0.875rem; -webkit-line-clamp: unset; }
+:is(.next, .panel-question) .qctx { font-size: 0.875rem; -webkit-line-clamp: unset; }
 .next .qimgs img { height: 110px; }
 .next .go { align-self: flex-start; padding: 8px 14px; font-size: 0.875rem; margin-top: 2px; }
 .next .go kbd { border-color: color-mix(in srgb, var(--accent-text) 45%, transparent); color: inherit; }
@@ -368,6 +370,13 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   transition: background-color var(--dur-2), border-color var(--dur-2); }
 .resolved-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 0.875rem; color: color-mix(in srgb, var(--done) 75%, var(--text)); }
 .resolved-line .dot { transform: translateY(2px); }
+.resolved-line.quiet { color: var(--muted); }
+/* Questions asked together: one card, a numbered part each, the line above saying what the terminal waits for */
+.group-note { font-size: 0.8125rem; color: var(--muted); }
+.qpart { display: flex; flex-direction: column; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border); min-width: 0; }
+.qpart-n { font: 650 0.6875rem var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-bottom: -4px; }
+.qpart.done .qtext { color: var(--muted); }
+.panel-question .qpart { gap: 6px; padding-top: 8px; }
 .resolved-answer { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qrow { position: relative; cursor: pointer; }
 .row-go { opacity: 0; border: 0; border-radius: 6px;
@@ -584,8 +593,8 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 .scard .where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-body { overflow-x: hidden; }
 /* What the session said around the question: under a line, folded to a few lines when long */
-.next .qctx.md { display: flex; color: var(--text); padding: 10px 0 0; border-top: 1px solid var(--border); }
-.next .qctx.md.folded { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
+:is(.next, .panel-question) .qctx.md { display: flex; color: var(--text); padding: 10px 0 0; border-top: 1px solid var(--border); }
+:is(.next, .panel-question) .qctx.md.folded { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
 .qmore { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
 .qmore > .qctx { align-self: stretch; }
 .next .qctx.md > :is(p, ul, ol, .md-h) { max-width: 78ch; }

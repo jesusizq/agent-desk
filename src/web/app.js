@@ -47,7 +47,7 @@ const ui = {
   /** @type {string | null} */ project: null,
   hq: "",
   hfilter: /** @type {"all" | "decision" | "result"} */ ("all"),
-  /** @type {string | null} */ sel: null,
+  /** @type {string | null} the item shown large (itemKey) */ sel: null,
   /** @type {Map<string, string>} */ drafts: new Map(),
   /** @type {Map<string, string[]>} ids of the images attached to each draft */ draftImages: new Map(),
   /** @type {Map<string, number>} images of each draft still on their way to the store */ uploading: new Map(),
@@ -73,6 +73,7 @@ const ui = {
   /** @type {string | null} the session shown in the side panel */ panelSession: null,
   /** @type {string | null} what the panel's session had said when its conversation was fetched */ panelHeard: null,
   /** @type {PanelPart | null} the part of the session panel unfolded under its chips */ panelPart: null,
+  /** @type {string | null} the item the session panel shows, when its session asks several things */ panelAsk: null,
   /** which part of the desk a phone shows; History is the history view */ tab: /** @type {"inbox" | "sessions" | "review"} */ ("inbox"),
   /** @type {Map<string, number>} where each tab of the phone's tab bar was scrolled when left */ tabScroll: new Map(),
   /** @type {Set<string>} questions whose earlier conversation is unfolded */ unfolded: new Set(),
@@ -121,6 +122,24 @@ const providerMark = (provider) =>
 /** @param {string} sid */
 const inProject = (sid) => ui.project === null || S(sid)?.project.name === ui.project;
 const openQuestions = () => data.questions.filter((q) => q.status === "open" && inProject(q.sessionId));
+/**
+ * What waits for the developer as one thing: a question, or the questions a session asked together,
+ * all of which it waits for. @typedef {{ key: string, questions: Question[], open: Question[] }} Item
+ */
+/** @param {Question} q */
+const itemKey = (q) => (q.group ? `g-${q.group.id}` : q.id);
+/** The item a question belongs to, with all its questions in the order asked. @param {Question} q @returns {Item} */
+function itemOf(q) {
+  const group = q.group?.id;
+  const questions = group ? data.questions.filter((x) => x.sessionId === q.sessionId && x.group?.id === group).sort((a, b) => (a.group?.index ?? 0) - (b.group?.index ?? 0)) : [q];
+  return { key: itemKey(q), questions, open: questions.filter((x) => x.status === "open") };
+}
+/** Open questions as items, in their order, one per group. @param {Question[]} open */
+function itemsOf(open) {
+  const keys = new Set();
+  return open.filter((q) => !keys.has(itemKey(q)) && keys.add(itemKey(q))).map(itemOf);
+}
+const openItems = () => itemsOf(openQuestions());
 /** @param {Result} r */
 const isNew = (r) => !r.seenAt && (!data.seen || r.at > data.seen.since);
 /** @param {Session} s */
@@ -362,9 +381,14 @@ function noticeArrivals() {
   }
   noticeFailures();
   let chimed = false;
+  /** @type {Set<string>} */
+  const told = new Set();
   for (const q of open) {
     if (ui.known.has(q.id)) continue;
     ui.known.add(q.id);
+    // Questions asked together arrive together: one call for them.
+    if (told.has(itemKey(q))) continue;
+    told.add(itemKey(q));
     const where = label(S(q.sessionId));
     toast(TEXT.newQuestion(where));
     if (!chimed) chime();
@@ -372,7 +396,7 @@ function noticeArrivals() {
     bump(byId("needs-pill"));
     notify(TEXT.newQuestion(where), q.text, q.id, () => {
       ui.view = "desk";
-      ui.sel = q.id;
+      ui.sel = itemKey(q);
       render();
     });
   }
@@ -385,13 +409,13 @@ function remindWaiting() {
   if (ui.known === null) return;
   for (const q of data.questions) {
     if (q.status !== "open" || ui.reminded.has(q.id) || Date.now() - Date.parse(q.askedAt) < REMIND_MS) continue;
-    ui.reminded.add(q.id);
+    for (const x of itemOf(q).questions) ui.reminded.add(x.id);
     const where = label(S(q.sessionId));
     toast(TEXT.reminder(where));
     chime();
     notify(TEXT.reminder(where), q.text, `again-${q.id}`, () => {
       ui.view = "desk";
-      ui.sel = q.id;
+      ui.sel = itemKey(q);
       render();
     });
   }
@@ -490,7 +514,7 @@ function renderHeader() {
   pill.onclick = () => {
     ui.view = "desk";
     ui.tab = "inbox";
-    ui.sel = openQuestions()[0]?.id ?? null;
+    ui.sel = openItems()[0]?.key ?? null;
     render();
   };
   const q = /** @type {HTMLInputElement} */ (byId("q"));
@@ -1013,55 +1037,72 @@ function earlierConversation(q) {
   return [toggle, h("div", { class: "conversation", "data-scroll": `conv-${q.id}` }, before.length ? conversationView(before) : h("div", { class: "faint" }, TEXT.conversation.none))];
 }
 
-// The oldest wait is the next thing to do: shown large, with what it takes to answer it.
-/** @param {Question} q */
-function nextCard(q) {
-  const s = S(q.sessionId);
-  const canAnswer = data.listening.includes(q.sessionId);
-  const meta = h("div", { class: "meta" }, h("span", { class: `qkind k-${q.kind}` }, TEXT.kinds[q.kind]), where(s), h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt)));
-  // A question shares its row's `data-flip`: picked or next in line, the row grows into this card.
-  const card = { "aria-label": TEXT.next, "data-key": `next-${q.id}`, "data-flip": `q-${q.id}` };
-  if (q.status !== "open") {
-    return h(
-      "article",
-      { ...card, class: "next resolved" },
-      meta,
-      q.kind === "permission" ? h("pre", { class: "qcode" }, q.text) : h("div", { class: "qtext" }, md(headline(q.text))),
-      resolvedLine(q),
-    );
-  }
-  // The question and its answers come first; what the session said around it, folded, after the options.
-  const long = (q.context ?? "").length > 320 || (q.context ?? "").split("\n").length > 5;
+/** What the session said around a question, folded when long. @param {Question} q */
+function contextFold(q) {
+  if (!q.context) return null;
+  const long = q.context.length > 320 || q.context.split("\n").length > 5;
   const unfolded = ui.contextOpen.has(q.id);
-  const context = q.context
-    ? h(
-        "div",
-        { class: "qmore" },
-        h("div", { class: `qctx md${long && !unfolded ? " folded" : ""}`, "data-scroll": `ctx-${q.id}` }, mdBlocks(q.context)),
-        long
-          ? h("button", { class: "linkish", onclick: () => ((unfolded ? ui.contextOpen.delete(q.id) : ui.contextOpen.add(q.id)), renderView()) }, unfolded ? TEXT.foldMessage : TEXT.unfoldMessage)
-          : null,
-        earlierConversation(q),
-      )
-    : h("div", { class: "qmore" }, earlierConversation(q));
+  return [
+    h("div", { class: `qctx md${long && !unfolded ? " folded" : ""}`, "data-scroll": `ctx-${q.id}` }, mdBlocks(q.context)),
+    long ? h("button", { class: "linkish", onclick: () => ((unfolded ? ui.contextOpen.delete(q.id) : ui.contextOpen.add(q.id)), render()) }, unfolded ? TEXT.foldMessage : TEXT.unfoldMessage) : null,
+  ];
+}
+
+/**
+ * What an item asks and what it takes to answer it: the question, its options, then what the session
+ * said around it. Questions asked together come as numbered parts, each answered on its own, under a
+ * line saying the session waits for all of them. In the session panel the question shows whole in a
+ * box of its own height, the conversation above holding the rest. @param {Item} item @param {{ panel?: boolean }} [where]
+ */
+function askBody(item, { panel = false } = {}) {
+  /** @param {Question} q */
+  const text = (q) => (q.kind === "permission" ? h("pre", { class: "qcode", "data-scroll": `code-${q.id}` }, q.text) : panel ? h("div", { class: "pq-text", "data-scroll": `pq-${q.id}` }, questionText(q.text)) : questionText(q.text));
+  /** @param {Question} q @param {Child} [earlier] */
+  const ask = (q, earlier = null) => {
+    const more = [contextFold(q), earlier].flat().filter(Boolean);
+    return [text(q), q.status === "open" ? answerForm(q, more.length ? h("div", { class: "qmore" }, more) : null) : resolvedLine(q)];
+  };
+  const [first] = item.questions;
+  if (!first) return null;
+  const earlier = panel ? null : earlierConversation(first);
+  if (item.questions.length === 1) return ask(first, earlier);
+  const size = item.questions.length;
+  return [
+    h("div", { class: "group-note", role: "status" }, TEXT.group.waits(size, size - item.open.length)),
+    item.questions.map((q, i) => h("section", { class: `qpart${q.status === "open" ? "" : " done"}`, "data-key": `part-${q.id}`, "aria-label": TEXT.group.part(i, size) }, h("div", { class: "qpart-n" }, TEXT.group.part(i, size)), ask(q))),
+    earlier ? h("div", { class: "qmore" }, earlier) : null,
+  ];
+}
+
+// The oldest wait is the next thing to do: shown large, with what it takes to answer it.
+/** @param {Item} item */
+function nextCard(item) {
+  const lead = item.open[0] ?? item.questions[0];
+  if (!lead) return null;
+  const s = S(lead.sessionId);
+  const canAnswer = data.listening.includes(lead.sessionId);
+  const meta = h("div", { class: "meta" }, h("span", { class: `qkind k-${lead.kind}` }, TEXT.kinds[lead.kind]), where(s), h("span", { class: `age${heat(lead.askedAt)}`, title: TEXT.askedAt(hm(lead.askedAt)) }, ago(lead.askedAt)));
+  // An item shares its row's `data-flip`: picked or next in line, the row grows into this card.
+  const card = { "aria-label": TEXT.next, "data-key": `next-${item.key}`, "data-flip": `q-${item.key}` };
+  if (!item.open.length) return h("article", { ...card, class: "next resolved" }, meta, askBody(item));
   return h(
     "article",
-    { ...card, class: `next${heat(q.askedAt)}` },
+    { ...card, class: `next${heat(lead.askedAt)}` },
     meta,
-    q.kind === "permission" ? h("pre", { class: "qcode", "data-scroll": `code-${q.id}` }, q.text) : questionText(q.text),
-    answerForm(q, context),
+    askBody(item),
     h(
       "div",
       { class: "actions" },
       goLink(s, "linkish go-link", icon("go"), TEXT.goTo, canAnswer ? null : h("kbd", {}, "⏎")),
       h("span", { class: "spacer" }),
-      h("button", { class: "linkish faint", title: TEXT.dismissTitle, onclick: () => run(post(`/api/questions/${q.id}/dismiss`)) }, TEXT.dismiss),
+      h("button", { class: "linkish faint", title: TEXT.dismissTitle, onclick: () => run(Promise.all(item.open.map((q) => post(`/api/questions/${q.id}/dismiss`)))) }, TEXT.dismiss),
     ),
   );
 }
 
 /** How a question was settled from the desk: its answer, or for a permission whether it was allowed and why not. @param {Question} q */
 function resolvedLine(q) {
+  if (q.status === "dismissed") return h("div", { class: "resolved-line quiet", role: "status" }, dot("idle"), h("b", {}, TEXT.kinds.dismissed));
   const decide = decisionOf(q);
   const text = q.answer?.text;
   const allowed = decide !== null && text === decide.allow;
@@ -1083,7 +1124,8 @@ function resolvedLine(q) {
 function inbox() {
   const questions = openQuestions();
   const failures = data.results.filter((r) => inProject(r.sessionId) && isNew(r) && r.status === "failed").sort((a, b) => a.at.localeCompare(b.at));
-  return { questions, failures, count: questions.length + failures.length };
+  // Counted by question, as a phone's push counts them: questions asked together wait for an answer each.
+  return { items: itemsOf(questions), failures, count: questions.length + failures.length };
 }
 
 /**
@@ -1115,19 +1157,22 @@ function inboxRow({ mark, line, meta, when, open, go, end, key, flip }) {
   );
 }
 
-/** @param {Question} q */
-function questionRow(q) {
+/** @param {Item} item */
+function questionRow(item) {
+  const q = item.open[0] ?? item.questions[0];
+  if (!q) return null;
   const s = S(q.sessionId);
+  const group = item.questions.length > 1;
   return inboxRow({
-    key: q.id,
-    flip: `q-${q.id}`,
+    key: item.key,
+    flip: `q-${item.key}`,
     mark: beacon(q.askedAt),
-    line: [q.kind !== "question" ? [badge(q.kind), " "] : null, h("b", {}, headline(q.text))],
-    meta: [label(s), q.options.length && !decisionOf(q) ? TEXT.nOptions(q.options.length) : ""].filter(Boolean).join(" · "),
+    line: [q.kind !== "question" ? [badge(q.kind), " "] : null, h("b", {}, group ? item.open.map((x) => headline(x.text)).join(" · ") : headline(q.text))],
+    meta: [label(s), group ? TEXT.group.row(item.questions.length, item.questions.length - item.open.length) : q.options.length && !decisionOf(q) ? TEXT.nOptions(q.options.length) : ""].filter(Boolean).join(" · "),
     when: h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt)),
     go: goLink(s, "row-go", icon("go"), TEXT.go),
     open: () => {
-      ui.sel = q.id;
+      ui.sel = item.key;
       renderView();
       revealNext();
     },
@@ -1147,24 +1192,25 @@ function failureRow(r) {
   });
 }
 
-/** The question just answered from the desk, while its card still says so. */
-function resolvedQuestion() {
+/** The item whose last question was just answered from the desk, while its card still says so. */
+function resolvedItem() {
   const showing = (/** @type {Question} */ q) => ui.sending.has(`answer-${q.id}`) || (ui.resolved.get(q.id) ?? 0) > Date.now();
-  return data.questions.find((q) => q.id === ui.sel && q.status !== "open" && showing(q));
+  const q = data.questions.find((x) => itemKey(x) === ui.sel && x.status !== "open" && showing(x));
+  return q ? itemOf(q) : undefined;
 }
 
-/** The inbox: the selected question large, with what it takes to answer it, then the rest in order. */
+/** The inbox: the selected item large, with what it takes to answer it, then the rest in order. */
 function inboxColumn() {
-  const { questions, failures, count } = inbox();
-  const resolved = resolvedQuestion();
-  const selected = resolved ?? questions.find((q) => q.id === ui.sel) ?? questions[0];
-  ui.sel = selected?.id ?? null;
-  const rows = [...questions.filter((q) => q !== selected).map(questionRow), ...failures.map(failureRow)];
+  const { items, failures, count } = inbox();
+  const resolved = resolvedItem();
+  const selected = items.find((it) => it.key === ui.sel) ?? resolved ?? items[0];
+  ui.sel = selected?.key ?? null;
+  const rows = [...items.filter((it) => it !== selected).map(questionRow), ...failures.map(failureRow)];
   const reviewEmpty = !data.results.some((r) => inProject(r.sessionId) && isNew(r));
   // Earlier results are offered once, by To review.
   const clear = emptyState("allclear", TEXT.allClear(reviewEmpty), { mark: dot("done") });
   return column("needs", count || null, count || resolved ? [selected ? nextCard(selected) : null, rows] : clear, {
-    aside: questions.length > 1 ? h("span", { class: "keys-only faint" }, TEXT.keysHint) : null,
+    aside: items.length > 1 ? h("span", { class: "keys-only faint" }, TEXT.keysHint) : null,
     list: true,
   });
 }
@@ -1295,7 +1341,8 @@ const sessionWeight = (s) =>
  */
 function sessionCard(s) {
   const as = sessionAgents(s.id);
-  const asking = data.questions.filter((q) => q.status === "open" && q.sessionId === s.id).sort((a, b) => a.askedAt.localeCompare(b.askedAt))[0];
+  const asks = data.questions.filter((q) => q.status === "open" && q.sessionId === s.id).sort((a, b) => a.askedAt.localeCompare(b.askedAt));
+  const asking = asks[0];
   const m = metricsOf(s.id);
   const ctx = m?.contextPercent;
   const working = as.filter((a) => a.state === "working").length;
@@ -1305,9 +1352,12 @@ function sessionCard(s) {
   const matters = [];
   if (asking) {
     matters.push(
-      asking.kind === "permission"
-        ? h("div", { class: "s-ask" }, h("span", { class: "s-label" }, TEXT.sessionLine.permission), " ", h("code", {}, asking.text))
-        : h("div", { class: "s-ask" }, h("span", { class: "s-label" }, TEXT.sessionLine.asks), " ", headline(asking.text)),
+      h(
+        "div",
+        { class: "s-ask" },
+        h("span", { class: "s-ask-t" }, h("span", { class: "s-label" }, asking.kind === "permission" ? TEXT.sessionLine.permission : TEXT.sessionLine.asks), " ", asking.kind === "permission" ? h("code", {}, asking.text) : headline(asking.text)),
+        asks.length > 1 ? h("span", { class: "s-ask-more" }, TEXT.sessionLine.moreAsks(asks.length - 1)) : null,
+      ),
     );
   }
   /** One line of trouble; the failed call, when known, on one line below it. @param {DotState} st @param {string} what @param {string} [call] */
@@ -1612,6 +1662,7 @@ function openSession(sid) {
   if (ui.panelSession !== sid) {
     ui.panelSession = sid;
     ui.panelPart = null;
+    ui.panelAsk = null;
   }
   const m = metricsOf(sid);
   const part = ui.panelPart ?? "";
@@ -1716,6 +1767,7 @@ function panelShows(s) {
     [...ui.draftImages, ...ui.uploading, ...ui.sending], // the box below: images attached, a message on its way
     ui.offline && offlineText(),
     [...ui.stepsOpen],
+    [...ui.contextOpen],
     Math.floor(Date.now() / 60_000), // times shown as "for 5 min"
   ]);
 }
@@ -1730,7 +1782,11 @@ function chat(s) {
   const fetched = ui.conversations.get(s.id);
   const list = fetched && fetched.length ? fetched : s.lastMessage ? [{ id: "last", sessionId: s.id, from: /** @type {const} */ ("session"), text: s.lastMessage.text, at: s.lastMessage.at }] : [];
   const whileWorking = new Set((s.sentWhileWorking ?? []).map((w) => w.text));
-  const asking = data.questions.find((q) => q.status === "open" && q.sessionId === s.id);
+  // Everything the session asks, one item at a time, oldest first.
+  const items = itemsOf(data.questions.filter((q) => q.status === "open" && q.sessionId === s.id));
+  const at = Math.max(0, items.findIndex((it) => it.key === ui.panelAsk));
+  const asking = items[at];
+  const lead = asking?.open[0];
   // At work, a session whose adapter delivers mid-turn gets the message at its next step.
   const midTurn = s.state === "working" && s.takesMessagesWhileWorking === true && isLive(s);
   const canReply = !asking && ((s.state === "waiting" && data.listening.includes(s.id)) || midTurn);
@@ -1749,13 +1805,24 @@ function chat(s) {
       { class: "chat-footer" },
       // The window covers the strip that says it elsewhere.
       ui.offline ? h("div", { class: "offline-line", role: "status" }, offlineText()) : null,
-      asking
+      asking && lead
         ? h(
             "div",
-            { class: "panel-question" },
-            h("div", { class: "meta" }, badge(asking.kind), h("span", { class: "spacer" }), h("button", { class: "linkish", onclick: () => answerOnDesk(asking.id) }, TEXT.conversation.openQuestion)),
-            h("div", { class: "pq-text", "data-scroll": `pq-${asking.id}` }, questionText(asking.text)),
-            answerForm(asking),
+            { class: "panel-question", "data-key": `ask-${asking.key}` },
+            h(
+              "div",
+              { class: "meta" },
+              badge(lead.kind),
+              items.length > 1
+                ? [
+                    h("span", { class: "faint num" }, TEXT.conversation.askOf(at + 1, items.length)),
+                    h("button", { class: "linkish", onclick: () => ((ui.panelAsk = items[(at + 1) % items.length]?.key ?? null), openSession(s.id)) }, TEXT.next),
+                  ]
+                : null,
+              h("span", { class: "spacer" }),
+              h("button", { class: "linkish", onclick: () => answerOnDesk(asking.key) }, TEXT.conversation.openQuestion),
+            ),
+            askBody(asking, { panel: true }),
           )
         : // One box whatever the session does, inert while it cannot take a message: the panel's foot never jumps.
           replyBox(`message-${s.id}`, [], `/api/sessions/${s.id}/message`, s.id, {
@@ -1813,9 +1880,9 @@ function markUnread(s) {
   run(post(`/api/sessions/${encodeURIComponent(s.id)}/unread`));
 }
 
-/** Closes the session panel and shows the question large on the desk. @param {string} questionId */
-function answerOnDesk(questionId) {
-  ui.sel = questionId;
+/** Closes the session panel and shows the item large on the desk. @param {string} key */
+function answerOnDesk(key) {
+  ui.sel = key;
   showNeedsYou();
 }
 /** Back to the desk, on what needs the developer: nothing left open on top of it. */
@@ -2867,8 +2934,8 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (typing || ui.view !== "desk") return;
-  const list = openQuestions();
-  const i = list.findIndex((q) => q.id === ui.sel);
+  const list = openItems();
+  const i = list.findIndex((it) => it.key === ui.sel);
   if (/^[1-9]$/.test(e.key)) {
     // 1–9 pick an option of the large card's first open question; the box keeps focus so Ctrl+Enter sends it.
     const option = document.querySelector(".next .opts")?.children[Number(e.key) - 1];
@@ -2881,10 +2948,10 @@ document.addEventListener("keydown", (e) => {
   const step = /** @type {Record<string, number>} */ ({ ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 })[e.key];
   if (step && list.length) {
     e.preventDefault();
-    ui.sel = list[Math.max(0, Math.min(list.length - 1, i + step))]?.id ?? null;
+    ui.sel = list[Math.max(0, Math.min(list.length - 1, i + step))]?.key ?? null;
     renderView();
   } else if (e.key === "Enter" && ui.sel && document.activeElement === document.body) {
-    const q = list.find((x) => x.id === ui.sel);
+    const q = list.find((x) => x.key === ui.sel)?.open[0];
     const { href } = sessionLink(q && S(q.sessionId));
     if (href) {
       e.preventDefault();

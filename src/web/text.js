@@ -54,6 +54,8 @@ export const TEXT = {
     permission: "Asks permission:",
     /** @param {number} n */
     more: (n) => `and ${n} more`,
+    /** @param {number} n */
+    moreAsks: (n) => `+${n} more`,
     /** @param {number} working @param {number} done */
     agents: (working, done) => [working && `${working} agent${working === 1 ? "" : "s"} working`, done && `${done} done`].filter(Boolean).join(" · "),
   },
@@ -102,6 +104,14 @@ export const TEXT = {
   foldMessage: "Show less",
   options: "Options",
   pickSeveral: "Pick one or more",
+  group: {
+    /** @param {number} i @param {number} n */
+    part: (i, n) => `Question ${i + 1} of ${n}`,
+    /** @param {number} n @param {number} answered */
+    waits: (n, answered) => (answered ? `${answered} of ${n} answered: its terminal waits for ${n - answered === 1 ? "the last one" : `the other ${n - answered}`}.` : `Asked together: its terminal waits for all ${n} answers.`),
+    /** @param {number} n @param {number} answered */
+    row: (n, answered) => (answered ? `${answered} of ${n} answered` : `${n} questions asked together`),
+  },
   // Placeholders fit one line of a phone's box: the options above say the rest.
   answerPlaceholder: "Or your own answer…",
   replyPlaceholder: "Type your next instruction…",
@@ -164,6 +174,8 @@ export const TEXT = {
     /** @param {number} n @param {number} agents */
     steps: (n, agents) => `${n === 1 ? "1 message" : `${n} messages`} while it worked${agents ? ` · ${agents === 1 ? "1 agent" : `${agents} agents`}` : ""}`,
     openQuestion: "See it on the desk",
+    /** @param {number} i @param {number} n */
+    askOf: (i, n) => `${i} of ${n}`,
     working: "Its reply appears here when the turn ends. To write to it while it works, use its terminal.",
     /** @param {string} t */
     workingFor: (t) => (t && t !== NOW ? `Working for ${t}` : "Working"),
