@@ -451,7 +451,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer .row .primary { padding: 8px 16px; justify-content: center; }
 /* Sending keeps the button's size: both labels share one cell, and a ring takes the icon's place. */
 .answer .send .send-lbl, .answer .send .send-i { display: inline-grid; }
-.answer .send .send-lbl > *, .answer .send .send-i > * { grid-area: 1 / 1; }
+.answer .send .send-lbl > *, .answer .send .send-i > * { grid-area: 1 / 1; justify-self: center; }
 .answer .send .send-lbl > :last-child, .answer .send[aria-busy="true"] .send-lbl > :first-child, .answer .send .spin, .answer .send[aria-busy="true"] .send-i > svg { visibility: hidden; }
 .answer .send[aria-busy="true"] .send-lbl > :last-child, .answer .send[aria-busy="true"] .spin { visibility: visible; }
 .answer .send[aria-busy="true"] { cursor: progress; }
