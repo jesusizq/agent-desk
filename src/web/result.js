@@ -4,7 +4,7 @@ import { dialog, h, icon, md } from "./dom.js";
 import { TEXT } from "./text.js";
 import { stamp } from "./format.js";
 import { badge, dialogHead, dot, goLink, localLink, where } from "./pieces.js";
-import { post, run } from "./server.js";
+import { imageUrl, post, run } from "./server.js";
 import { isNew, S } from "./state.js";
 import { zoom } from "./zoom.js";
 
@@ -17,7 +17,7 @@ export function openResult(r, { markSeen = true } = {}) {
   const s = S(r.sessionId);
   // Only a click marks a result seen: a link from elsewhere (#r=…) must not write anything.
   if (markSeen && isNew(r)) run(post(`/api/results/${r.id}/seen`));
-  const imgs = r.images.map((i) => ({ src: `/images/${i.id}`, cap: i.caption ?? "" }));
+  const imgs = r.images.map((i) => ({ src: imageUrl(i.id), cap: i.caption ?? "" }));
   const before = r.compare && imgs[r.images.findIndex((i) => i.id === r.compare?.before)];
   const after = r.compare && imgs[r.images.findIndex((i) => i.id === r.compare?.after)];
   let mode = before && after ? "slider" : "side";

@@ -12,7 +12,7 @@ import { fitNewBoxes, showNeedsYou } from "./layout.js";
 import { badge, bar, dialogHead, dot, goLink, LOCAL_URL, localLink, suggestionChip, where } from "./pieces.js";
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
-import { offlineText, post, run } from "./server.js";
+import { imageUrl, offlineText, post, run } from "./server.js";
 import { asksOf, data, isLive, isNew, itemsOf, label, metricsOf, S, sessionName, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
@@ -92,7 +92,7 @@ function sessionDetails(s, m) {
 /** @param {Result} r @param {() => void} [opened] after the result's window opens */
 function resultRow(r, opened) {
   const first = r.images[0];
-  const thumb = first ? h("img", { src: `/images/${first.id}`, alt: "" }) : h("span", { class: "ph" }, dot(r.status === "failed" ? "failed" : "done"));
+  const thumb = first ? h("img", { src: imageUrl(first.id), alt: "" }) : h("span", { class: "ph" }, dot(r.status === "failed" ? "failed" : "done"));
   return h(
     "button",
     {

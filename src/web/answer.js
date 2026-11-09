@@ -6,7 +6,7 @@ import { boxesOf, conversationView, deliver, landed, leftTheBox, loadConversatio
 import { headline } from "./format.js";
 import { COARSE, fitBox } from "./layout.js";
 import { dot, toast } from "./pieces.js";
-import { post, routeOf, run, saveDrafts, uploadImage } from "./server.js";
+import { imageUrl, post, routeOf, run, saveDrafts, uploadImage } from "./server.js";
 import { ATTACHED_IMAGES_MAX, data, page, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -213,7 +213,7 @@ export function replyBox(key, options, sid, { placeholder = options.length ? TEX
             h(
               "span",
               { class: "thumb", "data-key": id },
-              h("img", { src: `/images/${encodeURIComponent(id)}`, alt: TEXT.attachedImage }),
+              h("img", { src: imageUrl(id), alt: TEXT.attachedImage }),
               h("button", { class: "icon-btn", title: TEXT.removeImage, "aria-label": TEXT.removeImage, onclick: () => (ui.draftImages.set(key, attached.filter((x) => x !== id)), saveDrafts(), page.render()) }, icon("x")),
             ),
           ),

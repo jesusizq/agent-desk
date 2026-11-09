@@ -4,7 +4,7 @@ import { h, icon, mdBlocks } from "./dom.js";
 import { TEXT } from "./text.js";
 import { hm } from "./format.js";
 import { toast } from "./pieces.js";
-import { post, routeOf, run, saveDrafts } from "./server.js";
+import { imageUrl, post, routeOf, run, saveDrafts } from "./server.js";
 import { ATTACHED_IMAGES_MAX, data, page, ui } from "./state.js";
 import { zoom } from "./zoom.js";
 
@@ -209,6 +209,6 @@ export function outgoingView(sid) {
 
 /** Images the developer attached on the desk, as thumbnails that open the zoom. @param {string[]} ids */
 export function attachedImages(ids) {
-  const gallery = ids.map((id) => ({ src: `/images/${encodeURIComponent(id)}`, caption: "" }));
+  const gallery = ids.map((id) => ({ src: imageUrl(id), caption: "" }));
   return h("div", { class: "msg-imgs" }, gallery.map((p, i) => h("img", { src: p.src, alt: TEXT.attachedImage, onclick: () => zoom(gallery, i) })));
 }

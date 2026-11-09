@@ -160,6 +160,9 @@ export async function uploadImage(file) {
   return body.id;
 }
 
+/** Where the desk serves an image kept in the store. @param {string} id */
+export const imageUrl = (id) => `/images/${encodeURIComponent(id)}`;
+
 /** The route a draft's key sends to (an answer to its question, a message to its session), or null for no such key. @param {string} key */
 export function routeOf(key) {
   const [, kind, id] = /^(answer|message)-(.+)$/.exec(key) ?? [];

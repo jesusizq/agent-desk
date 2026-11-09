@@ -8,7 +8,7 @@ import { ago, color, firstLine, headline, heat, hm, stamp } from "./format.js";
 import { markCuts, revealNext } from "./layout.js";
 import { badge, beacon, dot, emptyState, goLink, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
 import { openResult } from "./result.js";
-import { post, run } from "./server.js";
+import { imageUrl, post, run } from "./server.js";
 import { openSession } from "./session.js";
 import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, page, S, sessionName, toReview, ui, unread } from "./state.js";
 
@@ -164,7 +164,7 @@ function reviewTile(r) {
     h(
       "button",
       { class: "rtile", onclick: () => openResult(r), title: `${r.title}\n${label(s)} · ${stamp(r.at)}` },
-      first ? h("img", { src: `/images/${first.id}`, alt: "" }) : h("span", { class: "ph" }, dot("done"), r.summary ? h("span", {}, firstLine(r.summary)) : null),
+      first ? h("img", { src: imageUrl(first.id), alt: "" }) : h("span", { class: "ph" }, dot("done"), r.summary ? h("span", {}, firstLine(r.summary)) : null),
       h("span", { class: "rt" }, r.title),
       // Where it comes from, as on every other card, unless one project is already picked.
       h("span", { class: "rm" }, ui.project === null && s ? projectMark(s.project.name) : null, h("span", { class: "num" }, stamp(r.at))),
