@@ -66,7 +66,8 @@ export function onKept(fresh, fn) {
  * are matched by `data-key` when they have one (a card, a row: they may move), otherwise in order,
  * by tag and first class. Out of the page even for a moment, the box being typed in would lose what
  * iOS's keyboard holds for it (the autocorrect's context and the paste menu): a kept node never leaves.
- * Children marked `data-leaving` (an exit still animating, motion.js) are left alone.
+ * Children marked `data-leaving` (an exit still animating, motion.js) are left alone, and so are those
+ * marked `data-visitor`: another part of the page put them there (app.js's arrival bubble, over a window).
  * @param {Element} root @param {Child[]} kids
  */
 export function patch(root, ...kids) {
@@ -78,13 +79,13 @@ export function patch(root, ...kids) {
 /** @param {Node} n */
 const keyOf = (n) => (n instanceof Element ? n.getAttribute("data-key") : null);
 /** @param {Node} n */
-const leaving = (n) => n instanceof Element && n.hasAttribute("data-leaving");
+const leftAlone = (n) => n instanceof Element && (n.hasAttribute("data-leaving") || n.hasAttribute("data-visitor"));
 /** @param {Node} n */
 const kind = (n) => (n instanceof Element ? (n.getAttribute("class") ?? "").split(" ")[0] : "");
 
 /** @param {Element} live @param {ParentNode} fresh */
 function morphChildren(live, fresh) {
-  const olds = [...live.childNodes].filter((n) => !leaving(n));
+  const olds = [...live.childNodes].filter((n) => !leftAlone(n));
   /** @type {Map<string, ChildNode>} */
   const keyed = new Map();
   for (const n of olds) {

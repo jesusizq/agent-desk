@@ -283,6 +283,30 @@ export function grow(el) {
   );
 }
 
+/** Something that comes into a place already shown (a question into a conversation, a bubble at the screen's edge): it rises in from `dy` px off. @param {Element} el @param {number} [dy] */
+export function arrive(el, dy = 10) {
+  if (reducedMotion()) return;
+  const t = tokens();
+  el.animate([{ opacity: 0, transform: `translateY(${dy}px)` }, { opacity: 1, transform: "none" }], { duration: t.move, easing: t.easing, id: MOTION });
+}
+
+/**
+ * Shrinks `el` into `to` (where what it showed now lives), or fades it where it is when there is
+ * nowhere to go. Returns the animation, or null when nothing moves (reduced motion).
+ * @param {HTMLElement} el @param {Element | null} to
+ */
+export function retreat(el, to) {
+  if (reducedMotion()) return null;
+  const t = tokens();
+  for (const a of el.getAnimations()) if (a.id === MOTION) a.cancel();
+  const from = el.getBoundingClientRect();
+  const at = to?.getClientRects().length ? to.getBoundingClientRect() : null;
+  const end = at
+    ? { opacity: 0, transform: `translate(${at.left + at.width / 2 - (from.left + from.width / 2)}px, ${at.top + at.height / 2 - (from.top + from.height / 2)}px) scale(.12)` }
+    : { opacity: 0, transform: "scale(.96)" };
+  return el.animate([{ opacity: 1, transform: "none" }, end], { duration: at ? t.move : t.fade, easing: "ease-in", fill: "forwards", id: MOTION });
+}
+
 /** What replaces a placeholder fades in, rather than appearing in one frame. @param {(Element | null)[]} els */
 export function fadeIn(...els) {
   if (reducedMotion()) return;

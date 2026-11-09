@@ -1903,6 +1903,179 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     }
   });
 
+  describe("a question that arrives tells of itself without interrupting", () => {
+    /** A waiting session listening on the desk; ended afterwards, its questions dismissed. */
+    function listening(id: string, title: string) {
+      store.upsertSession({ id, provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title, state: "waiting" });
+      const stop = store.listen(id);
+      return () => {
+        stop();
+        for (const q of store.openQuestions(id)) store.dismiss(q.id);
+        store.updateSession(id, (s) => ({ ...s, state: "ended" }));
+      };
+    }
+    const bubble = "document.getElementById('arrival')";
+    const bubbleUp = `${bubble}.matches(':popover-open') && !${bubble}.inert`;
+    /** The bubble's 8 s before it goes back into Needs you take 400 ms here. */
+    const quickRetreat = "const later = window.setTimeout; window.setTimeout = (f, ms, ...a) => later(f, ms === 8000 ? 400 : ms, ...a);";
+    async function openWith(source: string, width = 1400, height = 900): Promise<Page> {
+      const page = await browser.newPage(width, height);
+      pages.push(page);
+      await page.send("Page.addScriptToEvaluateOnNewDocument", { source });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('.next') && document.querySelectorAll('.scard').length");
+      return page;
+    }
+
+    it("in the asking session's open panel, comes into its conversation: no bubble, no toast, the focus left where it was", async () => {
+      const done = listening("arrive-panel", "asks in its panel");
+      try {
+        const page = await open();
+        await page.click(".scard", "asks in its panel");
+        await page.waitFor(`${arrived("session")} && document.querySelector('#session .session-body')?.dataset.fetched === 'yes'`);
+        await page.eval("document.querySelector('#session .dhead .icon-btn').focus()");
+        await page.eval("window.rose = 0; const a = Element.prototype.animate; Element.prototype.animate = function (f, o) { if (this.matches('.panel-question') && f[0]?.opacity === 0) rose++; return a.call(this, f, o); }");
+        store.ask({ sessionId: "arrive-panel", kind: "question", text: "Asked while its panel is open?", options: ["Yes", "No"] });
+        await page.waitFor("document.querySelector('#session .panel-question')?.textContent.includes('Asked while its panel is open?')");
+        assert.equal(await page.eval<number>("rose"), 1, "it comes into the panel's foot with a motion");
+        await new Promise((r) => setTimeout(r, 400));
+        assert.deepEqual(
+          await page.eval(`[${bubble}.matches(':popover-open'), document.querySelectorAll('.toast').length, document.activeElement === document.querySelector('#session .dhead .icon-btn')]`),
+          [false, 0, true],
+        );
+        await page.press("Escape");
+      } finally {
+        done();
+      }
+    });
+
+    it("in sight on the board, arrives on its row only", async () => {
+      const page = await open();
+      const asked = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Arriving in plain sight?" });
+      try {
+        await page.waitFor("[...document.querySelectorAll('.qrow')].some((r) => r.textContent.includes('Arriving in plain sight?'))");
+        await new Promise((r) => setTimeout(r, 400));
+        assert.deepEqual(await page.eval(`[${bubble}.matches(':popover-open'), document.querySelectorAll('.toast').length]`), [false, 0]);
+      } finally {
+        store.dismiss(asked.id);
+      }
+    });
+
+    it("out of sight, a bubble over the window says where and what, answered whole in place, and leaves once answered", async () => {
+      const done = listening("arrive-out", "asks out of sight");
+      try {
+        const page = await open();
+        await openResultOf(page, "Three pay button variants");
+        store.ask({ sessionId: "arrive-out", kind: "question", text: "Which pay button ships?", context: "Variant B tested best on phones.", options: ["A", "B", "C"] });
+        await page.waitFor(`${bubbleUp} && !${bubble}.getAnimations().length`); // come to rest
+        assert.deepEqual(
+          await page.eval(`[${bubble}.parentElement.id, ${bubble}.getAttribute('aria-label'), [...${bubble}.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') ?? b.textContent)]`),
+          ["result", "New question", ["Hide this notice: the question stays in Needs you", "Expand", "Go"]],
+          "inside the window on top, so it can be clicked; every button named",
+        );
+        assert.match(await page.eval<string>(`${bubble}.querySelector('[role=status]').textContent`), /^web-shop›.*asks out of sightWhich pay button ships\?$/, "it says where and what, read out politely");
+        const head = await page.eval<number>("document.querySelector('#result .dhead').getBoundingClientRect().bottom");
+        assert.ok((await page.eval<number>(`${bubble}.getBoundingClientRect().top`)) >= head, "under the window's head");
+        assert.equal(await page.eval<number>("document.querySelectorAll('.toast').length"), 0, "no toast");
+        await page.click("#arrival .arr-expand");
+        await page.waitFor("document.querySelector('#arrival .arr-body textarea')");
+        assert.match(await page.eval<string>("document.querySelector('#arrival .arr-body').textContent"), /Which pay button ships\?.*Variant B tested best on phones\./, "the whole question, with what was said around it");
+        await page.eval("document.querySelector('#arrival textarea').focus()");
+        await page.press("Escape");
+        assert.deepEqual(await page.eval("[!!document.querySelector('#arrival .arr-body'), document.getElementById('result').open]"), [false, true], "Escape folds the bubble, not the window under it");
+        await page.click("#arrival .arr-expand");
+        await page.waitFor("document.querySelector('#arrival .arr-body textarea')");
+        await page.click("#arrival .opts button", "B");
+        await page.click("#arrival .send");
+        await page.waitFor("document.querySelector('#arrival .resolved-line')?.textContent.includes('Answered')");
+        assert.deepEqual(store.takeInbox("arrive-out").map((e) => e.answer), ["B"], "delivered as picked, to the session that asked");
+        await page.waitFor(`!${bubble}.matches(':popover-open')`);
+        assert.deepEqual(await page.eval(`[document.getElementById('result').open, document.querySelectorAll('.toast').length]`), [true, 0], "the window stays; no toast");
+        await page.press("Escape");
+      } finally {
+        done();
+      }
+    });
+
+    it("Go selects it in Needs you, with the window over the desk closed; one bubble counts the others", async () => {
+      const page = await open();
+      await page.click("#views button", "History");
+      const first = store.ask({ sessionId: "demo-pagos", kind: "question", text: "First while in History?" });
+      await page.waitFor(`${bubbleUp} && ${bubble}.textContent.includes('First while in History?')`);
+      const second = store.ask({ sessionId: "demo-iva", kind: "question", text: "Second while in History?" });
+      try {
+        await page.waitFor(`${bubble}.textContent.includes('Second while in History?')`);
+        assert.match(await page.eval<string>(`${bubble}.querySelector('.arr-more').textContent`), /^\+1 more$/);
+        assert.equal(await page.eval<number>("document.querySelectorAll('#arrival').length"), 1, "one bubble, never a wall");
+        await page.click("#arrival .arr-go");
+        await page.waitFor(`!${bubble}.matches(':popover-open') && document.querySelector('.next:not([data-leaving])')?.textContent.includes('Second while in History?')`);
+        assert.equal(await page.eval<boolean>("document.querySelector('#views button[aria-pressed=true]').textContent.includes('Desk')"), true);
+      } finally {
+        store.dismiss(first.id);
+        store.dismiss(second.id);
+      }
+    });
+
+    it("goes back into the needs pill by itself, never while expanded or under the pointer; Escape folds it, then hides it", async () => {
+      const page = await openWith(quickRetreat);
+      await page.click("#views button", "History");
+      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 10, y: 400 });
+      const first = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Left alone, where does it go?" });
+      try {
+        await page.waitFor(bubbleUp);
+        await page.eval("window.bumped = 0; const a = Element.prototype.animate; Element.prototype.animate = function (f, o) { if (this.id === 'needs-pill' && o?.id === 'bump') bumped++; return a.call(this, f, o); }");
+        await page.waitFor(`!${bubble}.matches(':popover-open')`, 3000);
+        assert.equal(await page.eval<number>("bumped"), 1, "the pill it went into says so");
+        assert.ok(store.openQuestions("demo-pagos").some((q) => q.id === first.id), "the question still waits in Needs you");
+
+        const second = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Expanded, does it stay?" });
+        try {
+          await page.waitFor(`${bubbleUp} && !${bubble}.getAnimations().length`);
+          assert.equal(await page.eval<string>(`getComputedStyle(${bubble}).opacity`), "1", "back after a retreat, it shows whole");
+          await page.click("#arrival .arr-expand");
+          await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 10, y: 400 });
+          await page.eval("document.activeElement.blur()");
+          await new Promise((r) => setTimeout(r, 1200));
+          assert.equal(await page.eval<boolean>(bubbleUp), true, "expanded, it stays");
+          await page.eval("document.querySelector('#arrival textarea').focus()");
+          await page.press("Escape");
+          assert.equal(await page.eval<boolean>("!document.querySelector('#arrival .arr-body') && document.activeElement.matches('#arrival .arr-expand')"), true, "Escape folds it");
+          await page.press("Escape");
+          await page.waitFor(`!${bubble}.matches(':popover-open')`);
+          assert.equal(await page.eval<string>("document.querySelector('#views button[aria-pressed=true]').textContent"), "History", "and then hides it, nothing else");
+        } finally {
+          store.dismiss(second.id);
+        }
+      } finally {
+        store.dismiss(first.id);
+      }
+    });
+
+    it("leaves when its question is answered elsewhere", async () => {
+      const page = await open();
+      await page.click("#views button", "History");
+      const asked = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Answered in the terminal instead?" });
+      await page.waitFor(bubbleUp);
+      store.dismiss(asked.id);
+      await page.waitFor(`!${bubble}.matches(':popover-open')`);
+    });
+
+    it("on a phone, sits above the tab bar, inside the screen, while another tab is shown", async () => {
+      const page = await open(390, 844);
+      await page.click(".tabbar button", "Sessions");
+      const asked = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Seen from the Sessions tab?" });
+      try {
+        await page.waitFor(`${bubbleUp} && !${bubble}.getAnimations().length`); // come to rest
+        const [left, right, bottom, bar] = await page.eval<[number, number, number, number]>(`(() => { const r = ${bubble}.getBoundingClientRect(); return [r.left, r.right, r.bottom, document.querySelector('.tabbar').getBoundingClientRect().top]; })()`);
+        assert.ok(left >= 8 && right <= 382 && bottom <= bar, `inside the screen, above the tab bar: ${left} ${right} ${bottom} ${bar}`);
+        await page.click(".tabbar button", "Needs you");
+        await page.waitFor(`!${bubble}.matches(':popover-open')`); // now in sight
+      } finally {
+        store.dismiss(asked.id);
+      }
+    });
+  });
+
   it("a message that cannot be sent stays in the conversation with why and Retry, kept on the device, and Retry sends it once", async () => {
     store.upsertSession({ id: "unsent", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a message that fails", takesMessagesWhileWorking: true });
     const page = await open();

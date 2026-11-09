@@ -151,6 +151,16 @@ export const TEXT = {
   answered: "Answered",
   /** @param {string} where */
   newQuestion: (where) => `New question in ${where}`,
+  arrival: {
+    label: "New question",
+    expand: "Expand",
+    collapse: "Collapse",
+    go: "Go",
+    goTitle: "Show it in Needs you",
+    dismiss: "Hide this notice: the question stays in Needs you",
+    /** @param {number} n */
+    more: (n) => `+${n} more`,
+  },
   /** @param {string} where */
   newMessage: (where) => `New message from ${where}`,
   newBadge: "New message",
