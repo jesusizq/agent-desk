@@ -3,6 +3,8 @@
   --text: #161b26; --muted: #586274; --faint: #687083; --accent: #5146dc; --accent-text: #fff; --raise: #fff;
   --shadow: 0 1px 2px rgb(16 24 40 / .05), 0 1px 3px rgb(16 24 40 / .07);
   --shadow-lg: 0 14px 34px rgb(16 24 40 / .14), 0 3px 8px rgb(16 24 40 / .07);
+  /* A row lifted under the pointer: its shadow ends within a column's 6-8px gutter, which clips what goes past. */
+  --shadow-lift: 0 6px 12px -5px rgb(16 24 40 / .2), 0 2px 4px rgb(16 24 40 / .06);
   --proposed: #9150db; --todo: #0e8fcf; --blocked: #8a94a5; --doing: #ee6a1a; --review: #d9407f; --done: #1f9d4f;
   --danger: #d63030; --lane: rgb(15 23 42 / .022);
   /* Motion tokens: one easing and three durations for every transition */
@@ -18,7 +20,7 @@
   color-scheme: dark;
   --bg: #0e1016; --surface: #171a21; --surface-2: #1d2129; --border: #2a2f3a; --border-strong: #3c4352;
   --text: #e4e7ec; --muted: #9fa7b5; --faint: #818a9b; --accent: #8a90fb; --accent-text: #0e1016; --raise: #2b303b;
-  --shadow: 0 1px 2px rgb(0 0 0 / .45); --shadow-lg: 0 14px 34px rgb(0 0 0 / .55);
+  --shadow: 0 1px 2px rgb(0 0 0 / .45); --shadow-lg: 0 14px 34px rgb(0 0 0 / .55); --shadow-lift: 0 6px 12px -5px rgb(0 0 0 / .6), 0 2px 4px rgb(0 0 0 / .35);
   --proposed: #b48cf2; --todo: #40b1ec; --blocked: #7c8798; --doing: #fb8740; --review: #ec6ba6; --done: #42c977;
   --danger: #f04a43; --lane: rgb(255 255 255 / .022);
 }
@@ -628,7 +630,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 
 .rrow, .qrow, .rcard, .hitem.open { transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), border-color var(--dur-2), background-color var(--dur-2); }
 .scard { transition: background-color var(--dur-2); }
-.rrow:hover, .qrow:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+.rrow:hover, .qrow:hover { transform: translateY(-1px); box-shadow: var(--shadow-lift); }
 :is(button, a).primary, :is(button, a).secondary, .answer .opts button, .seg button, .chip, .icon-btn {
   transition: background-color var(--dur-2), border-color var(--dur-2), color var(--dur-2), filter var(--dur-2), transform var(--dur-1) var(--ease-out), box-shadow var(--dur-2); }
 .menu label, .zbar button, .needs-pill, .linkish, .links a, .credits a, .row-go, .rdismiss { transition: background-color var(--dur-2), color var(--dur-2), opacity var(--dur-2), filter var(--dur-2); }
