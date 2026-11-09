@@ -1028,6 +1028,30 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    it("chimes for a new question once a click unlocked the sound, which sleeps between chimes", async () => {
+      const page = await browser.newPage(1400, 900);
+      pages.push(page);
+      await page.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: "window.contexts = []; window.notes = 0; const A = AudioContext; window.AudioContext = class extends A { constructor() { super(); contexts.push(this); } createOscillator() { notes++; return super.createOscillator(); } };",
+      });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('.next')");
+      const sound = "contexts[0]";
+      await page.click(".col-head");
+      await page.waitFor(`contexts.length === 1 && ${sound}.state === 'suspended'`); // made running by the click, then asleep
+      await page.click(".col-head");
+      const before = await page.eval<number>(`${sound}.currentTime`);
+      const asked = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Does the chime sound?" });
+      try {
+        await page.waitFor(`notes === 2 && ${sound}.state === 'running'`, 5000);
+        await page.waitFor(`${sound}.state === 'suspended'`, 5000);
+        assert.equal(await page.eval<number>("contexts.length"), 1, "one context for the page");
+        assert.ok((await page.eval<number>(`${sound}.currentTime`)) > before + 0.3, "it played the two notes, then went back to sleep");
+      } finally {
+        store.dismiss(asked.id);
+      }
+    });
+
     it("slides a toast up when another arrives below it", async () => {
       const page = await open();
       const first = store.ask({ sessionId: "demo-pagos", kind: "question", text: "First of two toasts?" });

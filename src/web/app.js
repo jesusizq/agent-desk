@@ -2525,32 +2525,58 @@ const alertOn = (k) => {
 };
 /** @type {AudioContext | null} */
 let audio = null;
-/** Browsers keep a page's audio muted until it is clicked once: the first click unmutes the chime. */
+let audioUnlocked = false;
+let chiming = 0;
+/**
+ * Browsers keep a page's audio muted until it is clicked once: the first click unlocks the chime. The
+ * context then sleeps between chimes, since a running one holds a sound stream open all day, and a
+ * browser allows only so many (past that, it reports an error from the audio device).
+ */
 addEventListener(
   "pointerdown",
   () => {
-    audio ??= new AudioContext();
-    if (audio.state === "suspended") audio.resume().catch((/** @type {Error} */ e) => toast(TEXT.pageError(e.message)));
+    if (audioUnlocked) return;
+    const ctx = (audio ??= new AudioContext());
+    ctx
+      .resume()
+      .then(() => {
+        audioUnlocked = true;
+        return chiming ? undefined : ctx.suspend();
+      })
+      .catch((/** @type {Error} */ e) => toast(TEXT.pageError(e.message)));
   },
   { capture: true },
 );
 /** Two short notes made by the browser, no file to load. */
 function chime() {
-  if (!alertOn("sound") || !audio || audio.state !== "running") return;
-  const t = audio.currentTime;
-  [880, 1320].forEach((freq, i) => {
-    if (!audio) return;
-    const start = t + i * 0.12;
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.12, start + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.3);
-    osc.connect(gain).connect(audio.destination);
-    osc.start(start);
-    osc.stop(start + 0.32);
-  });
+  const ctx = audio;
+  if (!alertOn("sound") || !ctx || !audioUnlocked) return;
+  chiming++;
+  ctx
+    .resume()
+    .then(() => {
+      const t = ctx.currentTime;
+      [880, 1320].forEach((freq, i) => {
+        const start = t + i * 0.12;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.3);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.32);
+        if (i === 1)
+          osc.onended = () => {
+            if (--chiming === 0) ctx.suspend().catch((/** @type {Error} */ e) => toast(TEXT.pageError(e.message)));
+          };
+      });
+    })
+    .catch((/** @type {Error} */ e) => {
+      chiming--;
+      toast(TEXT.pageError(e.message));
+    });
 }
 /** The menus' switches, made once and updated in place: a change keeps the focus on its box. @type {Map<string, { label: HTMLLabelElement, box: HTMLInputElement, hint: HTMLElement }>} */
 const switches = new Map();
