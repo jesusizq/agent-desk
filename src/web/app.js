@@ -166,6 +166,8 @@ function toast(msg) {
   const box = byId("toasts");
   const t = h("div", { class: "toast" }, msg);
   box.append(t);
+  const head = [...document.querySelectorAll("dialog[open] > .dhead")].at(-1);
+  box.style.setProperty("--dialog-head", `${head ? Math.round(head.getBoundingClientRect().bottom) : 0}px`);
   // Re-shown each time so it sits above any open dialog in the browser's top layer.
   if (box.matches(":popover-open")) box.hidePopover();
   box.showPopover();

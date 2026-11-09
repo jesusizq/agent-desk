@@ -830,7 +830,11 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.tap("#session .opts button", "Green");
         await page.tap("#session .chat-footer .send");
         await page.waitFor("document.querySelector('.toast')?.textContent.includes('Answer sent')");
-        assert.ok(await page.eval<boolean>("document.querySelector('.toast').getBoundingClientRect().bottom < 120"), "over the window's head, not over the box");
+        assert.deepEqual(
+          await page.eval("(() => { const t = document.querySelector('.toast').getBoundingClientRect(); return [t.top >= document.querySelector('#session .dhead').getBoundingClientRect().bottom, t.bottom < 508 / 2]; })()"),
+          [true, true],
+          "under the window's head, so its title, Go and Close stay in sight, and far from the box",
+        );
         await page.press("Escape");
       } finally {
         done();

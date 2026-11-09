@@ -873,6 +873,10 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 :root[data-keyboard] .chat-footer { padding-bottom: 8px; }
 /* Over a window or above a keyboard, the bottom is where the box being typed in is: toasts come from the top. */
 body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--viewport-top, 0px) + max(12px, env(safe-area-inset-top))); bottom: auto; --toast-from: -6px; }
+/* On a phone a window fills the screen: its toasts come in under its head (app.js measures it), never over its title and buttons. */
+@media (max-width: 700px), (max-height: 500px) {
+  :root body:has(dialog[open]) #toasts { top: max(calc(var(--viewport-top, 0px) + max(12px, env(safe-area-inset-top))), calc(var(--dialog-head, 0px) + 8px)); }
+}
 
 /* A narrow phone: the brand keeps its mark only, so the header stays on one line. */
 @media (max-width: 399px) {
