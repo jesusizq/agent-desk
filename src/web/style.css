@@ -11,6 +11,8 @@
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
   /* Checkboxes, sliders and scrollbars follow the theme chosen on the page, not the system's */
   color-scheme: light; accent-color: var(--accent);
+  /* Slim scrollbars in the theme's colours, not the system's classic ones with arrows */
+  scrollbar-color: var(--border-strong) transparent;
 }
 [data-theme="dark"] {
   color-scheme: dark;
@@ -21,7 +23,7 @@
   --danger: #f04a43; --lane: rgb(255 255 255 / .022);
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: thin; }
 html, body { margin: 0; height: 100%; }
 body { font: 0.875rem/1.45 var(--sans); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased;
   display: flex; flex-direction: column; overflow: hidden; }
@@ -76,8 +78,10 @@ button.chip:hover { border-color: var(--border-strong); }
 .scard > .chip { margin-left: 17px; }
 
 /* Board: the inbox on the left; the sessions and what to review on the right. Each part scrolls on its own. */
-.board { flex: 1; min-height: 0; display: grid; gap: 10px 0; padding: 12px 18px 8px;
-  grid-template-columns: minmax(0, 1fr) 20px clamp(280px, var(--side-w, 400px), max(280px, calc(100% - 440px)));
+/* The right column grows with the window unless its width was set by dragging (--side-w). Every column
+   insets its content by 8px, so the cards line up with the header's and the strip's 14px edge. */
+.board { flex: 1; min-height: 0; display: grid; gap: 10px 0; padding: 12px 6px 8px;
+  grid-template-columns: minmax(0, 1fr) 20px clamp(280px, var(--side-w, clamp(360px, 30vw, 560px)), max(280px, calc(100% - 440px)));
   grid-template-rows: fit-content(64%) minmax(0, 1fr);
   grid-template-areas: "needs split sessions" "needs split review"; }
 /* The line between the inbox and the right column: dragged to resize, double-clicked to reset. */
@@ -89,12 +93,12 @@ button.chip:hover { border-color: var(--border-strong); }
 body.resizing { cursor: col-resize; user-select: none; }
 .col-needs { grid-area: needs; } .col-sessions { grid-area: sessions; } .col-review { grid-area: review; }
 .col { display: flex; flex-direction: column; min-height: 0; }
-.col-head { display: flex; align-items: center; gap: 8px; padding: 4px 4px 8px; font: 650 0.875rem var(--sans); }
+.col-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; font: 650 0.875rem var(--sans); }
 .col-head .count { font-size: 0.7188rem; }
 .head-aside { margin-left: auto; font: 400 0.75rem var(--sans); }
-.col-body { flex: 1; overflow: auto; padding: 4px 4px 10px; display: flex; flex-direction: column; gap: 8px; }
-.col-needs .col-body { padding: 6px 8px 14px; }
-.col-foot { padding: 6px 4px 0; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--faint); }
+.col-body { flex: 1; overflow: auto; scrollbar-gutter: stable; padding: 6px 8px 14px; display: flex; flex-direction: column; gap: 8px; }
+.col-foot { padding: 0 8px; font-size: 0.75rem; color: var(--faint); }
+.col-foot > * { padding-top: 6px; border-top: 1px solid var(--border); }
 .count { min-width: 19px; text-align: center; border-radius: 999px; padding: 0 6px; font: 650 0.7188rem var(--sans);
   background: var(--accent); color: var(--accent-text); font-variant-numeric: tabular-nums; }
 .count.quiet { background: none; color: var(--faint); font-weight: 500; }
@@ -441,7 +445,13 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 @media (min-width: 701px) and (min-height: 501px) {
   /* On History the page has its own search: the header's keeps its room, so the needs pill does not move. */
   header.top .search[hidden] { display: flex; visibility: hidden; }
-  /* What a scroll area cuts off fades at that edge (app.js sets data-cut). */
+  /* As tall as a line holding a warning chip, so the board does not move when one comes or goes. */
+  .strip { min-height: calc(0.7812rem * 1.45 + 19px); }
+  /* A wide window does not stretch the inbox past a reading width: its content stays centred in its column. */
+  .col-needs > :is(.col-head, .col-body) { padding-inline: max(8px, calc((100% - 864px) / 2)); }
+  /* The head and foot reserve the list's scrollbar gutter too, whatever its width here, so all three share one right edge. */
+  :is(.col-head, .col-foot) { overflow: hidden; scrollbar-gutter: stable; }
+  /* A list cut by its scroll area fades at the edge that hides more (app.js sets data-cut). */
   [data-cut] { --fade-dir: to bottom; --fade-a: 0px; --fade-b: 0px;
     -webkit-mask-image: linear-gradient(var(--fade-dir), transparent, #000 var(--fade-a), #000 calc(100% - var(--fade-b)), transparent);
     mask-image: linear-gradient(var(--fade-dir), transparent, #000 var(--fade-a), #000 calc(100% - var(--fade-b)), transparent); }

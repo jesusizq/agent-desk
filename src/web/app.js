@@ -2349,10 +2349,11 @@ function renderView() {
   focusNextCard(view);
   // The first data takes the placeholders' place by fading in, not in one frame.
   if (placeholder && ui.loaded) fadeIn(view.firstElementChild, byId("needs-pill"), byId("strip"));
+  markCuts();
 }
 
 // Scroll areas whose edge hides more of their list; style.css fades that edge.
-const CUT = "#projects";
+const CUT = "#projects, .board .col-body";
 /** @param {Element} el */
 function markCut(el) {
   if (!(el instanceof HTMLElement)) return;
@@ -2367,6 +2368,8 @@ function markCuts() {
   for (const el of document.querySelectorAll(CUT)) markCut(el);
 }
 document.addEventListener("scroll", (e) => e.target instanceof Element && e.target.matches(CUT) && markCut(e.target), { capture: true, passive: true });
+// A draft growing its box, or a window or column resized, changes what fits without a redraw.
+document.addEventListener("input", markCuts, { capture: true, passive: true });
 addEventListener("resize", markCuts);
 
 /**
@@ -2395,17 +2398,19 @@ function board() {
 // The right column's width, set by dragging the line before it; kept in this browser.
 const SIDE_KEY = "agent-desk:side-width";
 const SIDE_MIN = 280;
-const SIDE_DEFAULT = 400; // style.css's --side-w
+/** The right column's width until one is dragged: style.css's clamp(360px, 30vw, 560px). */
+const sideDefault = () => Math.round(Math.min(560, Math.max(360, document.documentElement.clientWidth * 0.3)));
 const SIDE_STEP = 16;
 /** @param {number | null} px */
 function setSide(px) {
   if (px === null) {
     localStorage.removeItem(SIDE_KEY);
     document.documentElement.style.removeProperty("--side-w");
-    return;
+  } else {
+    localStorage.setItem(SIDE_KEY, String(Math.round(px)));
+    document.documentElement.style.setProperty("--side-w", `${Math.round(px)}px`);
   }
-  localStorage.setItem(SIDE_KEY, String(Math.round(px)));
-  document.documentElement.style.setProperty("--side-w", `${Math.round(px)}px`);
+  markCuts();
 }
 const savedSide = Number(localStorage.getItem(SIDE_KEY));
 if (savedSide) document.documentElement.style.setProperty("--side-w", `${Math.round(savedSide)}px`);
@@ -2420,7 +2425,7 @@ function splitter() {
     "aria-orientation": "vertical",
     "aria-label": TEXT.splitLabel,
     "aria-valuemin": SIDE_MIN,
-    "aria-valuenow": Number(localStorage.getItem(SIDE_KEY)) || SIDE_DEFAULT,
+    "aria-valuenow": Number(localStorage.getItem(SIDE_KEY)) || sideDefault(),
     onpointerdown: (e) => {
       const handle = e.currentTarget;
       const board = handle instanceof HTMLElement ? handle.parentElement : null;
