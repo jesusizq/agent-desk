@@ -59,6 +59,7 @@ const ui = {
   /** @type {number | undefined} a redraw of the panel put off while it is scrolled */ panelLater: undefined,
   /** @type {Set<string>} */ sending: new Set(),
   /** @type {Map<string, number>} questions answered from the desk, shown answered on their card until then */ resolved: new Map(),
+  /** @type {string | null} a question answered with the keys: the card that replaces it takes the focus */ focusAfter: null,
   /** @type {{ key: string, until: number } | null} the session control waiting for its confirming click */ armed: null,
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
@@ -695,10 +696,7 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
         }
         if (answer) resolve(key.slice("answer-".length));
         toast(answer ? TEXT.sent(label(S(sid))) : TEXT.messageSent(label(S(sid))));
-        // Answered with the keys, the next question's box is ready to type in.
-        if (answer && e instanceof KeyboardEvent && !document.querySelector("dialog[open]")) {
-          setTimeout(() => /** @type {HTMLElement | null} */ (document.querySelector(".next textarea:not([readonly])"))?.focus({ preventScroll: true }));
-        }
+        if (answer && e instanceof KeyboardEvent && !document.querySelector("dialog[open]")) ui.focusAfter = key.slice("answer-".length);
       }),
       () => {
         ui.sending.delete(key);
@@ -2342,8 +2340,23 @@ function renderView() {
     if (top !== undefined) el.scrollTop = top;
   }
   window.scrollTo(0, pageScroll);
+  focusNextCard(view);
   // The first data takes the placeholders' place by fading in, not in one frame.
   if (placeholder && ui.loaded) fadeIn(view.firstElementChild, byId("needs-pill"), byId("strip"));
+}
+
+/**
+ * Answered with the keys, the question that takes the answered one's place is ready to type in, once
+ * its card is drawn (the answered card stays a moment first), unless the developer went elsewhere.
+ * @param {Element} view
+ */
+function focusNextCard(view) {
+  if (ui.focusAfter === null) return;
+  const card = view.querySelector(".next:not([data-leaving])");
+  if (card instanceof HTMLElement && card.dataset.flip === `q-${ui.focusAfter}`) return; // still the answered one
+  ui.focusAfter = null;
+  const box = card?.querySelector("textarea:not([readonly])");
+  if (box instanceof HTMLElement && document.activeElement === document.body && !document.querySelector("dialog[open]")) box.focus({ preventScroll: true });
 }
 
 /**

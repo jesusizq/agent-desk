@@ -980,6 +980,29 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.deepEqual(await midway("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))"), clean, "and back");
     });
 
+    it("answered with Ctrl+Enter, the next question's box takes the next key once its card is up", async () => {
+      store.upsertSession({ id: "keys", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "answering with the keys", state: "waiting" });
+      store.ask({ sessionId: "keys", kind: "question", text: "Answered with the keys?", options: ["Yes", "No"] });
+      // Every waiting session listens, so whichever question comes next has a box that takes text.
+      const stops = [...new Set(store.openQuestions().map((q) => q.sessionId))].map((id) => store.listen(id));
+      try {
+        const page = await open();
+        await page.click(".qrow", "Answered with the keys?");
+        await page.waitFor("document.querySelector('.next textarea:not([readonly])') && document.getAnimations().length === 0");
+        await page.click(".next textarea");
+        await page.type("Yes, with the keys");
+        for (const type of ["rawKeyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 2 });
+        await page.waitFor("document.querySelector('.next.resolved')");
+        await page.waitFor("!document.querySelector('.next.resolved') && document.activeElement?.matches('.next:not([data-leaving]) textarea')", 5000);
+        await page.type("x");
+        const box = "document.querySelector('.next:not([data-leaving]) textarea')";
+        assert.equal(await page.eval<string>(`${box}.value`), "x", "the key landed in the next question's box");
+        await page.eval(`(() => { const b = ${box}; b.value = ''; b.dispatchEvent(new Event('input', { bubbles: true })); })()`); // no draft left for the other tests
+      } finally {
+        for (const stop of stops) stop();
+      }
+    });
+
     it("slides a toast up when another arrives below it", async () => {
       const page = await open();
       const first = store.ask({ sessionId: "demo-pagos", kind: "question", text: "First of two toasts?" });
