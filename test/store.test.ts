@@ -99,6 +99,15 @@ describe("concurrency", () => {
     assert.equal(store.getAgent("s1", "builder")?.goal, "Build");
   });
 
+  it("counts every message on its session while processes add messages and update the session at once", async () => {
+    const store = testStore();
+    addSession(store);
+    await Promise.all([workers(store.paths.home, "message", 25, 4), workers(store.paths.home, "activity", 25, 2)]);
+    assert.equal(store.getSession("s1")?.messageCount, 100);
+    assert.equal(store.listMessages("s1").length, 100);
+    assert.match(store.getSession("s1")?.activity ?? "", /^Edit /, "the other updates are kept too");
+  });
+
   it("hands each inbox answer to exactly one waiter", async () => {
     const store = testStore();
     addSession(store);
@@ -338,6 +347,35 @@ describe("messages", () => {
     const texts = Array.from({ length: 40 }, (_, i) => `step ${i}`);
     for (const text of texts) store.addMessage({ sessionId: "s1", from: "session", text, step: true });
     assert.deepEqual(store.listMessages("s1").map((m) => m.text), texts);
+  });
+
+  it("counts each message added on its session, so a reader sees one added mid-turn", () => {
+    const store = testStore();
+    addSession(store);
+    assert.equal(store.getSession("s1")?.messageCount, undefined);
+    store.addMessage({ sessionId: "s1", from: "developer", text: "fix the build", via: "terminal" });
+    const before = store.getSession("s1");
+    store.addMessage({ sessionId: "s1", from: "session", text: "Looking at the logs first.", step: true });
+    const after = store.getSession("s1");
+    assert.deepEqual([before?.messageCount, after?.messageCount], [1, 2]);
+    assert.ok((after?.updatedAt ?? "") > (before?.updatedAt ?? ""));
+  });
+
+  it("adds no message to a session that is not in the store", () => {
+    const store = testStore();
+    assert.throws(() => store.addMessage({ sessionId: "nobody", from: "session", text: "Hello" }), InputError);
+    assert.equal(fs.existsSync(store.paths.messageDir("nobody")), false);
+  });
+
+  it("rejects a session whose message count is not a whole number from 0", () => {
+    const store = testStore();
+    addSession(store);
+    const file = store.paths.session("s1");
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    for (const bad of [-1, 1.5, "3", true]) {
+      fs.writeFileSync(file, JSON.stringify({ ...raw, messageCount: bad }));
+      assert.throws(() => store.getSession("s1"), (e: Error) => e.message.includes("s1.json.messageCount"), String(bad));
+    }
   });
 });
 

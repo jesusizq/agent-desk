@@ -1788,7 +1788,7 @@ function openSession(sid) {
 }
 
 /** What a session has said and whether it works: when it changes, its conversation is fetched again. @param {Session} s */
-const heard = (s) => `${s.state} ${s.lastMessage?.at ?? ""}`;
+const heard = (s) => `${s.state} ${s.lastMessage?.at ?? ""} ${s.messageCount ?? 0}`;
 
 /** Redraws the open session panel with the latest data, keeping the box being typed in. */
 function renderPanel() {

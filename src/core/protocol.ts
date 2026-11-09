@@ -46,6 +46,8 @@ export type Session = {
   failedWhat?: string;
   /** The session's last message at the end of a turn: shown quietly unless it asks something. */
   lastMessage?: { text: string; at: string };
+  /** How many messages its conversation has received, so a reader sees one added mid-turn. */
+  messageCount?: number;
   /** When the developer last read this session's conversation on the desk (any device). */
   readAt?: string;
   /** It ended with a question still open, so it stays in view until the developer opens it. */

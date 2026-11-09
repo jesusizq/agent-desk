@@ -19,6 +19,10 @@ if (task === "increment") {
   const got: string[] = [];
   for (let i = 0; i < Number(count); i++) got.push(...store.takeInbox("s1").map((e) => e.questionId));
   process.stdout.write(JSON.stringify(got));
+} else if (task === "message") {
+  for (let i = 0; i < Number(count); i++) store.addMessage({ sessionId: "s1", from: "session", text: `step ${process.pid}-${i}`, step: true });
+} else if (task === "activity") {
+  for (let i = 0; i < Number(count); i++) store.updateSession("s1", (s) => ({ ...s, activity: `Edit ${process.pid}-${i}` }));
 } else if (task === "agent") {
   for (let i = 0; i < Number(count); i++) store.upsertAgent("s1", "builder", { activity: `step ${process.pid}-${i}` });
 } else {

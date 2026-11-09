@@ -265,6 +265,20 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"], "sent once");
   });
 
+  it("shows in an open session what it writes and what is typed to it while it works, without reopening", async () => {
+    store.upsertSession({ id: "live-steps", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "live steps", state: "working" });
+    store.addMessage({ sessionId: "live-steps", from: "developer", text: "migrate the schema", via: "terminal" });
+    const page = await open();
+    await page.click(".scard", "live steps");
+    await page.waitFor("document.querySelector('#session .session-body')?.dataset.fetched === 'yes' && document.querySelector('#session').textContent.includes('migrate the schema')");
+    // Mid-turn, neither its state nor its last message changes: only the conversation grows.
+    store.addMessage({ sessionId: "live-steps", from: "session", text: "Generated the migration for the orders table.", step: true });
+    await page.waitFor("document.querySelector('#session').textContent.includes('Generated the migration for the orders table.')");
+    store.addMessage({ sessionId: "live-steps", from: "developer", text: "and keep the old column for a week", via: "terminal" });
+    await page.waitFor("document.querySelector('#session').textContent.includes('and keep the old column for a week')");
+    await page.press("Escape");
+  });
+
   it("asks for the PIN again when the unlock ends, with what was being written kept", async () => {
     store.upsertSession({ id: "pin-ended", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "pin ended", takesMessagesWhileWorking: true });
     const page = await open();

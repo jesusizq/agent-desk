@@ -658,10 +658,21 @@ export class Store {
 
   // ── Conversation ────────────────────────────────────────────────────────
 
-  /** Adds a message to the session's conversation, keeping its latest MESSAGES_KEPT. */
+  /**
+   * Adds a message to the session's conversation, keeping its latest MESSAGES_KEPT, and counts it on
+   * the session (written after the message, so a reader that sees the count finds the message).
+   */
   addMessage(input: { sessionId: string; from: "session" | "developer"; text: string; via?: "terminal" | "desk"; images?: string[]; step?: boolean }): ConversationEntry {
     const entry = readConversationEntry(compact({ id: newId("m"), ...input, text: bounded(input.text), at: this.stamp() }));
-    writeJson(this.paths.message(entry.sessionId, entry.id), entry);
+    this.requireSession(entry.sessionId);
+    const file = this.paths.message(entry.sessionId, entry.id);
+    writeJson(file, entry);
+    try {
+      this.updateSession(entry.sessionId, (s) => ({ ...s, messageCount: (s.messageCount ?? 0) + 1 }));
+    } catch (error) {
+      fs.rmSync(file, { force: true });
+      throw new Error(`could not count a message on session ${entry.sessionId}; the message was not kept`, { cause: error });
+    }
     const names = listJson(this.paths.messageDir(entry.sessionId));
     for (const old of names.slice(0, Math.max(0, names.length - MESSAGES_KEPT))) fs.rmSync(path.join(this.paths.messageDir(entry.sessionId), old), { force: true });
     return entry;

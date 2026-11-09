@@ -56,6 +56,7 @@ export function readSession(value: unknown, where = "session"): Session {
     failedAt: optional(f.failedAt, `${where}.failedAt`, (v, w) => list(v, w, isoTime, FAILURES_KEPT)),
     failedWhat: optional(f.failedWhat, `${where}.failedWhat`, line),
     lastMessage: optional(f.lastMessage, `${where}.lastMessage`, readMessage),
+    messageCount: optional(f.messageCount, `${where}.messageCount`, int),
     readAt: optional(f.readAt, `${where}.readAt`, isoTime),
     endedAsking: optional(f.endedAsking, `${where}.endedAsking`, bool),
     sentWhileWorking: optional(f.sentWhileWorking, `${where}.sentWhileWorking`, (v, w) => list(v, w, readSent, 20)),
