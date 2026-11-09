@@ -145,6 +145,9 @@ export const isLive = (s) => s.state !== "ended" && !data.gone.includes(s.id);
 /** Ended with a question open and not looked at since: its question must not vanish unseen. @param {Session} s */
 export const endedUnseen = (s) => s.state === "ended" && s.endedAsking === true && unread(s);
 
+/** Answered from the desk a moment ago, or its answer on its way: where it shows, it says so before it goes. @param {Question} q */
+export const answeredNow = (q) => ui.sending.has(`answer-${q.id}`) || (ui.resolved.get(q.id) ?? 0) > Date.now();
+
 /** @param {string} key */
 export function itemByKey(key) {
   const q = data.questions.find((x) => itemKey(x) === key);

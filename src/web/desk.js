@@ -10,7 +10,7 @@ import { badge, beacon, dot, emptyState, goLink, projectMark, suggestionChip, ta
 import { openResult } from "./result.js";
 import { post, run } from "./server.js";
 import { openSession } from "./session.js";
-import { data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, page, S, sessionName, ui, unread } from "./state.js";
+import { answeredNow, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, page, S, sessionName, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -128,8 +128,7 @@ function failureRow(r) {
 
 /** The item whose last question was just answered from the desk, while its card still says so. */
 function resolvedItem() {
-  const showing = (/** @type {Question} */ q) => ui.sending.has(`answer-${q.id}`) || (ui.resolved.get(q.id) ?? 0) > Date.now();
-  const q = data.questions.find((x) => itemKey(x) === ui.sel && x.status !== "open" && showing(x));
+  const q = data.questions.find((x) => itemKey(x) === ui.sel && x.status !== "open" && answeredNow(x));
   return q ? itemOf(q) : undefined;
 }
 

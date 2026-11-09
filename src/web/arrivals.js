@@ -7,7 +7,7 @@ import { askBody } from "./answer.js";
 import { headline } from "./format.js";
 import { COARSE, fitNewBoxes, inSight, ONE_COLUMN, showNeedsYou, topDialog } from "./layout.js";
 import { badge, where } from "./pieces.js";
-import { inProject, itemByKey, S, ui } from "./state.js";
+import { answeredNow, inProject, itemByKey, S, ui } from "./state.js";
 
 /** @typedef {import("./state.js").Item} Item */
 
@@ -21,7 +21,7 @@ let arrivalLeaving = null;
 let arrivalShown = null;
 
 /** Answered from the bubble a moment ago: it says so before it goes. @param {Item} item */
-const answeredHere = (item) => item.questions.some((q) => ui.sending.has(`answer-${q.id}`) || (ui.resolved.get(q.id) ?? 0) > Date.now());
+const answeredHere = (item) => item.questions.some(answeredNow);
 /** Expanded, under the pointer or holding the focus: the bubble stays as it is. */
 const arrivalHeld = () => ui.arrivalOpen || arrivalHovered || byId("arrival").matches(":focus-within");
 
