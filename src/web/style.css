@@ -966,11 +966,12 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 :root[data-keyboard] dialog.sess .pchips { display: none; }
 /* The keyboard covers the home indicator: the box sits right on the keyboard. */
 :root[data-keyboard] .chat-footer { padding-bottom: 8px; }
-/* Over a window or above a keyboard, the bottom is where the box being typed in is: toasts come from the top. */
-body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--viewport-top, 0px) + max(12px, env(safe-area-inset-top))); bottom: auto; --toast-from: -6px; }
+/* Over a window or above a keyboard, the bottom is where the box being typed in is: toasts come from the top
+   (app.js picks the edge as the first toast shows, and keeps it until the last one leaves). */
+#toasts[data-edge="top"] { top: calc(var(--viewport-top, 0px) + max(12px, env(safe-area-inset-top))); bottom: auto; --toast-from: -6px; }
 /* On a phone a window fills the screen: its toasts come in under its head (app.js measures it), never over its title and buttons. */
 @media (max-width: 700px), (max-height: 500px) {
-  :root body:has(dialog[open]) #toasts { top: max(calc(var(--viewport-top, 0px) + max(12px, env(safe-area-inset-top))), calc(var(--dialog-head, 0px) + 8px)); }
+  #toasts[data-edge="top"] { top: max(calc(var(--viewport-top, 0px) + max(12px, env(safe-area-inset-top))), calc(var(--dialog-head, 0px) + 8px)); }
 }
 
 /* A narrow phone: the brand keeps its mark only, so the header stays on one line. */

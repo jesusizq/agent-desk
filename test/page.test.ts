@@ -888,6 +888,23 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         done();
       }
     });
+
+    it("keeps a toast where it came in when the window it came over closes", async () => {
+      store.upsertSession({ id: "toast-edge", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a toast's edge", takesMessagesWhileWorking: true });
+      const page = await phone();
+      await openPanel(page, "a toast's edge");
+      await page.tap("#session .chat-footer textarea");
+      await page.type("stay where you are");
+      await page.tap("#session .chat-footer .send");
+      const toast = "[...document.querySelectorAll('.toast')].find((t) => t.textContent.includes('a toast\\'s edge'))";
+      await page.waitFor(`${toast} && !${toast}.getAnimations().length`);
+      const top = await page.eval<number>(`${toast}.getBoundingClientRect().top`);
+      assert.ok(top < 844 / 2, "over the window, it comes from the top");
+      await page.press("Escape");
+      await page.waitFor("!document.getElementById('session').open");
+      assert.equal(await page.eval<number>(`${toast}.getBoundingClientRect().top`), top, "the window gone, it stays there until it leaves");
+      store.takeInbox("toast-edge");
+    });
   });
 
   it("keeps the large card's shape when its session starts or stops listening", async () => {
