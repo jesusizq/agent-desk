@@ -10,7 +10,7 @@ import { badge, beacon, dot, emptyState, goLink, projectMark, suggestionChip, ta
 import { openResult } from "./result.js";
 import { post, run } from "./server.js";
 import { openSession } from "./session.js";
-import { answeredNow, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, page, S, sessionName, ui, unread } from "./state.js";
+import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, page, S, sessionName, toReview, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -175,14 +175,14 @@ function reviewTile(r) {
 
 /** Finished work to look at; failures wait in the inbox instead. */
 function reviewColumn() {
-  const list = data.results.filter((r) => inProject(r.sessionId) && isNew(r) && r.status !== "failed");
+  const list = toReview();
   const empty = emptyState("no-results", TEXT.emptyResults, { action: h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory) });
   return column("review", list.length || null, list.length ? h("div", { class: "rtiles", "data-list": true }, list.map(reviewTile)) : empty, { quiet: true });
 }
 
 /** @param {Session} s */
 const sessionWeight = (s) =>
-  data.questions.filter((q) => q.status === "open" && q.sessionId === s.id).length * 10 +
+  asksOf(s.id).length * 10 +
   (endedUnseen(s) ? 10 : 0) +
   sessionAgents(s.id).filter((a) => ["failed", "blocked", "idle"].includes(a.state) || agentQuiet(a) || failing(a)).length +
   (sessionQuiet(s) || failing(s) ? 1 : 0);
@@ -194,7 +194,7 @@ const sessionWeight = (s) =>
  */
 function sessionCard(s) {
   const as = sessionAgents(s.id);
-  const asks = data.questions.filter((q) => q.status === "open" && q.sessionId === s.id).sort((a, b) => a.askedAt.localeCompare(b.askedAt));
+  const asks = asksOf(s.id).sort((a, b) => a.askedAt.localeCompare(b.askedAt));
   const asking = asks[0];
   const m = metricsOf(s.id);
   const ctx = m?.contextPercent;
@@ -276,7 +276,7 @@ function sessionsColumn() {
  * time, chosen in the tab bar.
  */
 export function board() {
-  const reviewEmpty = !data.results.some((r) => inProject(r.sessionId) && isNew(r) && r.status !== "failed");
+  const reviewEmpty = !toReview().length;
   return h("main", { class: `board${reviewEmpty ? " review-empty" : ""}`, "data-tab": ui.tab }, inboxColumn(), splitter(), sessionsColumn(), reviewColumn());
 }
 

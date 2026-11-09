@@ -13,7 +13,7 @@ import { badge, bar, dialogHead, dot, goLink, LOCAL_URL, localLink, suggestionCh
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
 import { offlineText, post, run } from "./server.js";
-import { data, isLive, isNew, itemsOf, label, metricsOf, S, sessionName, ui, unread } from "./state.js";
+import { asksOf, data, isLive, isNew, itemsOf, label, metricsOf, S, sessionName, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Result} Result */
@@ -226,7 +226,7 @@ function panelShows(s) {
     s,
     metricsOf(s.id),
     data.agents.filter(mine),
-    data.questions.filter((q) => mine(q) && q.status === "open"),
+    asksOf(s.id),
     data.listening.includes(s.id),
     data.gone.includes(s.id),
     data.services.filter(mine),
@@ -253,7 +253,7 @@ export function chat(s) {
   const list = fetched && fetched.length ? fetched : s.lastMessage ? [{ id: "last", sessionId: s.id, from: /** @type {const} */ ("session"), text: s.lastMessage.text, at: s.lastMessage.at }] : [];
   const whileWorking = new Set((s.sentWhileWorking ?? []).map((w) => w.text));
   // Everything the session asks, one item at a time, oldest first.
-  const items = itemsOf(data.questions.filter((q) => q.status === "open" && q.sessionId === s.id));
+  const items = itemsOf(asksOf(s.id));
   const at = Math.max(0, items.findIndex((it) => it.key === ui.panelAsk));
   const asking = items[at];
   const lead = asking?.open[0];

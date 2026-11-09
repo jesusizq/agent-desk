@@ -4,7 +4,7 @@ import { h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
 import { copy, toast } from "./pieces.js";
 import { post, run } from "./server.js";
-import { data, isLive, label, ON_THIS_MACHINE, ui } from "./state.js";
+import { asksOf, isLive, label, ON_THIS_MACHINE, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 
@@ -48,7 +48,7 @@ export function controlSection(s, redraw) {
   const key = (action, text, ask = TEXT.control.confirm(text)) => confirmed(action, text, ask, () => post(`/api/sessions/${s.id}/keys`, { action }).then(() => toast(TEXT.control.sent(text, label(s)))));
   // The terminal shows a dialog (a permission prompt, a question with options) only while the
   // session has one open; the keys that answer it are offered only then.
-  const dialog = data.questions.some((q) => q.status === "open" && q.sessionId === s.id && (q.kind === "permission" || q.kind === "question"));
+  const dialog = asksOf(s.id).some((q) => q.kind === "permission" || q.kind === "question");
   return [
     s.tmux
       ? h(

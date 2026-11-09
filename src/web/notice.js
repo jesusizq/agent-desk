@@ -8,7 +8,7 @@ import { inSight, panelShowsConversation } from "./layout.js";
 import { toast } from "./pieces.js";
 import { openResult } from "./result.js";
 import { openSession } from "./session.js";
-import { data, itemKey, itemOf, label, page, S, ui, unread } from "./state.js";
+import { asksOf, data, itemKey, itemOf, label, page, S, ui, unread } from "./state.js";
 
 export function noticeArrivals() {
   const open = data.questions.filter((q) => q.status === "open");
@@ -96,7 +96,7 @@ function noticeMessages() {
     const at = s.lastMessage?.at;
     if (!at || heardAt.get(s.id) === at) continue;
     heardAt.set(s.id, at);
-    if (first || !unread(s) || data.questions.some((q) => q.status === "open" && q.sessionId === s.id)) continue;
+    if (first || !unread(s) || asksOf(s.id).length > 0) continue;
     if (ui.panelSession === s.id && dialog("session").open && !document.hidden) continue;
     toast(TEXT.newMessage(label(s)));
   }
