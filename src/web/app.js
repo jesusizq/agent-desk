@@ -470,7 +470,7 @@ function renderHeader() {
   patch(
     views,
     ...(/** @type {const} */ ([["desk", "board"], ["history", "clock"]])).map(([v, ic]) =>
-      h("button", { "aria-pressed": String(ui.view === v), "aria-label": TEXT.views[v], onclick: () => ((ui.view = v), render()) }, icon(ic), h("span", { class: "lbl" }, TEXT.views[v])),
+      h("button", { "aria-pressed": String(ui.view === v), "aria-label": TEXT.views[v], title: TEXT.views[v], onclick: () => ((ui.view = v), render()) }, icon(ic), h("span", { class: "lbl" }, TEXT.views[v])),
     ),
   );
   // A project is offered while one of its sessions runs or still has something for the developer.
@@ -483,7 +483,7 @@ function renderHeader() {
   patch(
     projects,
     ...[null, ...names].map((name) =>
-      h("button", { "data-key": name ?? "", "aria-pressed": String(ui.project === name), onclick: () => ((ui.project = name), render()) }, name ? projectMark(name) : TEXT.allProjects),
+      h("button", { "data-key": name ?? "", "aria-pressed": String(ui.project === name), title: name, onclick: () => ((ui.project = name), render()) }, name ? projectMark(name) : TEXT.allProjects),
     ),
   );
   const pill = byId("needs-pill");
@@ -517,6 +517,7 @@ function renderHeader() {
   document.title = n ? `(${n}) ${TEXT.appName}` : TEXT.appName;
   appBadge(n);
   renderTabbar(n);
+  markCut(projects);
 }
 
 let badgeShown = -1;
@@ -2349,6 +2350,24 @@ function renderView() {
   // The first data takes the placeholders' place by fading in, not in one frame.
   if (placeholder && ui.loaded) fadeIn(view.firstElementChild, byId("needs-pill"), byId("strip"));
 }
+
+// Scroll areas whose edge hides more of their list; style.css fades that edge.
+const CUT = "#projects";
+/** @param {Element} el */
+function markCut(el) {
+  if (!(el instanceof HTMLElement)) return;
+  const across = el.id === "projects";
+  const at = across ? el.scrollLeft : el.scrollTop;
+  const rest = across ? el.scrollWidth - el.clientWidth - at : el.scrollHeight - el.clientHeight - at;
+  const cut = [at > 1 ? "start" : "", rest > 1 ? "end" : ""].filter(Boolean).join(" ");
+  if (cut) el.dataset.cut = cut;
+  else delete el.dataset.cut;
+}
+function markCuts() {
+  for (const el of document.querySelectorAll(CUT)) markCut(el);
+}
+document.addEventListener("scroll", (e) => e.target instanceof Element && e.target.matches(CUT) && markCut(e.target), { capture: true, passive: true });
+addEventListener("resize", markCuts);
 
 /**
  * Answered with the keys, the question that takes the answered one's place is ready to type in, once
