@@ -95,7 +95,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .col { display: flex; flex-direction: column; min-height: 0; }
 .col-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px 8px; font: 650 0.875rem var(--sans); }
 .col-head .count { font-size: 0.7188rem; }
-.head-aside { margin-left: auto; font: 400 0.75rem var(--sans); }
+/* The column's name never wraps: the keys hint beside it gives way first, cut short. */
+.col-head { white-space: nowrap; }
+.head-aside { margin-left: auto; font: 400 0.75rem var(--sans); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .col-body { flex: 1; overflow: auto; scrollbar-gutter: stable; padding: 6px 8px 14px; display: flex; flex-direction: column; gap: 8px; }
 .col-foot { padding: 0 8px; font-size: 0.75rem; color: var(--faint); }
 .col-foot > * { padding-top: 6px; border-top: 1px solid var(--border); }
