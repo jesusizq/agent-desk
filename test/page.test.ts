@@ -1896,4 +1896,27 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       store.markResultSeen(old.id);
     }
   });
+  it("on a phone, a result's pictures read one under the other, each with its caption, and a tap opens it in the viewer", async () => {
+    const page = await open(390, 844);
+    await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    await openResultOf(page, "Three pay button variants");
+    const figures = await page.eval<{ top: number; bottom: number; width: number; caption: string }[]>(
+      "[...document.querySelectorAll('#result .vimgs figure')].map((f) => { const r = f.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, width: r.width, caption: f.querySelector('figcaption').textContent }; })",
+    );
+    const column = await page.eval<number>("document.querySelector('#result .vimgs').clientWidth");
+    assert.deepEqual(figures.map((f) => f.caption), ["A", "B", "C"]);
+    figures.forEach((f, i) => {
+      assert.ok(Math.abs(f.width - column) < 1, `picture ${f.caption} takes the width: ${f.width} of ${column}`);
+      if (i) assert.ok(f.top >= figures[i - 1]!.bottom, `picture ${f.caption} sits under the one before`);
+    });
+    await page.eval("document.querySelectorAll('#result .vimgs img')[1].click()");
+    await page.waitFor(arrived("zoom"));
+    assert.match(await page.eval<string>("document.querySelector('#zoom .zcount')?.textContent ?? ''"), /^2/, "the viewer opens on the picture tapped");
+    await page.press("Escape");
+    await page.waitFor("!document.getElementById('zoom').open");
+    await page.press("Escape");
+    await openResultOf(page, "Checkout: before and after");
+    assert.equal(await page.eval<boolean>("!!document.querySelector('#result .compare')"), true, "a before and after keeps its slider");
+    await page.press("Escape");
+  });
 });

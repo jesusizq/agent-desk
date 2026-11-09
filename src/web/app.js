@@ -2056,7 +2056,7 @@ function openResult(r, { markSeen = true } = {}) {
       tools,
       mode === "slider" && before && after
         ? compareView(before, after, gallery)
-        : h("div", { class: "vimgs" }, imgs.map(({ src, cap }, i) => h("figure", {}, h("img", { src, alt: cap, onclick: () => zoom(gallery, i) }), cap ? h("figcaption", {}, cap) : null))),
+        : h("div", { class: `vimgs${before && after ? " pair" : ""}` }, imgs.map(({ src, cap }, i) => h("figure", {}, h("img", { src, alt: cap, onclick: () => zoom(gallery, i) }), cap ? h("figcaption", {}, cap) : null))),
     );
   };
   const gallery = imgs.map(({ src, cap }) => ({ src, caption: cap ? `${r.title} · ${cap}` : r.title }));

@@ -849,6 +849,10 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .vtools { flex-wrap: wrap; }
   .vimgs { gap: 8px; }
   .vimgs img, .compare img { max-height: min(520px, 75dvh); }
+  /* Several pictures read one under the other, each as wide as the screen with its caption; a before and after shown side by side stays a pair. */
+  .vimgs:not(.pair) { flex-direction: column; align-items: stretch; gap: 16px; }
+  .vimgs:not(.pair) figure { flex: none; }
+  .vimgs:not(.pair) img { max-height: 75dvh; }
   .zbar { bottom: calc(10px + env(safe-area-inset-bottom)); left: max(8px, env(safe-area-inset-left)); right: max(8px, env(safe-area-inset-right));
     transform: none; max-width: none; justify-content: center; }
   .zbar > * { white-space: nowrap; flex: none; }
@@ -927,10 +931,6 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   dialog.sess .dhead > :is(a, button):not(.icon-btn) { order: 0; width: 44px; height: 30px; padding: 0; justify-content: center; flex: none; }
   dialog.sess .dhead .lbl { display: none; }
   .hitem { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-  /* Three pictures or more swipe sideways, one at a time with the next peeking; a pair stays side by side. */
-  .vimgs:has(> figure:nth-child(3)) { justify-content: flex-start; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
-    scrollbar-width: none; margin-inline: -8px; padding-inline: 8px; scroll-padding-inline: 8px; }
-  .vimgs:has(> figure:nth-child(3)) figure { flex: 0 0 auto; max-width: 84%; scroll-snap-align: start; }
 }
 
 @media (prefers-reduced-motion: reduce) {
