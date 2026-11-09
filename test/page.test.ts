@@ -781,6 +781,27 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    it("shows an answer sent from the desk on its card, then brings the next question up in its place", async () => {
+      store.upsertSession({ id: "resolving", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "resolving a question", state: "waiting" });
+      const stop = store.listen("resolving");
+      store.ask({ sessionId: "resolving", kind: "question", text: "Answered from the desk?", options: ["Yes", "No"] });
+      try {
+        const page = await open();
+        await page.click(".qrow", "Answered from the desk?");
+        await page.waitFor("document.querySelector('.next textarea') && document.getAnimations().length === 0");
+        await page.eval("window.left = 0; new MutationObserver((ms) => { for (const m of ms) if (m.attributeName === 'data-leaving') left++; }).observe(document.getElementById('view'), { attributes: true, subtree: true })");
+        await page.click(".next .opts button", "Yes");
+        await page.click(".next .send-col .primary");
+        await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Answered')");
+        assert.match(await page.eval<string>("document.querySelector('.next.resolved .resolved-line').textContent"), /Answered\s*Yes/);
+        await page.waitFor("!document.querySelector('.next.resolved') && !document.querySelector('[data-leaving]')", 5000);
+        assert.ok((await page.eval<number>("left")) >= 1, "the answered card folded away");
+        assert.doesNotMatch(await page.eval<string>("document.querySelector('.next').textContent"), /Answered from the desk/);
+      } finally {
+        stop();
+      }
+    });
+
     it("slides a toast up when another arrives below it", async () => {
       const page = await open();
       const first = store.ask({ sessionId: "demo-pagos", kind: "question", text: "First of two toasts?" });

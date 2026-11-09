@@ -319,10 +319,12 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .optline { font-size: 0.8125rem; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
 .optline .opt { font-size: 0.7812rem; padding: 2px 8px; color: var(--text); }
 .optline .opt b { color: var(--accent); }
-.next.resolved { border-color: var(--done); box-shadow: 0 0 0 4px color-mix(in srgb, var(--done) 18%, transparent);
-  background: color-mix(in srgb, var(--done) 8%, var(--surface)); animation: fade 1.6s ease-in forwards; }
-.next.resolved .qtext { color: var(--done); }
-@keyframes fade { 60% { opacity: 1; } to { opacity: .25; } }
+/* Answered from the desk: the card says so for a moment, then the next question takes its place. */
+.next.resolved { --pc: var(--done); border-color: color-mix(in srgb, var(--done) 45%, var(--border)); background: color-mix(in srgb, var(--done) 7%, var(--surface));
+  transition: background-color var(--dur-2), border-color var(--dur-2); }
+.resolved-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 0.875rem; color: color-mix(in srgb, var(--done) 75%, var(--text)); }
+.resolved-line .dot { transform: translateY(2px); }
+.resolved-answer { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qrow { position: relative; cursor: pointer; }
 .row-go { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); opacity: 0; border: 0; border-radius: 6px;
   padding: 3px 9px; background: var(--accent); color: var(--accent-text); font: 600 0.75rem var(--sans); display: inline-flex; align-items: center; gap: 4px; }

@@ -58,6 +58,7 @@ const ui = {
   /** when the developer last scrolled or touched the session panel */ panelTouchedAt: 0,
   /** @type {number | undefined} a redraw of the panel put off while it is scrolled */ panelLater: undefined,
   /** @type {Set<string>} */ sending: new Set(),
+  /** @type {Map<string, number>} questions answered from the desk, shown answered on their card until then */ resolved: new Map(),
   /** @type {{ key: string, until: number } | null} the session control waiting for its confirming click */ armed: null,
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
@@ -651,6 +652,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
       ui.draftImages.delete(key);
       saveDrafts();
       if (ui.panelSession === sid) ui.panelHeard = null; // the panel fetches the conversation again, with this message
+      if (key.startsWith("answer-")) resolve(key.slice("answer-".length));
       toast(TEXT.sent(label(S(sid))));
     }), () => ui.sending.delete(key));
   };
@@ -767,6 +769,17 @@ function fitNewBoxes(root) {
   for (const box of root.querySelectorAll("textarea[data-key]")) if (box instanceof HTMLTextAreaElement && !box.style.height) fitBox(box);
 }
 
+// An answer sent from the desk shows on its card for a moment before the next question takes its place.
+const RESOLVED_MS = 650;
+/** @param {string} questionId */
+function resolve(questionId) {
+  ui.resolved.set(questionId, Date.now() + RESOLVED_MS);
+  setTimeout(() => {
+    ui.resolved.delete(questionId);
+    render();
+  }, RESOLVED_MS);
+}
+
 /**
  * A question's headline is the line that asks (or its first line); when the question is a whole
  * block (a list of pending points), the block follows in full, with its formatting.
@@ -880,6 +893,15 @@ function nextCard(q) {
   const meta = h("div", { class: "meta" }, h("span", { class: `qkind k-${q.kind}` }, TEXT.kinds[q.kind]), where(s), h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt)));
   // A question shares its row's `data-flip`: picked or next in line, the row grows into this card.
   const card = { "aria-label": TEXT.next, "data-key": `next-${q.id}`, "data-flip": `q-${q.id}` };
+  if (q.status !== "open") {
+    return h(
+      "article",
+      { ...card, class: "next resolved" },
+      meta,
+      q.kind === "permission" ? h("pre", { class: "qcode" }, q.text) : h("div", { class: "qtext" }, md(headline(q.text))),
+      h("div", { class: "resolved-line", role: "status" }, dot("done"), h("b", {}, TEXT.answered), q.answer ? h("span", { class: "resolved-answer" }, q.answer.text) : null),
+    );
+  }
   // The question and its answers come first; what the session said around it, folded, after the options.
   const long = (q.context ?? "").length > 320 || (q.context ?? "").split("\n").length > 5;
   const unfolded = ui.contextOpen.has(q.id);
@@ -982,10 +1004,17 @@ function failureRow(r) {
   });
 }
 
+/** The question just answered from the desk, while its card still says so. */
+function resolvedQuestion() {
+  const showing = (/** @type {Question} */ q) => ui.sending.has(`answer-${q.id}`) || (ui.resolved.get(q.id) ?? 0) > Date.now();
+  return data.questions.find((q) => q.id === ui.sel && q.status !== "open" && showing(q));
+}
+
 /** The inbox: the selected question large, with what it takes to answer it, then the rest in order. */
 function inboxColumn() {
   const { questions, failures, count } = inbox();
-  const selected = questions.find((q) => q.id === ui.sel) ?? questions[0];
+  const resolved = resolvedQuestion();
+  const selected = resolved ?? questions.find((q) => q.id === ui.sel) ?? questions[0];
   ui.sel = selected?.id ?? null;
   const rows = [...questions.filter((q) => q !== selected).map(questionRow), ...failures.map(failureRow)];
   const reviewEmpty = !data.results.some((r) => inProject(r.sessionId) && isNew(r));
@@ -995,7 +1024,7 @@ function inboxColumn() {
     dot("done"),
     h("span", {}, TEXT.allClear(reviewEmpty), reviewEmpty ? [" ", h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory)] : null),
   );
-  return column("needs", count || null, count ? [selected ? nextCard(selected) : null, rows] : clear, {
+  return column("needs", count || null, count || resolved ? [selected ? nextCard(selected) : null, rows] : clear, {
     aside: questions.length > 1 ? h("span", { class: "keys-only faint" }, TEXT.keysHint) : null,
     list: true,
   });

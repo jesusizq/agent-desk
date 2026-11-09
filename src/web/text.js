@@ -123,6 +123,7 @@ export const TEXT = {
   dismissTitle: "Remove from the list without answering (it goes to the history)",
   /** @param {string} where */
   sent: (where) => `Answer sent to ${where}.`,
+  answered: "Answered",
   /** @param {string} where */
   newQuestion: (where) => `New question in ${where}`,
   /** @param {string} where */
