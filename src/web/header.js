@@ -1,6 +1,7 @@
 // @ts-check
 // The header, the display menu, the phone's tab bar and the strip under the header.
 import { byId, h, icon, patch } from "./dom.js";
+import { reducedMotion } from "./motion.js";
 import { TEXT } from "./text.js";
 import { ago, gb, hm } from "./format.js";
 import { markCut } from "./layout.js";
@@ -109,7 +110,7 @@ function renderTabbar(needs) {
           "aria-pressed": String(current === key),
           // As a phone's own tab bar: each tab keeps its place; the tab already shown goes back to its top.
           onclick: () => {
-            if (key === current) return window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+            if (key === current) return window.scrollTo({ top: 0, behavior: reducedMotion() ? "auto" : "smooth" });
             ui.tabScroll.set(current, window.scrollY);
             if (key === "history") ui.view = "history";
             else ((ui.view = "desk"), (ui.tab = key));

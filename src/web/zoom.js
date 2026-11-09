@@ -1,6 +1,7 @@
 // @ts-check
 // The full-screen viewer for a result's pictures.
 import { dialog, h, icon } from "./dom.js";
+import { reducedMotion } from "./motion.js";
 import { TEXT } from "./text.js";
 
 /** @typedef {{ src: string, caption: string }} Picture */
@@ -32,7 +33,6 @@ export function zoom(gallery, start) {
   const caption = h("span", { class: "faint zcaption" });
   const counter = h("span", { class: "num faint zcount" });
   const settleMs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--dur-3")) * 1000 || 280;
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
 
   /** The scale that fits a picture in the stage, never above its own size: a screenshot opens sharp. @param {HTMLImageElement} img */
   const fitOf = (img) => (img.naturalWidth ? Math.min((stage.clientWidth * 0.9) / img.naturalWidth, (stage.clientHeight * 0.82) / img.naturalHeight, 1) : 1);
@@ -77,7 +77,7 @@ export function zoom(gallery, start) {
   /** Draws a change as a short movement, then runs what follows it. @param {() => void} draw @param {() => void} [then] */
   const animated = (draw, then) => {
     finish();
-    if (reduce.matches) {
+    if (reducedMotion()) {
       draw();
       return then?.();
     }
