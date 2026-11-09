@@ -454,13 +454,6 @@ const COARSE = matchMedia("(pointer: coarse)");
 function revealNext(block = "nearest") {
   if (ONE_COLUMN.matches) document.querySelector(".next")?.scrollIntoView({ block });
 }
-/** The large card is on screen (not in a hidden tab) and already at its top, from an earlier tap on the pill. */
-function nextCardAtTop() {
-  const card = document.querySelector(".next");
-  if (!card || !card.getClientRects().length) return false;
-  const top = card.getBoundingClientRect().top;
-  return top > -40 && top < 60;
-}
 
 // ---------- Header and strip ----------
 function renderHeader() {
@@ -493,20 +486,12 @@ function renderHeader() {
   pill.toggleAttribute("aria-busy", !ui.loaded);
   if (!ui.loaded) patch(pill, h("span", { class: "skel" }));
   else patch(pill, n ? h("span", { class: "beacon on-accent", "aria-hidden": "true" }) : null, TEXT.needsPill(n));
+  // Shown beside the columns only: in one column the Inbox tab counts.
   pill.onclick = () => {
-    const list = openQuestions();
-    // In one column the first tap brings the oldest question into view; each further tap moves on to the next one.
-    if (ONE_COLUMN.matches && ui.view === "desk" && ui.tab === "inbox" && list.length > 1 && nextCardAtTop()) {
-      const i = list.findIndex((q) => q.id === ui.sel);
-      ui.sel = list[(i + 1) % list.length]?.id ?? null;
-      renderView();
-      return revealNext("start");
-    }
     ui.view = "desk";
     ui.tab = "inbox";
-    ui.sel = list[0]?.id ?? null;
+    ui.sel = openQuestions()[0]?.id ?? null;
     render();
-    revealNext(ONE_COLUMN.matches ? "start" : "nearest");
   };
   const q = /** @type {HTMLInputElement} */ (byId("q"));
   q.placeholder = TEXT.search;
@@ -517,8 +502,27 @@ function renderHeader() {
   document.title = n ? `(${n}) ${TEXT.appName}` : TEXT.appName;
   appBadge(n);
   renderTabbar(n);
+  fitProjects();
   markCut(projects);
 }
+
+// Same query as style.css: a portrait phone, whose header takes two rows.
+const PORTRAIT = matchMedia("(max-width: 700px) and (min-height: 501px)");
+let projectsTried = "";
+/** On a portrait phone, the projects go up beside the mark and the menus when they fit there whole; else they keep a row of their own. */
+function fitProjects() {
+  const header = /** @type {HTMLElement} */ (document.querySelector("header.top"));
+  const projects = byId("projects");
+  const tried = [PORTRAIT.matches, projects.hidden, innerWidth, document.documentElement.style.fontSize, projects.textContent, ui.project].join("|");
+  if (tried === projectsTried) return;
+  projectsTried = tried;
+  header.classList.remove("projects-up");
+  if (!PORTRAIT.matches || projects.hidden) return;
+  header.classList.add("projects-up");
+  const firstRowEnd = header.querySelector(".brand")?.getBoundingClientRect().bottom ?? 0;
+  if (![projects, byId("theme")].every((el) => el.getBoundingClientRect().top < firstRowEnd)) header.classList.remove("projects-up");
+}
+addEventListener("resize", fitProjects);
 
 let badgeShown = -1;
 /** The count on the icon of the desk installed as an app, like the title's. @param {number} n */
@@ -2742,7 +2746,7 @@ headerMenu("alerts", "alerts-menu", renderAlerts);
 renderAlerts();
 
 const THEMES = /** @type {const} */ (["auto", "light", "dark"]);
-/** The display menu: theme and text size, each kept in this browser. */
+/** The display menu: theme and text size, each kept in this browser; on a phone, the credit too. */
 function renderDisplay() {
   const root = document.documentElement;
   const shown = root.dataset.theme;
@@ -2769,11 +2773,14 @@ function renderDisplay() {
     menu.replaceChildren(
       h("div", { class: "menu-row" }, h("span", {}, TEXT.display.theme), h("div", { class: "seg" }, THEMES.map((t) => choice("agent-desk:theme", t, h("span", { class: "row-i" }, icon(t === "auto" ? "auto" : t === "light" ? "sun" : "moon"), TEXT.theme[t]))))),
       h("div", { class: "menu-row" }, h("span", {}, TEXT.display.text), h("div", { class: "seg sizes" }, sizes.map((k, i) => choice("agent-desk:text", k, h("span", { class: `a${i}` }, "A"), TEXT.display.sizes(k))))),
+      // The fixed link written in index.html, copied: on a phone its footer gives its place to the tab bar.
+      h("div", { class: "menu-credit" }, document.querySelector(".credits a")?.cloneNode(true) ?? null),
     );
   }
   /** @type {Record<string, string>} */
   const chosen = { "agent-desk:theme": theme, "agent-desk:text": size };
   for (const b of menu.querySelectorAll("button[data-pref]")) if (b instanceof HTMLElement) b.setAttribute("aria-pressed", String(chosen[b.dataset.pref ?? ""] === b.dataset.value));
+  fitProjects(); // a text size changes the projects' width
 }
 headerMenu("theme", "display-menu", renderDisplay);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderDisplay);

@@ -1416,4 +1416,39 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.notEqual(await page.eval<string>("getComputedStyle(document.querySelector('.col-sessions .col-body')).maskImage"), "none");
     });
   });
+
+  it("on a phone, sets the tab bar on the bottom edge, over the home indicator, and the credit in the display menu", async () => {
+    const page = await open(390, 844);
+    await page.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 47, bottom: 34, left: 0, right: 0 } });
+    const bar = "document.querySelector('.tabbar')";
+    await page.waitFor(`getComputedStyle(${bar}).paddingBottom === "34px"`);
+    assert.equal(await page.eval<number>(`Math.round(${bar}.getBoundingClientRect().bottom)`), 844, "the tab bar reaches the bottom edge");
+    assert.equal(await page.eval<number>("document.querySelector('.credits').getClientRects().length"), 0, "no credits band under it");
+    assert.equal(await page.eval<number>("document.getElementById('needs-pill').getClientRects().length"), 0, "the Inbox tab counts the questions, not a header pill");
+    await page.click("#theme");
+    const link = "document.querySelector('#display-menu .menu-credit a')";
+    await page.waitFor(`${link}?.getClientRects().length && document.getAnimations().length === 0`); // measured once the menu has opened
+    assert.equal(await page.eval<string>(`${link}.href`), "https://github.com/jesusizq");
+    assert.match(await page.eval<string>(`${link}.textContent`), /© 2026 Jesús Izquierdo/);
+    assert.ok((await page.eval<number>(`${link}.getBoundingClientRect().height`)) >= 44, "a finger's target");
+    await page.press("Escape");
+  });
+
+  it("keeps the credit in the footer beside the columns, not in the display menu", async () => {
+    const page = await open();
+    assert.equal(await page.eval<number>("document.querySelector('.credits a').getClientRects().length"), 1);
+    await page.click("#theme");
+    await page.waitFor("!document.getElementById('display-menu').hidden");
+    assert.equal(await page.eval<number>("document.querySelector('#display-menu .menu-credit').getClientRects().length"), 0);
+    await page.press("Escape");
+  });
+
+  it("on a portrait phone, puts the projects on the first header row when they fit there whole", async () => {
+    const page = await open(520, 900);
+    const up = "(() => { const r = (s) => document.querySelector(s).getBoundingClientRect(); const p = document.getElementById('projects'); return r('#projects').top < r('#theme').bottom && p.scrollWidth <= p.clientWidth; })()";
+    await page.waitFor(up);
+    await page.resize(390, 844);
+    await page.waitFor(`!${up}`);
+    assert.ok(await page.eval<boolean>("document.getElementById('projects').getBoundingClientRect().top >= document.getElementById('theme').getBoundingClientRect().bottom"), "too wide: a row of their own");
+  });
 });

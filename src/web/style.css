@@ -495,7 +495,6 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   .board { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; grid-template-areas: "needs" "sessions" "review"; flex: none; }
   .board.review-empty .col-review { display: none; }
   .split { display: none; }
-  .credits { position: sticky; bottom: 0; z-index: 4; }
   .col-body { overflow: visible; }
   .search { width: 150px; }
 }
@@ -721,7 +720,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 
 @media (max-width: 700px), (max-height: 500px) {
   header.top { padding: max(6px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left)); gap: 8px; }
-  .brand, .needs-pill { white-space: nowrap; }
+  .brand { white-space: nowrap; }
+  header.top .needs-pill { display: none; } /* the Inbox tab counts the questions */
   .brand { margin-right: 0; }
   .logo { flex: none; }
   #theme .lbl { display: none; }
@@ -818,20 +818,19 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .tabbar { display: none; }
 @media (max-width: 700px), (max-height: 500px) {
   #views { display: none; }
-  /* The tab bar sits on the credits bar, which takes the home indicator's room. */
-  body { --foot: 26px; --bar: 58px; padding-bottom: calc(var(--bar) + var(--foot) + env(safe-area-inset-bottom)); }
-  .tabbar, .credits { transition: transform var(--dur-2) var(--ease-out), visibility var(--dur-2); }
-  .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: calc(var(--foot) + env(safe-area-inset-bottom)); z-index: 5; background: var(--surface); border-top: 1px solid var(--border);
-    padding: 2px max(6px, env(safe-area-inset-right)) 0 max(6px, env(safe-area-inset-left)); }
-  .credits { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; box-sizing: border-box; height: calc(var(--foot) + env(safe-area-inset-bottom));
-    padding: 0 max(12px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(12px, env(safe-area-inset-left)); font-size: 0.6875rem; border-top: 0; }
-  .credits .i { width: 13px; height: 13px; }
-  /* While the keyboard is up (app.js), the tab bar and the credits slide away under it. The page keeps its
+  /* As a native tab bar, it sits on the bottom edge and takes the home indicator's room; the credit moves to the display menu. */
+  body { --bar: 54px; padding-bottom: calc(var(--bar) + env(safe-area-inset-bottom)); }
+  .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--border);
+    padding: 2px max(6px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(6px, env(safe-area-inset-left));
+    transition: transform var(--dur-2) var(--ease-out), visibility var(--dur-2); }
+  .credits { display: none; }
+  .menu .menu-credit { display: block; } /* outranks .menu-credit, written further down */
+  /* While the keyboard is up (app.js), the tab bar slides away under it. The page keeps its
      height, so what is under the finger stays; it only grows to scroll its foot above a keyboard that covers it. */
-  :root[data-keyboard] body { padding-bottom: max(calc(var(--bar) + var(--foot) + env(safe-area-inset-bottom)), calc(var(--keyboard, 0px) + 16px)); }
-  :root[data-keyboard] :is(.tabbar, .credits) { transform: translateY(calc(100% + var(--foot) + env(safe-area-inset-bottom))); visibility: hidden; }
+  :root[data-keyboard] body { padding-bottom: max(calc(var(--bar) + env(safe-area-inset-bottom)), calc(var(--keyboard, 0px) + 16px)); }
+  :root[data-keyboard] .tabbar { transform: translateY(100%); visibility: hidden; }
   .tabbar button { flex: 1 1 0; position: relative; border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 2px; min-height: 54px; font: 500 0.6875rem var(--sans); color: var(--muted); }
+    gap: 2px; min-height: 50px; font: 500 0.6875rem var(--sans); color: var(--muted); }
   .tabbar button[aria-pressed="true"] { color: var(--accent); font-weight: 650; }
   .tabbar .i { width: 22px; height: 22px; }
   .tcount { position: absolute; top: 3px; left: calc(50% + 5px); min-width: 17px; height: 17px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center;
@@ -842,7 +841,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   .board[data-tab="inbox"] > .col-needs, .board[data-tab="sessions"] > .col-sessions, .board[data-tab="review"] > .col-review { display: flex; }
   .board.review-empty[data-tab="review"] > .col-review { display: flex; }
   .col-head { font-size: 1rem; padding: 4px 2px 8px; }
-  #toasts { bottom: calc(var(--bar) + 12px + var(--foot) + env(safe-area-inset-bottom)); left: 12px; right: 12px; width: auto; transform: none; align-items: stretch; }
+  #toasts { bottom: calc(var(--bar) + 12px + env(safe-area-inset-bottom)); left: 12px; right: 12px; width: auto; transform: none; align-items: stretch; }
   .toast { max-width: none; padding: 12px 14px; font-size: 0.875rem; border-radius: 10px; }
   /* The strip (warnings, what is new to review) belongs with Inbox and Results; elsewhere it gives its room back, unless it reports an error. */
   body:not([data-view="desk"][data-tab="inbox"]):not([data-view="desk"][data-tab="review"]) .strip:not(:has(.err)) { display: none; }
@@ -851,12 +850,11 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   .next > .meta > .where { order: 1; flex-basis: 100%; }
 }
 
-/* Portrait: brand, needs and theme; then views and search; then the projects, scrolling sideways in their own row. */
+/* Portrait: brand and menus; then search, or the projects scrolling sideways in their own row, unless they fit whole on the first one. */
 @media (max-width: 700px) and (min-height: 501px) {
   header.top { flex-wrap: wrap; row-gap: 4px; } /* each zero-height break line adds one more gap: 8px between rows */
   header.top::before, header.top::after { content: ""; flex-basis: 100%; }
   header.top .brand { order: 0; flex: 1 1 auto; min-width: 0; }
-  header.top .needs-pill { order: 1; }
   header.top .pop { order: 2; }
   header.top::before { order: 3; }
   header.top #views { order: 4; }
@@ -865,6 +863,10 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   header.top::after { display: none; }
   header.top #projects { order: 7; flex: 1 1 0; max-width: fit-content; }
   header.top .spacer { display: none; }
+  /* The projects tried on the first row, beside the mark and the menus (app.js keeps this only when nothing wraps). */
+  header.top.projects-up .brand { flex: none; font-size: 0; gap: 0; }
+  header.top.projects-up #projects { order: 1; flex: none; margin-right: auto; }
+  header.top.projects-up::before { display: none; }
   /* A dialog's where-and-when stays on one line: the where is cut, the time is not. */
   .dhead .meta { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
   .dhead .meta .where { flex-wrap: nowrap; white-space: nowrap; min-width: 0; overflow: hidden; }
@@ -886,7 +888,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tabbar, .credits { transition: none; }
+  .tabbar { transition: none; }
 }
 
 /* Landscape: one header line (logo, view icons, projects scrolling, needs, search, theme) and a one-line dialog head. */
@@ -1014,6 +1016,11 @@ body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--v
 .menu-row { display: grid; gap: 6px; padding: 7px 8px; font-size: 0.8125rem; color: var(--muted); }
 .menu-row .seg { display: flex; } .menu-row .seg button { flex: 1; justify-content: center; }
 .menu-row .row-i { display: inline-flex; align-items: center; gap: 5px; }
+/* The credit, on a phone where the tab bar takes the footer's place. */
+.menu-credit { display: none; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
+.menu-credit a { display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 8px; border-radius: 7px; font-size: 0.8125rem; color: var(--muted); text-decoration: none; }
+.menu-credit a:hover { background: var(--surface-2); color: var(--text); }
+.menu-credit .i { width: 15px; height: 15px; }
 .sizes .a0 { font-size: 0.75rem; } .sizes .a1 { font-size: 0.875rem; } .sizes .a2 { font-size: 1rem; } .sizes .a3 { font-size: 1.125rem; }
 .ppart .back { align-self: flex-start; margin-bottom: 4px; }
 .done-count { font-size: 0.7188rem; margin-left: 4px; white-space: nowrap; }
