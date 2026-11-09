@@ -530,6 +530,10 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer .opts button { border: 1px solid var(--border); background: var(--surface); border-radius: 7px; padding: 6px 10px; font: inherit; cursor: pointer; color: var(--text); }
 .answer .opts button kbd { margin-right: 6px; font-size: 0.6875rem; padding: 0 4px; }
 .answer .opts button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.answer.decides textarea { grid-column: 1 / -1; }
+.answer .decide { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.answer .decide button { min-height: 42px; padding: 8px 18px; justify-content: center; font-size: 0.875rem; font-weight: 600; }
+.answer .decide .deny { border-color: color-mix(in srgb, var(--danger) 55%, var(--border-strong)); color: var(--danger); }
 .answer .opts-note { grid-column: 1 / -1; font-size: 0.75rem; margin-bottom: -3px; }
 .answer .opts .tick { display: inline-grid; place-items: center; width: 14px; height: 14px; margin-right: 8px; vertical-align: -1px; border: 1.5px solid var(--border-strong); border-radius: 4px;
   transition: background-color var(--dur-2), border-color var(--dur-2); }

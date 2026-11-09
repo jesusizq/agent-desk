@@ -122,7 +122,19 @@ export const TEXT = {
   attaching: "Attaching…",
   /** @param {number} n */
   tooManyImages: (n) => `At most ${n} images per message; the rest were left out.`,
-  permissionPlaceholder: "Or say why not…",
+  permission: {
+    allow: "Allow",
+    deny: "Deny",
+    reason: "Reason for denying (optional)",
+    hint: "Allow lets it run now. Deny stops it, with the reason written here if there is one.",
+    keys: "Ctrl+Enter denies with this reason.",
+    /** @param {string} where */
+    allowed: (where) => `Allowed in ${where}.`,
+    /** @param {string} where */
+    denied: (where) => `Denied in ${where}.`,
+    allowedLine: "Allowed",
+    deniedLine: "Denied",
+  },
   dismiss: "Dismiss",
   dismissTitle: "Remove from the list without answering (it goes to the history)",
   /** @param {string} where */

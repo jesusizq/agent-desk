@@ -73,8 +73,11 @@ reply to it while the session takes messages (see below).
 The page shows an answer box for a session only while it takes messages, and the server refuses
 one otherwise, so a message never waits in an inbox for a later, unrelated turn. A session takes
 them while a live listener exists for it (it waits), or while it works if its record says
-`takesMessagesWhileWorking` and its process is alive. A permission prompt gets a box while the
-adapter's permission hook waits for it; its entry in the inbox is taken only by that hook.
+`takesMessagesWhileWorking` and its process is alive. A permission prompt gets Allow and Deny while
+the adapter's permission hook waits for it; its entry in the inbox is taken only by that hook. Its
+two options are the answer that allows it and the one that denies it, in that order: the page sends
+one of them, or, for a denial with a reason, the reason itself, which the hook takes as a denial (a
+reason that reads as the allowing answer is sent as the plain denial).
 
 If the developer types in the terminal while the session waits, before the waiter has taken an
 answer, the adapter withdraws it from the inbox and records the typed text as the answer; typed while

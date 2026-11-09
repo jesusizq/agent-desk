@@ -628,14 +628,30 @@ function answerForm(q, middle = null) {
   const listening = data.listening.includes(q.sessionId);
   // A permission prompt or a choice dialog is settled by its hook, which takes text only.
   const textOnly = q.kind === "permission" || q.dialog === true;
-  return replyBox(`answer-${q.id}`, q.options, `/api/questions/${q.id}/answer`, q.sessionId, {
-    placeholder: !listening ? TEXT.notListeningShort : q.kind === "permission" && q.options.length ? TEXT.permissionPlaceholder : undefined,
+  const decide = decisionOf(q);
+  return replyBox(`answer-${q.id}`, decide ? [] : q.options, `/api/questions/${q.id}/answer`, q.sessionId, {
+    placeholder: !listening ? TEXT.notListeningShort : decide ? TEXT.permission.reason : undefined,
+    hint: decide ? TEXT.permission.hint : undefined,
+    decide,
     images: !textOnly,
     middle,
     several: q.several === true,
     off: listening ? null : TEXT.notListening,
   });
 }
+
+/**
+ * A permission prompt's two options are what allows it and what denies it, in that order. Any other
+ * text denies it with that text as the reason, so a reason is never sent as the allowing answer.
+ * @param {Question} q @returns {Decide | null}
+ */
+function decisionOf(q) {
+  const [allow, deny] = q.options;
+  return q.kind === "permission" && q.options.length === 2 && allow !== undefined && deny !== undefined ? { allow, deny } : null;
+}
+/** @typedef {{ allow: string, deny: string }} Decide */
+/** The denial sent for a reason written in the box: the reason itself, unless it reads as the allowing answer. @param {Decide} decide @param {string} reason */
+const denial = (decide, reason) => (!reason.trim() || reason.trim() === decide.allow ? decide.deny : reason);
 
 /** Keeps an image in the store for the reply being written; returns its id. @param {Blob} file */
 async function uploadImage(file) {
@@ -651,10 +667,11 @@ async function uploadImage(file) {
  * images pasted into it or picked when `images` is set. Drafts survive re-renders. With `off` (why
  * the session cannot take it now) the same box is drawn inert, so it never jumps between states.
  * With `several`, each option toggles: the box holds the ones picked, in their order, separated by ", ".
+ * With `decide` (a permission prompt), Allow and Deny send at once, and the box holds Deny's reason.
  * @param {string} key @param {string[]} options @param {string} route @param {string} sid
- * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, several?: boolean, off?: string | null }} [how] `middle` is shown between the options and the box
+ * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, several?: boolean, decide?: Decide | null, off?: string | null }} [how] `middle` is shown between the options and the box
  */
-function replyBox(key, options, route, sid, { placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, off = null } = {}) {
+function replyBox(key, options, route, sid, { placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, decide = null, off = null } = {}) {
   /** Every box of this draft on the page: the panel and the inbox's card can both show a question. */
   const boxes = () => /** @type {HTMLTextAreaElement[]} */ ([...document.querySelectorAll(`textarea[data-key="${CSS.escape(key)}"]`)]);
   const attached = images ? (ui.draftImages.get(key) ?? []) : [];
@@ -675,14 +692,15 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
   const showSending = (sending) => {
     for (const el of boxes()) {
       el.readOnly = sending || off !== null;
-      const button = el.closest(".answer")?.querySelector(".send");
+      const answer = el.closest(".answer");
+      const button = answer?.querySelector(".send");
       if (sending) button?.setAttribute("aria-busy", "true");
       else button?.removeAttribute("aria-busy");
+      for (const b of answer?.querySelectorAll(".decide button") ?? []) if (b instanceof HTMLButtonElement) b.disabled = sending || off !== null;
     }
   };
-  /** @param {Event} e */
-  const send = (e) => {
-    const text = box.value;
+  /** @param {Event} e @param {string} [text] what to send: the box's text unless a decision says otherwise */
+  const send = (e, text = decide ? denial(decide, box.value) : box.value) => {
     // Read now, not as last drawn: a second click before the redraw must not send twice.
     if (off || (!text.trim() && attached.length === 0) || ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0) return;
     ui.sending.add(key);
@@ -704,7 +722,8 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
           ui.panelTouchedAt = 0; // and shows it now: the developer's own action is not a scroll to wait out
         }
         if (answer) resolve(key.slice("answer-".length));
-        toast(answer ? TEXT.sent(label(S(sid))) : TEXT.messageSent(label(S(sid))));
+        const where = label(S(sid));
+        toast(decide ? (text === decide.allow ? TEXT.permission.allowed(where) : TEXT.permission.denied(where)) : answer ? TEXT.sent(where) : TEXT.messageSent(where));
         if (answer && e instanceof KeyboardEvent && !document.querySelector("dialog[open]")) ui.focusAfter = key.slice("answer-".length);
       }),
       () => {
@@ -754,7 +773,8 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
       if (!(e instanceof KeyboardEvent)) return;
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        send(e);
+        // A permission's box holds a reason to deny: empty, the keys do nothing rather than deny.
+        if (!decide || box.value.trim()) send(e);
       }
       // While the box is empty or holds only options as picked, a digit picks (or toggles) another.
       const option = /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !off ? options[Number(e.key) - 1] : undefined;
@@ -789,12 +809,22 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
     const picker = e.currentTarget instanceof Element ? e.currentTarget.parentElement?.querySelector("input") : null;
     picker?.click();
   };
+  const busy = ui.sending.has(key);
+  const decision = decide
+    ? h(
+        "div",
+        { class: "decide" },
+        h("button", { class: "primary allow", disabled: off !== null || busy, onmousedown: (e) => e.preventDefault(), onclick: (e) => send(e, decide.allow) }, icon("check"), TEXT.permission.allow),
+        h("button", { class: "secondary danger deny", disabled: off !== null || busy, onmousedown: (e) => e.preventDefault(), onclick: (e) => send(e) }, icon("x"), TEXT.permission.deny),
+      )
+    : null;
   return h(
     "div",
-    { class: `answer${off ? " off" : ""}` },
+    { class: `answer${off ? " off" : ""}${decide ? " decides" : ""}` },
+    decide ? [middle ? h("div", { class: "answer-middle" }, middle) : null, decision] : null,
     opts.length && several ? h("div", { class: "opts-note faint" }, TEXT.pickSeveral) : null,
     opts.length ? h("div", { class: `opts${several ? " several" : ""}`, role: several ? "group" : null, "aria-label": several ? TEXT.pickSeveral : null }, opts) : null,
-    middle ? h("div", { class: "answer-middle" }, middle) : null,
+    middle && !decide ? h("div", { class: "answer-middle" }, middle) : null,
     attached.length || uploading
       ? h(
           "div",
@@ -814,7 +844,9 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
     h(
       "div",
       { class: "row" },
-      h(
+      decide
+        ? null
+        : h(
         "div",
         { class: "send-col" },
         images
@@ -839,7 +871,7 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
           h("span", { class: "send-lbl", "aria-hidden": "true" }, h("span", {}, TEXT.sendShort), h("span", {}, TEXT.sending)),
         ),
       ),
-      h("span", { class: "faint send-hint" }, off ?? [h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), hint, images ? ` ${TEXT.pasteImages}` : ""]),
+      h("span", { class: "faint send-hint" }, off ?? [h("span", { class: "keys-only" }, `${decide ? TEXT.permission.keys : TEXT.sendKeys} `), hint, images ? ` ${TEXT.pasteImages}` : ""]),
     ),
   );
 }
@@ -995,7 +1027,7 @@ function nextCard(q) {
       { ...card, class: "next resolved" },
       meta,
       q.kind === "permission" ? h("pre", { class: "qcode" }, q.text) : h("div", { class: "qtext" }, md(headline(q.text))),
-      h("div", { class: "resolved-line", role: "status" }, dot("done"), h("b", {}, TEXT.answered), q.answer ? h("span", { class: "resolved-answer" }, q.answer.text) : null),
+      resolvedLine(q),
     );
   }
   // The question and its answers come first; what the session said around it, folded, after the options.
@@ -1025,6 +1057,21 @@ function nextCard(q) {
       h("span", { class: "spacer" }),
       h("button", { class: "linkish faint", title: TEXT.dismissTitle, onclick: () => run(post(`/api/questions/${q.id}/dismiss`)) }, TEXT.dismiss),
     ),
+  );
+}
+
+/** How a question was settled from the desk: its answer, or for a permission whether it was allowed and why not. @param {Question} q */
+function resolvedLine(q) {
+  const decide = decisionOf(q);
+  const text = q.answer?.text;
+  const allowed = decide !== null && text === decide.allow;
+  const reason = decide && text !== undefined && !allowed && text !== decide.deny ? text : null;
+  return h(
+    "div",
+    { class: "resolved-line", role: "status" },
+    dot(decide && !allowed ? "failed" : "done"),
+    h("b", {}, decide ? (allowed ? TEXT.permission.allowedLine : TEXT.permission.deniedLine) : TEXT.answered),
+    decide ? (reason ? h("span", { class: "resolved-answer" }, reason) : null) : text !== undefined ? h("span", { class: "resolved-answer" }, text) : null,
   );
 }
 
@@ -1076,7 +1123,7 @@ function questionRow(q) {
     flip: `q-${q.id}`,
     mark: beacon(q.askedAt),
     line: [q.kind !== "question" ? [badge(q.kind), " "] : null, h("b", {}, headline(q.text))],
-    meta: [label(s), q.options.length ? TEXT.nOptions(q.options.length) : ""].filter(Boolean).join(" · "),
+    meta: [label(s), q.options.length && !decisionOf(q) ? TEXT.nOptions(q.options.length) : ""].filter(Boolean).join(" · "),
     when: h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt)),
     go: goLink(s, "row-go", icon("go"), TEXT.go),
     open: () => {
