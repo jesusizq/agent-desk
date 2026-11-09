@@ -73,6 +73,7 @@ const ui = {
   /** @type {string | null} what the panel's session had said when its conversation was fetched */ panelHeard: null,
   /** @type {PanelPart | null} the part of the session panel unfolded under its chips */ panelPart: null,
   /** which part of the desk a phone shows; History is the history view */ tab: /** @type {"inbox" | "sessions" | "review"} */ ("inbox"),
+  /** @type {Map<string, number>} where each tab of the phone's tab bar was scrolled when left */ tabScroll: new Map(),
   /** @type {Set<string>} questions whose earlier conversation is unfolded */ unfolded: new Set(),
   /** @type {Map<string, ConversationEntry[]>} */ conversations: new Map(),
 };
@@ -541,11 +542,14 @@ function renderTabbar(needs) {
         "button",
         {
           "aria-pressed": String(current === key),
+          // As a phone's own tab bar: each tab keeps its place; the tab already shown goes back to its top.
           onclick: () => {
+            if (key === current) return window.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+            ui.tabScroll.set(current, window.scrollY);
             if (key === "history") ui.view = "history";
             else ((ui.view = "desk"), (ui.tab = key));
             render();
-            window.scrollTo(0, 0);
+            window.scrollTo(0, ui.tabScroll.get(key) ?? 0);
           },
         },
         icon(ic),
