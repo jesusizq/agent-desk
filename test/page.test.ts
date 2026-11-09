@@ -1715,6 +1715,12 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.waitFor("document.querySelector('.next .group-note')?.textContent.includes('1 of 2 answered')");
         assert.match(await page.eval<string>("document.querySelector('.next .qpart.done').textContent"), /Which engine should search use\?.*Answered.*Lunr/, "the answered part stays, with its answer");
         assert.equal(await page.eval<number>("document.querySelectorAll('.next .qpart:not(.done) .opts button').length"), 2, "the other part is still to answer");
+
+        await page.click(".next .qpart:not(.done) .opts button", "Dark");
+        await page.eval("document.querySelector('.next .qpart:not(.done) .send').click()");
+        assert.deepEqual(await answers("grouped", 1), ["Dark"]);
+        await page.waitFor("document.querySelector('.next.resolved .group-note')");
+        assert.equal(await page.eval<string>("document.querySelector('.next.resolved .group-note').textContent"), "All 2 answered.", "the answered card says all are answered");
       } finally {
         done();
       }

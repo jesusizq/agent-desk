@@ -112,7 +112,8 @@ export const TEXT = {
     /** @param {number} i @param {number} n */
     part: (i, n) => `Question ${i + 1} of ${n}`,
     /** @param {number} n @param {number} answered */
-    waits: (n, answered) => (answered ? `${answered} of ${n} answered: its terminal waits for ${n - answered === 1 ? "the last one" : `the other ${n - answered}`}.` : `Asked together: its terminal waits for all ${n} answers.`),
+    waits: (n, answered) =>
+      answered >= n ? `All ${n} answered.` : answered ? `${answered} of ${n} answered: its terminal waits for ${n - answered === 1 ? "the last one" : `the other ${n - answered}`}.` : `Asked together: its terminal waits for all ${n} answers.`,
     /** @param {number} n @param {number} answered */
     row: (n, answered) => (answered ? `${answered} of ${n} answered` : `${n} questions asked together`),
   },
