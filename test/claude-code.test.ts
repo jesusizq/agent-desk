@@ -5,13 +5,25 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { deliverWhileWorking, handleHook, type HookContext, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
+import { slug } from "../src/core/ids.ts";
 import type { Store } from "../src/store/store.ts";
 import { PNG, tempHome, testStore } from "./helpers.ts";
 
 const MAIN = path.join(import.meta.dirname, "..", "adapters", "claude-code", "main.ts");
+const CLI = path.join(import.meta.dirname, "..", "src", "cli", "main.ts");
 
 function ctx(store: Store, env: NodeJS.ProcessEnv = {}): HookContext {
   return { store, env: { TERM_PROGRAM: "vscode", CLAUDE_PROJECT_DIR: "/work/shop", ...env }, sessionProcess: () => ({ pid: 4242, ancestors: [4241, 100] }) };
+}
+/** A session transcript and a workflow run beside it, where Claude Code writes its notes on the run's agents. */
+function workflowRun() {
+  const projects = tempHome();
+  const subagents = path.join(projects, "cc-1", "subagents");
+  const run = path.join(subagents, "workflows", "wf_1");
+  fs.mkdirSync(run, { recursive: true });
+  const note = (agentId: string, description: string) =>
+    fs.writeFileSync(path.join(run, `agent-${agentId}.meta.json`), JSON.stringify({ agentType: "workflow-subagent", description }));
+  return { transcript: path.join(projects, "cc-1.jsonl"), subagents, run, note };
 }
 const event = (hook_event_name: string, extra: Record<string, unknown> = {}) =>
   readHookInput(JSON.stringify({ session_id: "cc-1", cwd: "/work/shop/sub", hook_event_name, permission_mode: "auto", ...extra }));
@@ -272,6 +284,157 @@ describe("Claude Code hooks", () => {
     const state = (ref: string) => store.listAgents("cc-1").find((a) => a.ref === ref)?.state;
     assert.equal(state("a1"), "done");
     assert.equal(state("a2"), "working", "a tool's output that quotes the note is not an interruption");
+  });
+
+  it("renames a workflow's agent after its label once Claude Code notes it, keeping what it did", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    handleHook(event("SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    handleHook(event("PostToolUse", { agent_id: "w1", tool_name: "Bash", tool_input: { command: "npm test" }, transcript_path: wf.transcript }), ctx(store));
+    const generic = store.listAgents("cc-1")[0];
+    assert.equal(generic?.name, "workflow-subagent", "no label yet: named after its type");
+    wf.note("w1", "audit:render-stability");
+    handleHook(event("PostToolUse", { agent_id: "w1", tool_name: "Read", tool_input: { file_path: "/work/shop/a.ts" }, transcript_path: wf.transcript }), ctx(store));
+    const named = store.listAgents("cc-1");
+    assert.deepEqual(named.map((a) => [a.name, a.ref, a.goal, a.state, a.activity]), [["audit-render-stability", "w1", "audit:render-stability", "working", "Read: a.ts"]]);
+    assert.equal(named[0]?.startedAt, generic?.startedAt, "its history is kept");
+
+    // Notes written only by the time it stops: renamed then, still one record.
+    handleHook(event("SubagentStart", { agent_id: "w2", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    wf.note("w2", "verify:render-stability");
+    handleHook(event("SubagentStop", { agent_id: "w2", agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, "agent-w2.jsonl"), last_assistant_message: "Verified." }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state]), [["audit-render-stability", "w1", "working"], ["verify-render-stability", "w2", "done"]]);
+  });
+
+  it("gives a workflow's agent the record the session reported under its label first, which ends when the agent stops", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    handleHook(event("SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    const started = store.listAgents("cc-1")[0];
+    // What `agent-desk agent "<label>" --summary … --branch … --after …` records.
+    store.upsertAgent("cc-1", slug("fix:core"), { summary: "Fixes the core findings", branch: "fix/core", after: ["audit-core"] });
+    assert.equal(store.listAgents("cc-1").length, 2, "two records until the label is known");
+    wf.note("w1", "fix:core");
+    handleHook(event("PostToolUse", { agent_id: "w1", tool_name: "Bash", tool_input: { command: "make" }, transcript_path: wf.transcript }), ctx(store));
+    const [one, ...rest] = store.listAgents("cc-1");
+    assert.deepEqual(rest, []);
+    assert.deepEqual(
+      [one?.name, one?.ref, one?.type, one?.state, one?.summary, one?.branch, one?.after, one?.goal, one?.activity, one?.startedAt],
+      ["fix-core", "w1", "workflow-subagent", "working", "Fixes the core findings", "fix/core", ["audit-core"], "fix:core", "Bash: make", started?.startedAt],
+    );
+    handleHook(event("SubagentStop", { agent_id: "w1", agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, "agent-w1.jsonl"), last_assistant_message: "Fixed." }), ctx(store));
+    handleHook(event("Stop", { last_assistant_message: "The fix landed.", transcript_path: wf.transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.state, a.activity]), [["fix-core", "done", "Fixed."]]);
+
+    // Reported before it even started, its notes already written at its start: taken at once.
+    store.upsertAgent("cc-1", "integrate", { summary: "Merges the fixes" });
+    wf.note("w2", "integrate");
+    handleHook(event("SubagentStart", { agent_id: "w2", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.summary]), [
+      ["fix-core", "w1", "done", "Fixes the core findings"],
+      ["integrate", "w2", "working", "Merges the fixes"],
+    ]);
+  });
+
+  it("merges what the session reports into a workflow's agent already named after its label", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    handleHook(event("SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    wf.note("w1", "reverify:phone");
+    handleHook(event("PostToolUse", { agent_id: "w1", tool_name: "Bash", tool_input: { command: "npm test" }, transcript_path: wf.transcript }), ctx(store));
+    store.upsertAgent("cc-1", slug("reverify:phone"), { summary: "Checks the phone fixes" });
+    handleHook(event("SubagentStop", { agent_id: "w1", agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, "agent-w1.jsonl"), last_assistant_message: "All pass." }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.summary]), [["reverify-phone", "w1", "done", "Checks the phone fixes"]]);
+  });
+
+  it("keeps the name of an agent launched with the Agent tool, and the record the session reported for it", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: "toolu_1", tool_input: { description: "Fix pay button", subagent_type: "general-purpose" } }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a1", agent_type: "general-purpose", transcript_path: wf.transcript }), ctx(store));
+    store.upsertAgent("cc-1", slug("Fix pay button"), { summary: "The pay button stays visible" });
+    fs.writeFileSync(path.join(wf.subagents, "agent-a1.meta.json"), JSON.stringify({ agentType: "general-purpose", description: "Fix pay button" }));
+    handleHook(event("PostToolUse", { agent_id: "a1", tool_name: "Edit", tool_input: { file_path: "/work/shop/pay.ts" }, transcript_path: wf.transcript }), ctx(store));
+    handleHook(event("SubagentStop", { agent_id: "a1", agent_type: "general-purpose", last_assistant_message: "Fixed.", transcript_path: wf.transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.goal, a.summary]), [["fix-pay-button", "a1", "done", "Fix pay button", "The pay button stays visible"]]);
+  });
+
+  it("ends an agent the session reported that no sub-agent took, once none of the session's sub-agents runs", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    handleHook(event("SessionStart", { source: "startup" }), ctx(store));
+    store.upsertAgent("cc-1", "audit-everything", { summary: "Reported under a name no label has" });
+    handleHook(event("Stop", { last_assistant_message: "Launched.", transcript_path: wf.transcript }), ctx(store));
+    assert.equal(store.getAgent("cc-1", "audit-everything")?.state, "working", "no sub-agent followed here: nothing to go by");
+
+    handleHook(event("SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    handleHook(event("Stop", { last_assistant_message: "Running.", transcript_path: wf.transcript }), ctx(store));
+    assert.equal(store.getAgent("cc-1", "audit-everything")?.state, "working", "a sub-agent still runs");
+    wf.note("w1", "audit:components");
+    handleHook(event("SubagentStop", { agent_id: "w1", agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, "agent-w1.jsonl"), last_assistant_message: "Audited." }), ctx(store));
+    handleHook(event("UserPromptSubmit", { prompt: "<task-notification>done</task-notification>", transcript_path: wf.transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.state]), [["audit-everything", "done"], ["audit-components", "done"]]);
+
+    // Ended too early: its sub-agent starts after all, and the record follows it again.
+    wf.note("w2", "audit everything");
+    handleHook(event("SubagentStart", { agent_id: "w2", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    const again = store.getAgent("cc-1", "audit-everything");
+    assert.deepEqual([again?.ref, again?.state, again?.endedAt, again?.summary], ["w2", "working", undefined, "Reported under a name no label has"]);
+  });
+
+  it("ignores a sub-agent's malformed notes without failing its hooks", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    handleHook(event("SessionStart", { source: "startup" }), ctx(store));
+    store.upsertAgent("cc-1", "fix-core", { summary: "Fixes" });
+    handleHook(event("SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    for (const broken of ["{broken", JSON.stringify(["fix:core"]), JSON.stringify({ description: 42 })]) {
+      fs.writeFileSync(path.join(wf.run, "agent-w1.meta.json"), broken);
+      const out = handleHook(event("PostToolUse", { agent_id: "w1", tool_name: "Bash", tool_input: { command: "make" }, transcript_path: wf.transcript }), ctx(store));
+      assert.equal(out.code, 0);
+      assert.match(out.stderr ?? "", /cannot read the sub-agent's notes/);
+    }
+    const out = handleHook(event("SubagentStop", { agent_id: "w1", agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, "agent-w1.jsonl"), last_assistant_message: "Done." }), ctx(store));
+    assert.equal(out.code, 0);
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state]), [["fix-core", undefined, "working"], ["workflow-subagent", "w1", "done"]]);
+  });
+
+  it("keeps one record per agent while the hooks of several workflow agents run at once", async () => {
+    const home = tempHome();
+    const wf = workflowRun();
+    const env = { ...process.env, AGENT_DESK_HOME: home, TERM_PROGRAM: "vscode", CLAUDE_PROJECT_DIR: "/work/shop" };
+    const run = (args: string[], input = "") =>
+      new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
+        const child = spawn(process.execPath, args, { env });
+        let stderr = "";
+        child.stderr.on("data", (d: Buffer) => (stderr += d));
+        child.on("error", reject);
+        child.on("exit", (code) => resolve({ code, stderr }));
+        child.stdin.end(input);
+      });
+    const hook = (input: object) => run([MAIN, "hook"], JSON.stringify({ session_id: "cc-c", cwd: "/work/shop", transcript_path: wf.transcript, ...input }));
+    const report = (label: string) => run([CLI, "agent", label, "--summary", `Delivers ${label}`, "--session", "cc-c"]);
+    const all = async (runs: Promise<{ code: number | null; stderr: string }>[]) => {
+      for (const r of await Promise.all(runs)) assert.equal(r.code, 0, r.stderr);
+    };
+    const ids = ["w1", "w2", "w3", "w4"];
+    const label = (id: string) => `audit:${id}`;
+    await all([hook({ hook_event_name: "SessionStart", source: "startup" })]);
+    await all(ids.map((id) => hook({ hook_event_name: "SubagentStart", agent_id: id, agent_type: "workflow-subagent" })));
+    // Two reported before their labels are noted, two while their first tool calls rename them.
+    await all(ids.slice(0, 2).map((id) => report(label(id))));
+    for (const id of ids) wf.note(id, label(id));
+    await all([
+      ...ids.flatMap((id) => [1, 2, 3].map((n) => hook({ hook_event_name: "PostToolUse", agent_id: id, tool_name: "Bash", tool_input: { command: `step ${n}` } }))),
+      ...ids.slice(2).map((id) => report(label(id))),
+    ]);
+    await all(ids.map((id) => hook({ hook_event_name: "SubagentStop", agent_id: id, agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, `agent-${id}.jsonl`), last_assistant_message: "Done." })));
+    const { Store } = await import("../src/store/store.ts");
+    const agents = new Store(home).listAgents("cc-c");
+    assert.deepEqual(
+      agents.map((a) => [a.name, a.ref, a.state, a.summary]).sort(),
+      ids.map((id) => [slug(label(id)), id, "done", `Delivers ${label(id)}`]),
+    );
   });
 
   it("restarts the quiet clock when a turn starts", () => {

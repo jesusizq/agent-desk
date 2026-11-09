@@ -3,10 +3,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { id, newId, slug } from "../../src/core/ids.ts";
-import { FAILURES_KEPT, type SessionProcess } from "../../src/core/model.ts";
+import { type Agent, FAILURES_KEPT, type SessionProcess } from "../../src/core/model.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
-import type { Store } from "../../src/store/store.ts";
+import type { AgentFields, Store } from "../../src/store/store.ts";
 
 export const PROVIDER = "Claude Code";
 
@@ -76,7 +76,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
         // A background task's notification wakes the session like a prompt: it works again, but
         // nothing was said by the developer and nothing they were asked is answered.
         store.updateSession(sid, (s) => ({ ...s, state: "working", activityAt: new Date().toISOString() }));
-        settleInterrupted(input, ctx);
+        settleAgents(input, ctx);
         return { code: 0 };
       }
       // Without a title from Claude Code, the first thing asked of the session names it. A prompt
@@ -98,7 +98,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (!wasWorking) store.withdrawInbox(sid, prompt);
       store.closeOpen(sid, { answer: prompt, problems });
       syncPermissionMarker(store, problems);
-      settleInterrupted(input, ctx);
+      settleAgents(input, ctx);
       return { code: 0 };
     }
 
@@ -181,7 +181,7 @@ function retireContinued(input: Common, ctx: HookContext, problems: string[]): v
     store.withdrawInbox(s.id);
     store.closeOpen(s.id, { status: "dismissed", problems });
     for (const agent of store.listAgents(s.id)) {
-      if (agent.state === "working") store.upsertAgent(s.id, agent.name, { state: "done", activity: "The session continued elsewhere" });
+      if (agent.state === "working") store.updateAgent(s.id, agent.name, { state: "done", activity: "The session continued elsewhere" });
     }
     store.updateSession(s.id, (old) => ({ ...old, state: "ended", endedAt: new Date().toISOString() }));
   }
@@ -245,7 +245,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     }),
   );
   recordTurnTexts(input, store, message);
-  settleInterrupted(input, ctx);
+  settleAgents(input, ctx);
   if (message) store.addMessage({ sessionId: sid, from: "session", text: message });
   const tasks = Array.isArray(input.raw.background_tasks) ? input.raw.background_tasks : [];
   const shells = tasks.filter((t) => typeof t === "object" && t !== null && (t as Fields).type === "shell").length;
@@ -350,16 +350,28 @@ export function endsInterrupted(transcript: string): boolean {
 }
 
 /**
- * An interrupted sub-agent gets no SubagentStop: it would show as working for ever. At each turn's
- * start and end, an agent still working whose transcript ends interrupted is recorded as stopped.
+ * At each turn's start and end, agents no hook will stop are recorded as stopped:
+ * - an interrupted sub-agent gets no SubagentStop: one still working whose transcript ends
+ *   interrupted;
+ * - an agent the session reported with `agent-desk agent` that no sub-agent took (its name is not
+ *   the label of any), once no sub-agent the hooks follow may still run. Should its sub-agent start
+ *   later after all, it takes the sub-agent's state again with its label (settleName).
  */
-function settleInterrupted(input: Common, ctx: HookContext): void {
-  for (const agent of ctx.store.listAgents(input.sessionId)) {
+function settleAgents(input: Common, ctx: HookContext): void {
+  const { store } = ctx;
+  const sid = input.sessionId;
+  for (const agent of store.listAgents(sid)) {
     if (agent.state !== "working" || !agent.ref || agent.ref.startsWith(PENDING)) continue;
     const meta = subagentMeta(input, agent.ref);
     if (meta && endsInterrupted(meta.replace(/\.meta\.json$/, ".jsonl"))) {
-      ctx.store.upsertAgent(input.sessionId, agent.name, { state: "done", activity: "Interrupted before it finished" });
+      store.updateAgent(sid, agent.name, { state: "done", activity: "Interrupted before it finished" });
     }
+  }
+  const agents = store.listAgents(sid);
+  const followed = agents.filter((a) => a.ref !== undefined);
+  if (followed.length === 0 || followed.some((a) => a.state !== "done" && a.state !== "failed")) return;
+  for (const agent of agents) {
+    if (agent.ref === undefined && agent.state === "working") store.updateAgent(sid, agent.name, { state: "done", activity: "No sub-agent of the session runs any more" });
   }
 }
 
@@ -408,14 +420,14 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
     recordTurnTexts(input, ctx.store);
     return;
   }
-  const meta = subagentMeta(input, agentId);
-  settlePairing(input, ctx, agentId, meta, problems);
-  const agent = ctx.store.listAgents(input.sessionId).find((a) => a.ref === agentId);
-  if (agent && agent.state === "working") {
-    // A workflow's agent whose notes were not written when it started gets its label now.
-    const goal = agent.goal ? undefined : launchNotes(meta, problems).description;
-    ctx.store.upsertAgent(input.sessionId, agent.name, compact({ goal, activity: bounded(what, 200), activityAt: at, failedAt: failed(agent.failedAt), failedWhat: failedWhat(agent.failedWhat) }));
-  }
+  const label = launchNotes(subagentMeta(input, agentId), problems).description;
+  settleLabel(input, ctx, agentId, label);
+  // A workflow's agent whose notes were not written when it started gets its label now.
+  updateByRef(ctx.store, input.sessionId, agentId, (agent) =>
+    agent.state === "working"
+      ? compact({ goal: agent.goal ? undefined : label, activity: bounded(what, 200), activityAt: at, failedAt: failed(agent.failedAt), failedWhat: failedWhat(agent.failedWhat) })
+      : undefined,
+  );
 }
 
 /**
@@ -471,7 +483,8 @@ function describeTool(tool: unknown, input: unknown, projectDir?: string): strin
 // SubagentStart's input does not name the Agent tool call that launched it, and Claude Code writes its
 // notes on the sub-agent (label and Agent call) only after that hook. An agent is named after the
 // description given to the Agent tool; SubagentStart pairs with the oldest unpaired launch of its type,
-// and the agent's first tool call or its stop corrects the pairing from the notes (settlePairing).
+// and the agent's first tool call or its stop corrects the pairing and the name from the notes
+// (settleLabel).
 
 const PENDING = "tool:";
 
@@ -480,8 +493,7 @@ function launchAgent(input: Common, ctx: HookContext): void {
   const description = text(toolInput.description ?? "", "tool_input.description", 2000).trim() || "agent";
   const type = text(toolInput.subagent_type ?? "general-purpose", "tool_input.subagent_type", 200);
   const toolUseId = text(input.raw.tool_use_id ?? "", "hook input.tool_use_id", 200);
-  const name = freeName(ctx.store, input.sessionId, slug(description));
-  ctx.store.upsertAgent(input.sessionId, name, compact({
+  ctx.store.addAgent(input.sessionId, slug(description), compact({
     type,
     ref: `${PENDING}${toolUseId}`,
     goal: description,
@@ -494,9 +506,8 @@ function startAgent(input: Common, ctx: HookContext, problems: string[]): void {
   const type = text(input.raw.agent_type ?? "", "hook input.agent_type", 200);
   if (agentId === "") throw new InputError("SubagentStart without agent_id");
   // A message sent to a running or finished agent starts it again under the same id: same agent.
-  const known = ctx.store.listAgents(input.sessionId).find((a) => a.ref === agentId);
-  if (known) {
-    ctx.store.upsertAgent(input.sessionId, known.name, { state: "working" });
+  if (ctx.store.listAgents(input.sessionId).some((a) => a.ref === agentId)) {
+    updateByRef(ctx.store, input.sessionId, agentId, () => ({ state: "working" }));
     return;
   }
   const pending = ctx.store.listAgents(input.sessionId).find((a) => a.ref?.startsWith(PENDING) && (a.type === type || type === ""));
@@ -506,21 +517,27 @@ function startAgent(input: Common, ctx: HookContext, problems: string[]): void {
   }
   // Launched by something other than the Agent tool (a workflow): its label, when already noted, is its goal.
   const goal = launchNotes(subagentMeta(input, agentId), problems).description;
-  const name = freeName(ctx.store, input.sessionId, slug(goal || type || "agent"));
-  ctx.store.upsertAgent(input.sessionId, name, compact({ type: type || undefined, ref: agentId, goal, state: "working" as const }));
+  ctx.store.addAgent(input.sessionId, slug(goal || type || "agent"), compact({ type: type || undefined, ref: agentId, goal, state: "working" as const }));
+  settleName(input, ctx, agentId, goal);
 }
 
 function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
   const agentId = text(input.raw.agent_id ?? "", "hook input.agent_id", 200);
   const transcript = optional(input.raw.agent_transcript_path, "hook input.agent_transcript_path", (v, w) => text(v, w, 4096));
   const meta = transcript?.endsWith(".jsonl") ? transcript.replace(/\.jsonl$/, ".meta.json") : subagentMeta(input, agentId);
-  settlePairing(input, ctx, agentId, meta, problems);
-  const agents = ctx.store.listAgents(input.sessionId).filter((a) => a.ref === agentId);
+  const label = launchNotes(meta, problems).description;
+  settleLabel(input, ctx, agentId, label);
   const last = firstLine(text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000));
-  // The notes were not written yet when the agent started.
-  const goal = agents.some((a) => !a.goal) ? launchNotes(meta, problems).description : undefined;
-  // Usually one; more only where an older adapter recorded a restarted agent twice.
-  for (const agent of agents) ctx.store.upsertAgent(input.sessionId, agent.name, compact({ state: "done" as const, activity: last || undefined, goal: agent.goal ? undefined : goal }));
+  // Usually one record; more only where an older adapter recorded a restarted agent twice. The goal
+  // comes with the notes when they were not written yet at the agent's start.
+  updateByRef(ctx.store, input.sessionId, agentId, (agent) => compact({ state: "done" as const, activity: last || undefined, goal: agent.goal ? undefined : label }));
+}
+
+/** What the notes' label settles: which launch the agent is (settlePairing), then its name (settleName). */
+function settleLabel(input: Common, ctx: HookContext, agentId: string, label: string | undefined): void {
+  if (!label) return;
+  settlePairing(input, ctx, agentId, label);
+  settleName(input, ctx, agentId, label);
 }
 
 /**
@@ -528,16 +545,59 @@ function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
  * noted the sub-agent's label, the agent recorded under its id is checked against it and, when they
  * differ, trades id and state with the launch that carries that label.
  */
-function settlePairing(input: Common, ctx: HookContext, agentId: string, metaFile: string | undefined, problems: string[]): void {
-  const label = launchNotes(metaFile, problems).description;
-  if (!label) return;
+function settlePairing(input: Common, ctx: HookContext, agentId: string, label: string): void {
   const agents = ctx.store.listAgents(input.sessionId);
   const held = agents.find((a) => a.ref === agentId);
   if (!held?.goal || held.goal === label) return;
   const owner = agents.find((a) => a.goal === label && a.type === held.type && a.ref !== agentId);
   if (!owner) return;
-  ctx.store.upsertAgent(input.sessionId, owner.name, compact({ ref: agentId, state: held.state, activity: held.activity }));
-  ctx.store.upsertAgent(input.sessionId, held.name, compact({ ref: owner.ref, state: owner.state, activity: owner.activity }));
+  ctx.store.updateAgent(input.sessionId, owner.name, compact({ ref: agentId, state: held.state, activity: held.activity }));
+  ctx.store.updateAgent(input.sessionId, held.name, compact({ ref: owner.ref, state: owner.state, activity: owner.activity }));
+}
+
+/**
+ * A sub-agent that started before Claude Code noted its label was named after its type
+ * ("workflow-subagent-3"); once the label is known, it takes the label's name, the one the session
+ * reports it under (`agent-desk agent "<label>"`). A record the session already made under that
+ * name, which follows no sub-agent, becomes this agent's: one record, with the session's summary,
+ * branch and `after`, and this agent's id, state and times.
+ */
+function settleName(input: Common, ctx: HookContext, agentId: string, label: string | undefined): void {
+  if (!label) return;
+  const name = slug(label);
+  const { store } = ctx;
+  // A rename refused because an agent of the same label took the name meanwhile is tried again with
+  // the next free name; after a few, the agent's next event tries again.
+  for (let tries = 0; tries < 3; tries++) {
+    const agents = store.listAgents(input.sessionId);
+    const held = agents.find((a) => a.ref === agentId);
+    if (!held || held.name === name) return;
+    const reported = agents.find((a) => a.name === name);
+    const to = reported && reported.ref === undefined ? name : namedFromType(held) ? freeName(store, input.sessionId, name) : undefined;
+    if (to === undefined || store.renameAgent(input.sessionId, held.name, to)) return;
+  }
+}
+
+/** Named as startAgent names an agent whose label it does not know: after its type (or "agent"), maybe numbered. */
+const namedFromType = (agent: Agent) => new RegExp(`^${slug(agent.type || "agent")}(-\\d+)?$`).test(agent.name);
+
+/**
+ * Merges `change` into the agents recorded under `ref`. Another hook may rename one meanwhile
+ * (settleName): it is found again under its new name, never recreated under the old one.
+ */
+function updateByRef(store: Store, sessionId: string, ref: string, change: (agent: Agent) => AgentFields | undefined): void {
+  const updated = new Set<string>();
+  for (let tries = 0; tries < 3; tries++) {
+    let missed = false;
+    for (const agent of store.listAgents(sessionId)) {
+      if (agent.ref !== ref || updated.has(agent.name)) continue;
+      const fields = change(agent);
+      if (fields === undefined || store.updateAgent(sessionId, agent.name, fields)) updated.add(agent.name);
+      else missed = true;
+    }
+    if (!missed) return;
+  }
+  throw new Error(`agent ${ref} of session ${sessionId} was renamed again and again while its hook updated it; run the hook again`);
 }
 
 /**
