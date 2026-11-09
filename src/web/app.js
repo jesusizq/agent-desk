@@ -2230,31 +2230,52 @@ addEventListener("unhandledrejection", (e) => toast(TEXT.pageError(e.reason inst
 /**
  * iOS ignores interactive-widget: its keyboard covers the page, whose layout keeps its height. Only the
  * visual viewport knows what is left, so the layout is told, and the box being typed in brought above it.
+ * Android resizes the layout instead. On both, `data-keyboard` says a keyboard is up, and `data-compact`
+ * that the screen is short (that, or landscape), for style.css.
  */
 function followKeyboard() {
   const vv = window.visualViewport;
-  if (!vv) return;
+  const root = document.documentElement;
+  const short = matchMedia("(max-height: 500px)");
   let covered = 0;
+  let up = false;
+  let tallest = 0;
+  let wide = 0;
   const follow = () => {
-    if (vv.scale > 1.01) return; // a pinch shrinks the visual viewport too, with no keyboard
-    // Against the layout's height: on iOS innerHeight shrinks with the keyboard too. Less than this is a browser's toolbar.
-    const gap = Math.round(document.documentElement.clientHeight - vv.height);
-    const keyboard = gap > 80 ? gap : 0;
-    const root = document.documentElement.style;
-    root.setProperty("--keyboard", `${keyboard}px`);
-    root.setProperty("--viewport-top", `${Math.round(vv.offsetTop)}px`);
-    if (keyboard) root.setProperty("--viewport-height", `${Math.round(vv.height)}px`);
-    else root.removeProperty("--viewport-height");
-    if (keyboard === covered) return;
-    covered = keyboard;
+    if (vv && vv.scale > 1.01) return; // a pinch shrinks the visual viewport too, with no keyboard
     const box = document.activeElement;
-    if (keyboard === 0 || !(box instanceof HTMLTextAreaElement)) return;
+    const typing = box instanceof HTMLTextAreaElement || (box instanceof HTMLInputElement && /^(text|search|email|url|tel|password|number)$/.test(box.type));
+    let keyboard = 0;
+    let raised = false;
+    if (vv) {
+      // Against the layout's height: on iOS innerHeight shrinks with the keyboard too. Less than this is a browser's toolbar.
+      const gap = Math.round(root.clientHeight - vv.height);
+      keyboard = gap > 80 ? gap : 0;
+      // Android shrinks the layout with the keyboard, so only the height lost since the tallest seen in this orientation tells.
+      if (Math.abs(vv.width - wide) > 1) [wide, tallest] = [vv.width, 0];
+      tallest = Math.max(tallest, vv.height);
+      raised = COARSE.matches && typing && (keyboard > 0 || tallest - vv.height > 150);
+      root.style.setProperty("--keyboard", `${keyboard}px`);
+      root.style.setProperty("--viewport-top", `${Math.round(vv.offsetTop)}px`);
+      if (keyboard) root.style.setProperty("--viewport-height", `${Math.round(vv.height)}px`);
+      else root.style.removeProperty("--viewport-height");
+    }
+    root.toggleAttribute("data-keyboard", raised);
+    root.toggleAttribute("data-compact", raised || short.matches);
+    if (keyboard === covered && raised === up) return;
+    covered = keyboard;
+    up = raised;
+    if (!(keyboard || raised) || !(box instanceof HTMLTextAreaElement)) return;
     const chat = box.closest(".session-body");
     if (chat) chat.scrollTop = chat.scrollHeight;
-    else window.scrollBy(0, Math.max(0, box.getBoundingClientRect().bottom + 16 - (vv.offsetTop + vv.height)));
+    else if (vv) window.scrollBy(0, Math.max(0, box.getBoundingClientRect().bottom + 16 - (vv.offsetTop + vv.height)));
   };
-  vv.addEventListener("resize", follow);
-  vv.addEventListener("scroll", follow);
+  follow();
+  vv?.addEventListener("resize", follow);
+  vv?.addEventListener("scroll", follow);
+  short.addEventListener("change", follow);
+  // The keyboard comes and goes with the focus; measured once the focus has settled on its new element.
+  for (const event of ["focusin", "focusout"]) document.addEventListener(event, () => requestAnimationFrame(follow));
 }
 
 // ---------- Alerts: desktop notifications and sound, each switched off on the page ----------

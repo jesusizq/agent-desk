@@ -45,6 +45,18 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("document.querySelector('.next') && document.querySelectorAll('.scard').length");
     return page;
   }
+  /**
+   * As iOS: the layout keeps its height with the keyboard open, while the visual viewport and
+   * innerHeight, which follows it there, shrink. The page gets `setKeyboard(px)`.
+   */
+  const coveringKeyboard = (height: number) => `(() => {
+    const vv = new EventTarget();
+    window.covered = 0;
+    Object.defineProperties(vv, { height: { get: () => ${height} - covered }, width: { get: () => document.documentElement.clientWidth }, offsetTop: { value: 0 }, scale: { value: 1 } });
+    Object.defineProperty(window, "visualViewport", { value: vv });
+    Object.defineProperty(window, "innerHeight", { get: () => vv.height, configurable: true });
+    window.setKeyboard = (px) => { covered = px; vv.dispatchEvent(new Event("resize")); };
+  })()`;
   const openDialogs = (page: Page) => page.eval<string[]>("[...document.querySelectorAll('dialog[open]')].map((d) => d.id)");
 
   it("draws the oldest question large and every live session", async () => {
@@ -587,18 +599,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     try {
       const page = await browser.newPage(390, 844);
       pages.push(page);
-      // As iOS: the layout keeps its height with the keyboard open, while the visual viewport and
-      // innerHeight, which follows it there, shrink.
-      await page.send("Page.addScriptToEvaluateOnNewDocument", {
-        source: `(() => {
-          const vv = new EventTarget();
-          window.covered = 0;
-          Object.defineProperties(vv, { height: { get: () => 844 - covered }, offsetTop: { value: 0 }, scale: { value: 1 } });
-          Object.defineProperty(window, "visualViewport", { value: vv });
-          Object.defineProperty(window, "innerHeight", { get: () => vv.height, configurable: true });
-          window.setKeyboard = (px) => { covered = px; vv.dispatchEvent(new Event("resize")); };
-        })()`,
-      });
+      await page.send("Page.addScriptToEvaluateOnNewDocument", { source: coveringKeyboard(844) });
       await page.goto(base + "/");
       await page.waitFor("document.querySelector('.next')");
       const inView = (box: string) => page.eval<boolean>(`(() => { const r = ${box}.getBoundingClientRect(); return r.top >= 0 && r.bottom <= visualViewport.height; })()`);
@@ -707,17 +708,153 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.eval("localStorage.clear()");
   });
 
-  it("on a phone, gives the keyboard the room of the tab bar while writing", async () => {
-    store.upsertSession({ id: "typing", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "typing on a phone", takesMessagesWhileWorking: true });
-    const page = await open(390, 844);
-    await page.click(".tabbar button", "Sessions");
-    await page.click(".scard", "typing on a phone");
-    const tabbar = "getComputedStyle(document.querySelector('.tabbar')).display";
-    assert.notEqual(await page.eval<string>(tabbar), "none");
-    await page.click("#session .chat-footer textarea");
-    await page.waitFor(`${tabbar} === "none" && getComputedStyle(document.querySelector('.credits')).display === "none"`);
-    await page.press("Escape");
-    await page.waitFor(`${tabbar} !== "none"`);
+  describe("on a phone, the answer box works as a chat app's", () => {
+    /** The desk as a phone shows it: a finger, no hover, the page's own viewport. */
+    async function phone(width = 390, height = 844, setup = ""): Promise<Page> {
+      const page = await browser.newPage(width, height);
+      pages.push(page);
+      await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: true });
+      await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+      await page.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
+      if (setup) await page.send("Page.addScriptToEvaluateOnNewDocument", { source: setup });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('.next') && document.querySelectorAll('.scard').length");
+      return page;
+    }
+    /** A session waiting on a question with options, its listener running until `stop`. */
+    function asking(id: string, title: string) {
+      store.upsertSession({ id, provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title, state: "waiting" });
+      const stop = store.listen(id);
+      const q = store.ask({ sessionId: id, kind: "question", text: `Which colour, ${title}?`, options: ["Green", "Blue"] });
+      return () => (store.dismiss(q.id), stop());
+    }
+    const openPanel = async (page: Page, title: string) => {
+      await page.click(".tabbar button", "Sessions");
+      await page.click(".scard", title);
+      await page.waitFor("document.querySelector('#session .chat-footer textarea') && document.getAnimations().length === 0");
+    };
+
+    it("one line when empty, round buttons, clear of the home indicator, with the conversation resting on it", async () => {
+      store.upsertSession({ id: "composer", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a phone's composer", takesMessagesWhileWorking: true });
+      const page = await phone();
+      await openPanel(page, "a phone's composer");
+      const shape = await page.eval<Record<string, unknown>>(`(() => {
+        const box = document.querySelector('#session .chat-footer textarea'), send = document.querySelector('#session .chat-footer .send');
+        const foot = document.querySelector('#session .chat-footer'), chat = document.querySelector('#session .conversation');
+        return { rows: box.rows, oneLine: box.getBoundingClientRect().height <= 46, resize: getComputedStyle(box).resize,
+          send: [send.offsetWidth, send.offsetHeight], name: send.getAttribute('aria-label'), footPad: getComputedStyle(foot).paddingBottom,
+          resting: foot.getBoundingClientRect().top - chat.getBoundingClientRect().bottom <= 12 };
+      })()`);
+      assert.deepEqual(shape, { rows: 1, oneLine: true, resize: "none", send: [44, 44], name: "Send to the session", footPad: "12px", resting: true });
+      await page.press("Escape");
+    });
+
+    it("a tapped option fills the box without raising the keyboard; a tap on the box does", async () => {
+      const done = asking("picking", "picking on a phone");
+      try {
+        const page = await phone();
+        await openPanel(page, "picking on a phone");
+        await page.tap("#session .opts button", "Blue");
+        const box = "document.querySelector('#session .chat-footer textarea')";
+        await page.waitFor(`${box}.value === "Blue"`);
+        assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), false, "the box is not focused, so no keyboard covers the options");
+        assert.equal(await page.eval<string>(`[...document.querySelectorAll('#session .opts button')].find((b) => b.textContent.includes("Blue")).getAttribute("aria-pressed")`), "true");
+        await page.tap("#session .chat-footer textarea");
+        await page.waitFor(`document.activeElement === ${box}`);
+        await page.press("Escape");
+      } finally {
+        done();
+      }
+    });
+
+    it("keeps the box focused after Send, so the keyboard stays up for the next message", async () => {
+      store.upsertSession({ id: "chatting", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "chatting on a phone", takesMessagesWhileWorking: true });
+      const page = await phone();
+      await openPanel(page, "chatting on a phone");
+      const box = "document.querySelector('#session .chat-footer textarea')";
+      await page.tap("#session .chat-footer textarea");
+      await page.waitFor(`document.activeElement === ${box}`);
+      await page.type("first of two");
+      await page.tap("#session .chat-footer .send");
+      await page.waitFor(`document.querySelector('#toasts')?.textContent.includes('Sent to web-shop › chatting on a phone.') && ${box}.value === ''`);
+      assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), true);
+      assert.deepEqual(store.takeInbox("chatting").map((e) => e.answer), ["first of two"]);
+      await page.press("Escape");
+    });
+
+    it("slides the tab bar away only once a keyboard is up, with nothing moving under the finger", async () => {
+      const done = asking("kbd-room", "room for the keyboard");
+      try {
+        const page = await phone();
+        await page.click(".qrow", "room for the keyboard");
+        const box = "document.querySelector('.next textarea')";
+        await page.waitFor(`${box} && document.getAnimations().length === 0`);
+        const where = `[Math.round(scrollY), Math.round(${box}.getBoundingClientRect().top), document.documentElement.scrollHeight]`;
+        await page.eval("window.scrollTo(0, document.documentElement.scrollHeight)");
+        const before = await page.eval<number[]>(where);
+        await page.eval(`${box}.focus({ preventScroll: true })`);
+        await page.eval("new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))");
+        assert.deepEqual(await page.eval<number[]>(where), before, "focus alone moves nothing: the keyboard may not even come");
+        const bar = "getComputedStyle(document.querySelector('.tabbar')).visibility";
+        assert.equal(await page.eval<string>(bar), "visible");
+        // As Android with interactive-widget=resizes-content: the whole viewport shrinks for the keyboard.
+        await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 508, deviceScaleFactor: 1, mobile: true });
+        await page.waitFor(`document.documentElement.hasAttribute('data-keyboard') && ${bar} === "hidden"`);
+        assert.ok(await page.eval<boolean>("document.querySelector('.tabbar').getBoundingClientRect().top >= innerHeight"), "slid below the screen");
+        await page.eval(`${box}.blur()`);
+        await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+        await page.waitFor(`!document.documentElement.hasAttribute('data-keyboard') && ${bar} === "visible"`);
+      } finally {
+        done();
+      }
+    });
+
+    it("under a keyboard that covers the page, as iOS's, turns compact, sits on the keyboard, and toasts come from the top", async () => {
+      const done = asking("compact", "compact under the keyboard");
+      try {
+        const page = await phone(390, 844, coveringKeyboard(844));
+        await openPanel(page, "compact under the keyboard");
+        const box = "document.querySelector('#session .chat-footer textarea')";
+        await page.tap("#session .chat-footer textarea");
+        await page.eval("setKeyboard(336)");
+        await page.waitFor("document.documentElement.hasAttribute('data-compact')");
+        const fit = await page.eval<Record<string, unknown>>(`(() => {
+          const foot = document.querySelector('#session .chat-footer');
+          return { chips: getComputedStyle(document.querySelector('#session .pchips')).display, kind: getComputedStyle(document.querySelector('#session .panel-question > .meta')).display,
+            onKeyboard: 508 - ${box}.getBoundingClientRect().bottom, roomLeft: foot.getBoundingClientRect().height < 508 * 0.45 };
+        })()`);
+        assert.deepEqual(fit, { chips: "none", kind: "none", onKeyboard: 8, roomLeft: true });
+        await page.tap("#session .opts button", "Green");
+        await page.tap("#session .chat-footer .send");
+        await page.waitFor("document.querySelector('.toast')?.textContent.includes('Answer sent')");
+        assert.ok(await page.eval<boolean>("document.querySelector('.toast').getBoundingClientRect().bottom < 120"), "over the window's head, not over the box");
+        await page.press("Escape");
+      } finally {
+        done();
+      }
+    });
+  });
+
+  it("keeps the large card's shape when its session starts or stops listening", async () => {
+    store.upsertSession({ id: "flipping", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "listening on and off", state: "waiting" });
+    const asked = store.ask({ sessionId: "flipping", kind: "question", text: "Does the card hold still?", options: ["Yes", "No"] });
+    try {
+      const page = await open();
+      await page.click(".qrow", "Does the card hold still?");
+      const card = "document.querySelector('.next')";
+      await page.waitFor(`${card}?.textContent.includes('Does the card hold still?') && document.getAnimations().length === 0`);
+      const height = () => page.eval<number>(`${card}.getBoundingClientRect().height`);
+      const off = await height();
+      assert.equal(await page.eval<string>(`${card}.querySelector('textarea').placeholder`), "Answer in its terminal");
+      const stop = store.listen("flipping");
+      await page.waitFor(`!${card}.querySelector('.answer.off')`);
+      assert.equal(await height(), off, "the box, the options and the link stay where they were");
+      stop();
+      await page.waitFor(`${card}.querySelector('.answer.off')`);
+      assert.equal(await height(), off);
+    } finally {
+      store.dismiss(asked.id);
+    }
   });
 
   it("closes only the zoom with Escape, then the result", async () => {
