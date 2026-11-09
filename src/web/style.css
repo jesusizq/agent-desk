@@ -701,7 +701,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .pchips .chip.quiet { color: var(--faint); }
 .caret { font-size: 0.625rem; color: var(--faint); }
 .ppart { padding-bottom: 12px; }
-.ppart > .rsec:first-child { margin-top: 4px; }
+.ppart > .back + * { margin-top: 8px; } /* the way back sits close to the part it closes */
 /* As in a chat app, a short conversation rests on the answer box, the free room above it. */
 .conversation.chat { max-height: none; overflow: visible; padding: 0; gap: 18px; margin-top: auto; }
 .panel-question { display: grid; gap: 8px; }
@@ -794,6 +794,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   dialog .session-body .pchips > * { flex: none; }
   .chat-footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
   .ppart > .flow-sec { order: 1; } /* on a small screen the list comes first, the flow after it */
+  .ppart > .back + .flow-sec { margin-top: 16px; }
+  .ppart > .back + .flow-sec + * { margin-top: 8px; }
   .ppart { display: flex; flex-direction: column; }
   .suggest { flex-wrap: wrap; }
   .conversation, .lastmsg { max-height: min(420px, 60dvh); }
@@ -1026,5 +1028,5 @@ body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--v
 .menu-credit a:hover { background: var(--surface-2); color: var(--text); }
 .menu-credit .i { width: 15px; height: 15px; }
 .sizes .a0 { font-size: 0.75rem; } .sizes .a1 { font-size: 0.875rem; } .sizes .a2 { font-size: 1rem; } .sizes .a3 { font-size: 1.125rem; }
-.ppart .back { align-self: flex-start; margin-bottom: 4px; }
+.ppart .back { align-self: flex-start; }
 .done-count { font-size: 0.7188rem; margin-left: 4px; white-space: nowrap; }

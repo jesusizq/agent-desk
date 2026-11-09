@@ -1473,4 +1473,20 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     );
     await page.press("Escape");
   });
+
+  it("on a touch phone, opens a part of the session panel from its top, right under the way back", async () => {
+    const page = await touchPanel();
+    await page.click("#session .pchips button.chip", "agents");
+    await page.waitFor("document.querySelector('#session .ppart .alist')");
+    const [above, below] = await page.eval<[number, number]>(`(() => {
+      const range = document.createRange();
+      range.selectNodeContents(document.querySelector('#session .ppart .back'));
+      const back = range.getBoundingClientRect();
+      const first = Math.min(...[...document.querySelectorAll('#session .ppart > .rsec')].map((s) => s.getBoundingClientRect().top));
+      return [back.top - document.querySelector('#session .pchips').getBoundingClientRect().bottom, first - back.bottom];
+    })()`);
+    assert.ok(above > 0, `the way back is in view, under the chips: ${above}`);
+    assert.ok(Math.abs(above - below) <= 4, `as much room under the way back as above it: ${above} above, ${below} below`);
+    await page.press("Escape");
+  });
 });

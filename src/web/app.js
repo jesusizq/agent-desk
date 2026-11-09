@@ -1592,10 +1592,11 @@ function openSession(sid) {
   fitNewBoxes(d);
   const shownBody = d.querySelector(".session-body");
   if (samePart && shownBody) shownBody.scrollTop = scrolled;
+  else if (ui.panelPart && shownBody) shownBody.scrollTop = 0; // the kept body would keep the conversation's offset
   // The chip row scrolls sideways on a phone: a tap on a chip keeps it where it was.
   const chips = shownBody?.querySelector(".pchips");
   if (chips && !fresh) chips.scrollLeft = chipsLeft;
-  if (fresh || (samePart && atBottom) || (!samePart && !ui.panelPart)) {
+  if (!ui.panelPart && (!samePart || atBottom)) {
     // After layout, on whichever body is shown then: opening draws the panel twice in one go.
     requestAnimationFrame(() => {
       const shown = d.querySelector(".session-body");
