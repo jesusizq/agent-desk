@@ -2531,8 +2531,12 @@ document.addEventListener("touchstart", () => {}, { passive: true });
 for (const event of ["scroll", "touchmove"]) dialog("session").addEventListener(event, () => (ui.panelTouchedAt = Date.now()), { capture: true, passive: true });
 for (const id of ["result", "session", "zoom"]) {
   const d = dialog(id);
+  // A press inside that is released on the backdrop (selecting text) clicks the dialog itself: only one that starts there closes it.
+  let pressedBackdrop = false;
+  d.addEventListener("pointerdown", (e) => (pressedBackdrop = e.target === d));
   d.addEventListener("click", (e) => {
-    if (e.target === d) d.close();
+    if (e.target === d && pressedBackdrop) d.close();
+    pressedBackdrop = false;
   });
 }
 /** Links into the page: #history, #needs, #s=<session id>, #r=<result id>. */
