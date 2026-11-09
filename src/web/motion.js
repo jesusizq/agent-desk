@@ -188,6 +188,11 @@ function animateGrid({ list, was, now, added }, leaving, t) {
   kept.forEach((el, i) => slide(el, /** @type {DOMRect} */ (was.get(el)), starts[i], t));
 }
 
+/** Ends at once every movement under `scope`: gone cards leave, the rest stand where the layout puts them. @param {Element} scope */
+export function stopLists(scope) {
+  for (const a of scope.getAnimations({ subtree: true })) if (a.id === MOTION) a.cancel();
+}
+
 /** A card on its way out: not focusable, not clickable, not read aloud, left alone by the redraws. @param {HTMLElement} el */
 function leave(el) {
   stop(el);

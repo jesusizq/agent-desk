@@ -1,7 +1,7 @@
 // @ts-check
 // The desk page: polls the store through the local server and renders it. All strings live in text.js.
 import { byId, dialog, h, icon, md, mdBlocks, on, onKept, patch, svgEl } from "./dom.js";
-import { animateLists, bump, fadeIn, grow } from "./motion.js";
+import { animateLists, bump, fadeIn, grow, stopLists } from "./motion.js";
 import { TEXT } from "./text.js";
 
 // The most images one answer or message carries, as the server allows (ATTACHED_IMAGES_MAX in protocol.ts).
@@ -512,7 +512,7 @@ function renderHeader() {
   patch(
     projects,
     ...[null, ...names].map((name) =>
-      h("button", { "data-key": name ?? "", "aria-pressed": String(ui.project === name), title: name, onclick: () => ((ui.project = name), render()) }, name ? projectMark(name) : TEXT.allProjects),
+      h("button", { "data-key": name ?? "", "aria-pressed": String(ui.project === name), title: name, onclick: () => ((ui.project = name), render({ instant: true })) }, name ? projectMark(name) : TEXT.allProjects),
     ),
   );
   const pill = byId("needs-pill");
@@ -2540,9 +2540,11 @@ function dayLabel(iso) {
 // ---------- Render ----------
 /**
  * Redraws the view: only what changed changes, so the scroll of every part, the focused element, the
- * text selected and what is under the pointer stay; cards that come, go or move are animated.
+ * text selected and what is under the pointer stay; cards that come, go or move are animated, unless
+ * `instant` (the developer switched what is shown: it changes at once, as a navigation does).
+ * @param {{ instant?: boolean }} [how]
  */
-function renderView() {
+function renderView({ instant = false } = {}) {
   document.body.dataset.tab = ui.tab;
   const view = byId("view");
   const placeholder = view.querySelector(".board[aria-busy]") !== null;
@@ -2550,10 +2552,14 @@ function renderView() {
   const scrolls = new Map();
   for (const el of view.querySelectorAll("[data-scroll]")) if (el instanceof HTMLElement && el.dataset.scroll) scrolls.set(el.dataset.scroll, el.scrollTop);
   const pageScroll = window.scrollY;
-  animateLists(view, () => {
+  const draw = () => {
     patch(view, !ui.loaded ? skeleton() : ui.view === "history" ? historyView() : board());
     fitNewBoxes(view);
-  });
+  };
+  if (instant) {
+    stopLists(view);
+    draw();
+  } else animateLists(view, draw);
   for (const el of view.querySelectorAll("[data-scroll]")) {
     const top = el instanceof HTMLElement && el.dataset.scroll ? scrolls.get(el.dataset.scroll) : undefined;
     if (top !== undefined) el.scrollTop = top;
@@ -2678,10 +2684,11 @@ function skeleton() {
     h("section", { class: `col col-${key}` }, h("div", { class: "col-head" }, h("span", { class: "skel", style: "width:90px;height:14px" })), h("div", { class: "col-body" }, heights.map((px) => h("div", { class: "skel", style: `height:${px}px` }))));
   return h("main", { class: "board", "aria-busy": "true", "data-tab": ui.tab }, col("needs", [230, 54, 54]), col("sessions", [104, 132, 104]), col("review", [150]));
 }
-function render() {
+/** @param {{ instant?: boolean }} [how] */
+function render(how) {
   renderHeader();
   renderStrip();
-  renderView();
+  renderView(how);
   renderPanel();
 }
 
