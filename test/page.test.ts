@@ -836,6 +836,27 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         done();
       }
     });
+
+    it("on a short phone, a long draft under the keyboard keeps the question, the box's end and Send above the keyboard", async () => {
+      const done = asking("short", "a long draft on a short phone");
+      try {
+        const page = await phone(375, 667, coveringKeyboard(667));
+        await openPanel(page, "a long draft on a short phone");
+        await page.tap("#session .chat-footer textarea");
+        await page.eval("setKeyboard(260)");
+        await page.waitFor("document.documentElement.hasAttribute('data-compact')");
+        for (let i = 0; i < 9; i++) await page.type(`Line ${i} of a long draft\n`);
+        const fit = await page.eval<Record<string, unknown>>(`(() => {
+          const foot = document.querySelector('#session .chat-footer'), box = foot.querySelector('textarea'), send = foot.querySelector('.send');
+          return { footScrolls: foot.scrollHeight - foot.clientHeight, question: foot.querySelector('.qtext').getBoundingClientRect().top >= foot.getBoundingClientRect().top,
+            boxOnKeyboard: 407 - Math.round(box.getBoundingClientRect().bottom), sendOnKeyboard: 407 - Math.round(send.getBoundingClientRect().bottom), boxScrolls: box.scrollHeight > box.clientHeight };
+        })()`);
+        assert.deepEqual(fit, { footScrolls: 0, question: true, boxOnKeyboard: 8, sendOnKeyboard: 8, boxScrolls: true });
+        await page.press("Escape");
+      } finally {
+        done();
+      }
+    });
   });
 
   it("keeps the large card's shape when its session starts or stops listening", async () => {

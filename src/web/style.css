@@ -866,7 +866,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 :root[data-compact] .panel-question .qtext { font-size: 0.875rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 :root[data-compact] .chat-footer .answer .opts { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 :root[data-compact] .chat-footer .answer .opts button { flex: none; }
-:root[data-compact] .chat-footer .answer textarea { max-height: calc(var(--viewport-height, 100dvh) * .3); }
+/* The box takes what the foot's cap leaves (app.js measures the rest), so the foot never scrolls the Send button away. */
+:root[data-compact] .chat-footer .answer textarea { max-height: min(calc(var(--viewport-height, 100dvh) * .3), calc(var(--viewport-height, 100dvh) * .55 - var(--footer-rest, 0px))); }
 :root[data-keyboard] dialog.sess .pchips { display: none; }
 /* The keyboard covers the home indicator: the box sits right on the keyboard. */
 :root[data-keyboard] .chat-footer { padding-bottom: 8px; }

@@ -829,6 +829,9 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
 function fitBox(box) {
   if (!box.getClientRects().length) return; // not laid out yet (a window still closed): fitted when it is
   box.style.height = "auto";
+  // What the panel's foot holds besides the box, at the box's smallest: style.css gives the box the rest of the foot's cap.
+  const foot = box.closest(".chat-footer");
+  if (foot instanceof HTMLElement) foot.style.setProperty("--footer-rest", `${foot.scrollHeight + foot.clientTop - box.offsetHeight}px`);
   box.style.height = `${box.scrollHeight + 2}px`;
 }
 /** Fits the boxes a redraw just placed, in the same frame: one drawn at its default height first would push the page down a frame later. @param {ParentNode} root */
