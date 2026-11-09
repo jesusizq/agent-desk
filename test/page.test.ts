@@ -1318,4 +1318,102 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.notEqual(await page.eval<string>("getComputedStyle(document.querySelector('header .search')).boxShadow"), "none", "the search box shows it has the focus");
     assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('.scard')).webkitTapHighlightColor"), "rgba(0, 0, 0, 0)");
   });
+
+  describe("on a desktop window", () => {
+    const LONG = "The current session cookies are stored in Redis with a 30 day expiry, and the refresh logic lives in three different services that each re-implement the same validation; moving to short-lived JWT means we need a token service with rotation and a revocation list so that a user can revoke a single device from the account page. Which storage should the token service use for the revocation list, Postgres or Redis?";
+    let long: string;
+    before(() => {
+      store.upsertSession({ id: "far-project", provider: "Test", project: { name: "customer-portal-monorepo-infrastructure", dir: "/home/demo/Projects/customer-portal-monorepo-infrastructure" }, title: "Migrate the authentication flow from session cookies to short-lived JWT access tokens", state: "waiting" });
+      long = store.ask({ sessionId: "far-project", kind: "question", text: LONG, options: ["Postgres, with a nightly cleanup job", "Redis, with the same TTL as the refresh token"] }).id;
+    });
+    after(() => {
+      store.dismiss(long);
+      store.updateSession("far-project", (s) => ({ ...s, state: "ended" }));
+    });
+    const rect = (sel: string) => `JSON.parse(JSON.stringify(document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect()))`;
+
+    it("keeps every header control on screen with three projects, from 900 to 1450 px", async () => {
+      const page = await open(1024, 768);
+      await page.waitFor("document.querySelectorAll('#projects button').length === 4");
+      for (const width of [900, 1024, 1180, 1280, 1450]) {
+        await page.resize(width, 768);
+        const m = await page.eval<{ over: number; right: number; search: number; pill: boolean }>(`(() => {
+          const hd = document.querySelector('header.top'), pill = document.getElementById('needs-pill');
+          return { over: hd.scrollWidth - hd.clientWidth, right: document.getElementById('theme').getBoundingClientRect().right, search: document.querySelector('header .search').getBoundingClientRect().width, pill: pill.scrollWidth <= pill.clientWidth };
+        })()`);
+        assert.equal(m.over, 0, `the header does not overflow at ${width} px`);
+        assert.ok(m.right <= width, `Display stays on screen at ${width} px`);
+        assert.ok(m.search >= 150, `the search keeps a usable width at ${width} px (${m.search})`);
+        assert.ok(m.pill, `the needs pill is whole at ${width} px`);
+        if (width === 1024) assert.ok(await page.eval<boolean>("document.getElementById('projects').scrollWidth > document.getElementById('projects').clientWidth"), "the projects scroll instead");
+      }
+    });
+
+    it("keeps the header's controls in place when a view or project is picked", async () => {
+      const page = await open(1440, 900);
+      const at = () => page.eval<number[]>("['#alerts', '#needs-pill', '#projects button:last-child'].map((s) => Math.round(document.querySelector(s).getBoundingClientRect().right))");
+      const before = await at();
+      await page.click("#projects button", "invoices-api");
+      await page.click("#views button", "History");
+      await page.waitFor("document.querySelector('.wrap')");
+      const [alerts, , lastProject] = await at();
+      assert.deepEqual([alerts, lastProject], [before[0], before[2]], "nothing moves sideways");
+      assert.equal(Math.round(await page.eval<number>(`${rect("#needs-pill")}.right`)), before[1], "the needs pill stays where it was");
+      await page.click("#views button", "Desk");
+      await page.click("#projects button", "All");
+    });
+
+    it("cuts a long session name before the age in the large card", async () => {
+      const page = await open(1024, 768);
+      await page.click(".qrow", "token service");
+      await page.waitFor("document.querySelector('.next')?.textContent.includes('Postgres or Redis?')");
+      const m = await page.eval<{ where: number; age: number; card: number }>(`(() => {
+        const meta = document.querySelector('.next .meta');
+        return { where: meta.querySelector('.where').getBoundingClientRect().right, age: meta.querySelector('.age').getBoundingClientRect().left, card: document.querySelector('.next').getBoundingClientRect().right };
+      })()`);
+      assert.ok(m.where <= m.age, "the session's name ends before the age");
+      assert.ok(m.age < m.card, "the age stays inside the card");
+    });
+
+    it("shows a long question whole in its session's panel", async () => {
+      const page = await open(1280, 800);
+      await page.click(".scard", "Migrate the authentication");
+      await page.waitFor(arrived("session"));
+      assert.match(await page.eval<string>("document.querySelector('#session .panel-question').textContent"), /Postgres or Redis\?/);
+      await page.press("Escape");
+    });
+
+    it("lines up the inbox rows' times whatever the kind of row", async () => {
+      const page = await open(1280, 800);
+      const rows = await page.eval<{ time: number; text: number }[]>("[...document.querySelectorAll('.qrow')].map((r) => ({ time: Math.round(r.querySelector('.qwhen').getBoundingClientRect().right), text: Math.round(r.querySelector('.qbody').getBoundingClientRect().left) }))");
+      assert.ok(rows.length >= 3, "questions and a failure in the list");
+      assert.equal(new Set(rows.map((r) => r.time)).size, 1, `one column of times: ${JSON.stringify(rows)}`);
+      assert.equal(new Set(rows.map((r) => r.text)).size, 1, "one left edge for the text");
+    });
+
+    it("grows the right column with the window, keeps a dragged width, and caps the inbox", async () => {
+      const page = await open(1920, 1080);
+      const side = () => page.eval<number>(`Math.round(${rect(".col-sessions")}.width)`);
+      assert.equal(await side(), 560, "a wide window gives the sessions more room");
+      assert.ok((await page.eval<number>(`${rect(".next")}.width`)) <= 880, "the inbox keeps a reading width");
+      await page.resize(1280, 800);
+      assert.equal(await side(), 384);
+      await page.eval("document.querySelector('.split').focus()");
+      await page.press("ArrowLeft");
+      assert.equal(await side(), 400, "the splitter still sets the width");
+      await page.resize(1920, 1080);
+      assert.equal(await side(), 400, "and a set width stays set");
+      await page.eval("document.querySelector('.split').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
+      assert.equal(await side(), 560, "a double click goes back to the window's width");
+    });
+
+    it("fades a list where its scroll area cuts it, and only there", async () => {
+      const page = await open(1280, 600);
+      const cut = () => page.eval<string | null>("document.querySelector('.col-sessions .col-body').dataset.cut ?? null");
+      assert.equal(await cut(), "end", "cut at the bottom only");
+      await page.eval("(() => { const b = document.querySelector('.col-sessions .col-body'); b.scrollTop = b.scrollHeight; })()");
+      await page.waitFor("document.querySelector('.col-sessions .col-body').dataset.cut === 'start'");
+      assert.notEqual(await page.eval<string>("getComputedStyle(document.querySelector('.col-sessions .col-body')).maskImage"), "none");
+    });
+  });
 });
