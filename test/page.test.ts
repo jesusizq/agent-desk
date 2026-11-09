@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import { procInfo } from "../src/core/proc.ts";
 import { Store } from "../src/store/store.ts";
 import { Browser, findChrome, type Page } from "./browser.ts";
@@ -28,13 +28,19 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     ({ base, close } = await serve(store));
     browser = await Browser.launch(chrome ?? "");
   });
+  // A test's pages close with it: left open, every one would chime at each new question, and past a
+  // few dozen at once the browser has no audio stream left for them.
+  afterEach(async () => {
+    const done = pages.splice(0);
+    await Promise.all(done.map((page) => page.close()));
+    for (const page of done) assert.deepEqual(page.errors, [], "the page reports no errors");
+  });
   after(async () => {
     try {
       await browser?.close();
     } finally {
       await close?.();
     }
-    for (const page of pages) assert.deepEqual(page.errors, [], "the page reports no errors");
   });
 
   /** The desk loaded at a window size, its data drawn. */

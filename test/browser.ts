@@ -84,7 +84,7 @@ export class Browser {
   async newPage(width: number, height: number): Promise<Page> {
     const { targetId } = await this.send<{ targetId: string }>("Target.createTarget", { url: "about:blank" });
     const { sessionId } = await this.send<{ sessionId: string }>("Target.attachToTarget", { targetId, flatten: true });
-    const page = new Page(this, sessionId);
+    const page = new Page(this, sessionId, targetId);
     this.listeners.set(sessionId, (m) => page.onEvent(m));
     await Promise.all(["Page.enable", "Runtime.enable", "Log.enable"].map((m) => page.send(m)));
     await page.resize(width, height);
@@ -109,10 +109,17 @@ export class Page {
 
   private readonly browser: Browser;
   private readonly sessionId: string;
+  private readonly targetId: string;
 
-  constructor(browser: Browser, sessionId: string) {
+  constructor(browser: Browser, sessionId: string, targetId: string) {
     this.browser = browser;
     this.sessionId = sessionId;
+    this.targetId = targetId;
+  }
+
+  /** Closes the tab, so it no longer reacts to the store (a chime of its own, a stream of the browser's). */
+  async close(): Promise<void> {
+    await this.browser.send("Target.closeTarget", { targetId: this.targetId });
   }
 
   send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
