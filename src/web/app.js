@@ -59,6 +59,8 @@ const ui = {
   /** when the developer last scrolled or touched the session panel */ panelTouchedAt: 0,
   /** @type {number | undefined} a redraw of the panel put off while it is scrolled */ panelLater: undefined,
   /** @type {Set<string>} */ sending: new Set(),
+  /** @type {Map<string, Outgoing>} what was sent from a session's conversation, shown there until the conversation holds it */ outbox: new Map(),
+  /** the session panel scrolls to its newest message at its next drawing */ panelToEnd: false,
   /** @type {Map<string, number>} questions answered from the desk, shown answered on their card until then */ resolved: new Map(),
   /** @type {string | null} a question answered with the keys: the box that replaces it takes the focus */ focusAfter: null,
   /** @type {{ key: string, until: number } | null} the session control waiting for its confirming click */ armed: null,
@@ -266,15 +268,28 @@ const NO_ANSWER_MS = 8000;
 function saveDrafts() {
   const drafts = [...ui.drafts].filter(([, text]) => text);
   const images = [...ui.draftImages].filter(([, ids]) => ids.length);
-  if (drafts.length || images.length) localStorage.setItem(DRAFTS_KEY, JSON.stringify({ drafts, images }));
+  // What could not be sent is kept too, until it is sent again or taken back into its box.
+  const unsent = [...ui.outbox.values()].filter((o) => o.state === "failed").map(({ id, key, sid, text, images, error }) => ({ id, key, sid, text, images, error }));
+  if (drafts.length || images.length || unsent.length) localStorage.setItem(DRAFTS_KEY, JSON.stringify({ drafts, images, unsent }));
   else localStorage.removeItem(DRAFTS_KEY);
+}
+/** A message kept as not sent, as saveDrafts wrote it. @param {unknown} v @returns {v is Omit<Outgoing, "state" | "before">} */
+function isUnsent(v) {
+  if (typeof v !== "object" || v === null) return false;
+  const o = /** @type {Record<string, unknown>} */ (v);
+  const strings = ["id", "key", "sid", "text", "error"].every((k) => typeof o[k] === "string");
+  return strings && Array.isArray(o.images) && o.images.every((i) => typeof i === "string") && ID.test(String(o.sid)) && routeOf(String(o.key)) !== null;
 }
 const savedDrafts = localStorage.getItem(DRAFTS_KEY);
 if (savedDrafts !== null) {
   try {
-    const kept = /** @type {{ drafts: [string, string][], images: [string, string[]][] }} */ (JSON.parse(savedDrafts));
+    const kept = /** @type {{ drafts: [string, string][], images: [string, string[]][], unsent?: unknown[] }} */ (JSON.parse(savedDrafts));
+    const unsent = kept.unsent ?? [];
+    const bad = unsent.find((o) => !isUnsent(o));
+    if (bad !== undefined) throw new Error(`a message not sent is unreadable: ${JSON.stringify(bad)}`);
     ui.drafts = new Map(kept.drafts);
     ui.draftImages = new Map(kept.images);
+    for (const o of unsent.filter(isUnsent)) ui.outbox.set(o.id, { ...o, state: "failed", before: 0 });
   } catch (error) {
     localStorage.removeItem(DRAFTS_KEY);
     toast(TEXT.pageError(`saved drafts unreadable, dropped: ${/** @type {Error} */ (error).message}`));
@@ -288,6 +303,7 @@ function dropStaleDrafts() {
     ui.drafts.delete(key);
     ui.draftImages.delete(key);
   }
+  for (const [id, o] of ui.outbox) if (!S(o.sid)) ui.outbox.delete(id);
   saveDrafts();
 }
 
@@ -671,7 +687,7 @@ function answerForm(q, middle = null) {
   // A permission prompt or a choice dialog is settled by its hook, which takes text only.
   const textOnly = q.kind === "permission" || q.dialog === true;
   const decide = decisionOf(q);
-  return replyBox(`answer-${q.id}`, decide ? [] : q.options, `/api/questions/${q.id}/answer`, q.sessionId, {
+  return replyBox(`answer-${q.id}`, decide ? [] : q.options, q.sessionId, {
     placeholder: !listening ? TEXT.notListeningShort : decide ? TEXT.permission.reason : undefined,
     hint: decide ? TEXT.permission.hint : undefined,
     decide,
@@ -704,19 +720,125 @@ async function uploadImage(file) {
   return body.id;
 }
 
+/** The route a draft's key sends to (an answer to its question, a message to its session), or null for no such key. @param {string} key */
+function routeOf(key) {
+  const [, kind, id] = /^(answer|message)-(.+)$/.exec(key) ?? [];
+  if (!id || !ID.test(id)) return null;
+  return kind === "answer" ? `/api/questions/${id}/answer` : `/api/sessions/${id}/message`;
+}
+/** Every box of a draft on the page: the panel and the inbox's card can both show a question. @param {string} key */
+const boxesOf = (key) => /** @type {HTMLTextAreaElement[]} */ ([...document.querySelectorAll(`textarea[data-key="${CSS.escape(key)}"]`)]);
+/**
+ * Shown on the boxes and buttons on the page at once, not at the next drawing: a panel being
+ * scrolled puts its redraw off, and the text must not look unsent meanwhile.
+ * @param {string} key @param {boolean} sending
+ */
+function markSending(key, sending) {
+  for (const el of boxesOf(key)) {
+    const off = el.getAttribute("aria-disabled") === "true"; // drawn inert: the session cannot take it now
+    el.readOnly = sending || off;
+    const answer = el.closest(".answer");
+    const button = answer?.querySelector(".send");
+    if (sending) button?.setAttribute("aria-busy", "true");
+    else button?.removeAttribute("aria-busy");
+    for (const b of answer?.querySelectorAll(".decide button") ?? []) if (b instanceof HTMLButtonElement) b.disabled = sending || off;
+  }
+}
+
+/**
+ * Something the developer sent from a session's conversation, shown there as a chat app shows it:
+ * sending, delivered, or not sent with the error and a way to send it again. `before` is how many
+ * messages from the desk with its text the conversation held when it was sent, to tell when the
+ * conversation fetched holds it. `fromBox`: its text left the box for the conversation as it was sent.
+ * @typedef {{ id: string, key: string, sid: string, text: string, images: string[], state: "sending" | "sent" | "failed", error?: string, before: number, sentAt?: number, fromBox?: boolean }} Outgoing
+ */
+let outgoingSeq = 0;
+/** @param {string} sid @param {string} text */
+const deskCount = (sid, text) => (ui.conversations.get(sid) ?? []).filter((m) => m.from === "developer" && m.via === "desk" && m.text === text).length;
+/** A draft whose text is in the conversation on its way: its box shows empty meanwhile, the draft kept until it is delivered. @param {string} key */
+const leftTheBox = (key) => [...ui.outbox.values()].some((o) => o.key === key && o.state === "sending" && o.fromBox);
+/**
+ * Sends `out` from the session's conversation, where it shows at once; delivered, `onSent` runs. On
+ * failure it stays in the conversation with the error, its text kept on the device, never in a toast.
+ * @param {Outgoing} out @param {() => void} [onSent]
+ */
+function deliver(out, onSent) {
+  const route = routeOf(out.key);
+  if (!route || ui.sending.has(out.key)) return;
+  out.state = "sending";
+  delete out.error;
+  out.before = deskCount(out.sid, out.text);
+  ui.outbox.set(out.id, out);
+  ui.sending.add(out.key);
+  markSending(out.key, true);
+  if (ui.panelSession === out.sid) {
+    ui.panelToEnd = true; // as a chat app, what is sent shows at the conversation's end
+    ui.panelTouchedAt = 0; // now: the developer's own action is not a scroll to wait out
+  }
+  saveDrafts();
+  renderPanel();
+  post(route, out.images.length ? { text: out.text, images: out.images } : { text: out.text })
+    .then(
+      () => {
+        out.state = "sent";
+        out.sentAt = Date.now();
+        saveDrafts();
+        onSent?.();
+      },
+      (/** @type {Error} */ e) => {
+        out.state = "failed";
+        out.error = e.message;
+        out.fromBox = false;
+        // Its text is the failed message's now, kept on the device with it: the box is free for the next one.
+        if (ui.drafts.get(out.key) === out.text) ui.drafts.delete(out.key);
+        if (out.images.length && (ui.draftImages.get(out.key) ?? []).join() === out.images.join()) ui.draftImages.delete(out.key);
+        saveDrafts();
+      },
+    )
+    .catch((/** @type {Error} */ e) => toast(e.message))
+    .finally(() => {
+      ui.sending.delete(out.key);
+      markSending(out.key, false);
+      render();
+    });
+}
+/** Once delivered: the panel shows the conversation with it, and an answered card says it is answered. @param {string} key @param {string} sid */
+function landed(key, sid) {
+  if (ui.panelSession === sid) {
+    ui.panelHeard = null; // the panel fetches the conversation again, with this message
+    ui.panelTouchedAt = 0; // and shows it now: the developer's own action is not a scroll to wait out
+  }
+  if (key.startsWith("answer-")) resolve(key.slice("answer-".length));
+}
+/** A message not sent goes back into its box, before what is there, to be changed or sent again. @param {Outgoing} out */
+function editUnsent(out) {
+  // An answer whose question closed meanwhile has no box: it becomes a message to its session.
+  const key = boxesOf(out.key).length ? out.key : `message-${out.sid}`;
+  ui.outbox.delete(out.id);
+  ui.drafts.set(key, [out.text, ui.drafts.get(key)].filter(Boolean).join("\n"));
+  if (out.images.length) ui.draftImages.set(key, [...out.images, ...(ui.draftImages.get(key) ?? [])].slice(0, ATTACHED_IMAGES_MAX));
+  saveDrafts();
+  render();
+  const box = boxesOf(key).at(-1);
+  if (box && !box.readOnly) box.focus();
+}
+
 /**
  * Text box (and option buttons) whose content is sent verbatim to a listening session, with the
  * images pasted into it or picked when `images` is set. Drafts survive re-renders. With `off` (why
  * the session cannot take it now) the same box is drawn inert, so it never jumps between states.
  * With `several`, each option toggles: the box holds the ones picked, in their order, separated by ", ".
  * With `decide` (a permission prompt), Allow and Deny send at once, and the box holds Deny's reason.
- * @param {string} key @param {string[]} options @param {string} route @param {string} sid
+ * Sent from a session's conversation, it shows there with how its delivery goes; elsewhere the card
+ * it answers says it is answered.
+ * @param {string} key `answer-<question id>` or `message-<session id>` @param {string[]} options @param {string} sid
  * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, several?: boolean, decide?: Decide | null, off?: string | null }} [how] `middle` is shown between the options and the box
  */
-function replyBox(key, options, route, sid, { placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, decide = null, off = null } = {}) {
-  /** Every box of this draft on the page: the panel and the inbox's card can both show a question. */
-  const boxes = () => /** @type {HTMLTextAreaElement[]} */ ([...document.querySelectorAll(`textarea[data-key="${CSS.escape(key)}"]`)]);
-  const attached = images ? (ui.draftImages.get(key) ?? []) : [];
+function replyBox(key, options, sid, { placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, decide = null, off = null } = {}) {
+  const route = routeOf(key);
+  if (!route) throw new Error(`a reply box for ${key}, which names no question or session`);
+  const boxes = () => boxesOf(key);
+  const attached = images && !leftTheBox(key) ? (ui.draftImages.get(key) ?? []) : [];
   const uploading = (ui.uploading.get(key) ?? 0) > 0;
   /** @param {Blob[]} files */
   const attach = (files) => {
@@ -726,53 +848,43 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
     }
     if (files.length > ATTACHED_IMAGES_MAX - attached.length) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
   };
-  /**
-   * Shown on the boxes and buttons on the page at once, not at the next drawing: a panel being
-   * scrolled puts its redraw off, and the text must not look unsent meanwhile.
-   * @param {boolean} sending
-   */
-  const showSending = (sending) => {
-    for (const el of boxes()) {
-      el.readOnly = sending || off !== null;
-      const answer = el.closest(".answer");
-      const button = answer?.querySelector(".send");
-      if (sending) button?.setAttribute("aria-busy", "true");
-      else button?.removeAttribute("aria-busy");
-      for (const b of answer?.querySelectorAll(".decide button") ?? []) if (b instanceof HTMLButtonElement) b.disabled = sending || off !== null;
-    }
-  };
   /** @param {Event} e @param {string} [text] what to send: the box's text unless a decision says otherwise */
   const send = (e, text = decide ? denial(decide, box.value) : box.value) => {
     // Read now, not as last drawn: a second click before the redraw must not send twice.
     if (off || (!text.trim() && attached.length === 0) || ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0) return;
-    ui.sending.add(key);
-    showSending(true);
     // An answered card leaves, and the keyboard with it; a message's box stays, as in a chat app.
     const answer = key.startsWith("answer-");
+    const from = (e.currentTarget instanceof Element ? e.currentTarget : box).closest("#session")?.id ?? "desk";
+    const delivered = () => {
+      ui.drafts.delete(key);
+      ui.draftImages.delete(key);
+      saveDrafts();
+      for (const el of boxes()) {
+        el.value = "";
+        fitBox(el);
+      }
+      landed(key, sid);
+      if (!answer || !(e instanceof KeyboardEvent)) return;
+      if (!document.querySelector("dialog[open]")) ui.focusAfter = key.slice("answer-".length);
+    };
     if (answer) box.blur();
-    run(
-      post(route, attached.length ? { text, images: attached } : { text }).then(() => {
-        ui.drafts.delete(key);
-        ui.draftImages.delete(key);
-        saveDrafts();
+    if (from === "session") {
+      // In the conversation, as a chat app: the text leaves the box for a bubble that says how its delivery goes.
+      const fromBox = text === box.value;
+      if (fromBox)
         for (const el of boxes()) {
           el.value = "";
           fitBox(el);
         }
-        if (ui.panelSession === sid) {
-          ui.panelHeard = null; // the panel fetches the conversation again, with this message
-          ui.panelTouchedAt = 0; // and shows it now: the developer's own action is not a scroll to wait out
-        }
-        if (answer) resolve(key.slice("answer-".length));
-        const where = label(S(sid));
-        toast(decide ? (text === decide.allow ? TEXT.permission.allowed(where) : TEXT.permission.denied(where)) : answer ? TEXT.sent(where) : TEXT.messageSent(where));
-        if (answer && e instanceof KeyboardEvent && !document.querySelector("dialog[open]")) ui.focusAfter = key.slice("answer-".length);
-      }),
-      () => {
-        ui.sending.delete(key);
-        showSending(false);
-      },
-    );
+      deliver({ id: `out-${++outgoingSeq}`, key, sid, text, images: attached, state: "sending", before: 0, fromBox }, delivered);
+      return;
+    }
+    ui.sending.add(key);
+    markSending(key, true);
+    run(post(route, attached.length ? { text, images: attached } : { text }).then(delivered), () => {
+      ui.sending.delete(key);
+      markSending(key, false);
+    });
   };
   /** The options the box holds: one, or with `several` a list of them; null when it holds anything else. @param {string} value */
   const picked = (value) => {
@@ -834,11 +946,11 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
         }
       : null,
   });
-  box.value = ui.drafts.get(key) ?? "";
+  box.value = leftTheBox(key) ? "" : (ui.drafts.get(key) ?? "");
   onKept(box, (live) => {
     box = live;
     // Written only when it differs (a message sent empties it): setting a value resets the keyboard too.
-    const draft = ui.drafts.get(key) ?? "";
+    const draft = leftTheBox(key) ? "" : (ui.drafts.get(key) ?? "");
     if (live.value !== draft) {
       live.value = draft;
       fitBox(live);
@@ -984,11 +1096,15 @@ function headline(text) {
 
 /** Fetches a session's conversation, then re-renders what shows it. @param {string} sid @param {() => void} then */
 function loadConversation(sid, then) {
+  const asked = Date.now();
   run(
     fetch(`/api/sessions/${encodeURIComponent(sid)}/messages`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
       .then((/** @type {ConversationEntry[]} */ list) => {
         ui.conversations.set(sid, list);
+        // What was sent and is now in the conversation itself leaves its stand-in: one more message with
+        // its text, or a fetch asked for after it was delivered (the conversation keeps its latest messages only).
+        for (const [id, o] of ui.outbox) if (o.sid === sid && o.state === "sent" && (deskCount(sid, o.text) > o.before || asked > (o.sentAt ?? Infinity))) ui.outbox.delete(id);
         then();
       }),
   );
@@ -1009,7 +1125,7 @@ function conversationView(list, whileWorking = new Set()) {
       { class: `msg from-${m.from}${m.step ? " step" : ""}`, "data-key": m.id },
       m.text.trim() ? h("div", { class: "md" }, mdBlocks(m.text, { breaks: m.from === "developer" })) : null,
       m.images?.length ? attachedImages(m.images) : null,
-      h("div", { class: "msg-meta" }, who ? [who, " · "] : null, hm(m.at), mark),
+      h("div", { class: "msg-meta" }, who ? [who, " · "] : null, hm(m.at), mark, m.via === "desk" ? deliveredMark() : null),
     );
   };
   /** @type {HTMLElement[]} */
@@ -1038,6 +1154,40 @@ function conversationView(list, whileWorking = new Set()) {
     i++;
   }
   return out;
+}
+
+/** The desk delivered it to the session's inbox, which hands it over at once. */
+const deliveredMark = () => h("span", { class: "delivered", role: "img", "aria-label": TEXT.conversation.delivered, title: TEXT.conversation.delivered }, icon("check"));
+
+/**
+ * What was sent from this conversation and is not in it yet, as the developer's last messages:
+ * sending, delivered, or not sent, with the error, Retry and Edit. @param {string} sid
+ */
+function outgoingView(sid) {
+  return [...ui.outbox.values()]
+    .filter((o) => o.sid === sid)
+    .map((o) =>
+      h(
+        "div",
+        { class: `msg from-developer out ${o.state}`, "data-key": o.id },
+        o.text.trim() ? h("div", { class: "md" }, mdBlocks(o.text, { breaks: true })) : null,
+        o.images.length ? attachedImages(o.images) : null,
+        h(
+          "div",
+          { class: "msg-meta", role: "status" },
+          TEXT.conversation.youDesk,
+          o.state === "sending" ? [" · ", TEXT.sending] : o.state === "sent" && o.sentAt ? [" · ", hm(new Date(o.sentAt).toISOString()), deliveredMark()] : null,
+        ),
+        o.state === "failed"
+          ? h(
+              "div",
+              { class: "unsent", role: "alert" },
+              h("span", { class: "unsent-why" }, TEXT.conversation.notSent(o.error ?? "")),
+              h("span", { class: "unsent-do" }, h("button", { class: "linkish", onclick: () => deliver(o, () => landed(o.key, o.sid)) }, TEXT.conversation.retry), h("button", { class: "linkish", onclick: () => editUnsent(o) }, TEXT.conversation.edit)),
+            )
+          : null,
+      ),
+    );
 }
 
 /** Images the developer attached on the desk, as thumbnails that open the zoom. @param {string[]} ids */
@@ -1775,7 +1925,8 @@ function openSession(sid) {
   // The chip row scrolls sideways on a phone: a tap on a chip keeps it where it was.
   const chips = shownBody?.querySelector(".pchips");
   if (chips && !fresh) chips.scrollLeft = chipsLeft;
-  if (!ui.panelPart && (!samePart || atBottom)) {
+  if (!ui.panelPart && (!samePart || atBottom || ui.panelToEnd)) {
+    ui.panelToEnd = false;
     // After layout, on whichever body is shown then: opening draws the panel twice in one go.
     requestAnimationFrame(() => {
       const shown = d.querySelector(".session-body");
@@ -1834,6 +1985,7 @@ function panelShows(s) {
     projectOf(s),
     ui.conversations.get(s.id)?.length,
     [...ui.draftImages, ...ui.uploading, ...ui.sending], // the box below: images attached, a message on its way
+    [...ui.outbox.values()].filter((o) => o.sid === s.id).map((o) => [o.id, o.state, o.error]),
     ui.offline && offlineText(),
     [...ui.stepsOpen],
     [...ui.contextOpen],
@@ -1866,7 +2018,8 @@ function chat(s) {
       "div",
       { class: "conversation chat", "aria-busy": !fetched },
       loading,
-      list.length ? conversationView(list, whileWorking) : fetched ? h("div", { class: "faint" }, TEXT.conversation.none) : null,
+      list.length ? conversationView(list, whileWorking) : fetched && !outgoingView(s.id).length ? h("div", { class: "faint" }, TEXT.conversation.none) : null,
+      outgoingView(s.id),
       workingNow(s, list),
     ),
     h(
@@ -1894,7 +2047,7 @@ function chat(s) {
             askBody(asking, { panel: true }),
           )
         : // One box whatever the session does, inert while it cannot take a message: the panel's foot never jumps.
-          replyBox(`message-${s.id}`, [], `/api/sessions/${s.id}/message`, s.id, {
+          replyBox(`message-${s.id}`, [], s.id, {
             placeholder: canReply ? (midTurn ? TEXT.workingPlaceholder : undefined) : s.state === "working" ? TEXT.workingNoMessages : TEXT.notListeningShort,
             hint: midTurn ? TEXT.sendHintWorking : undefined,
             off: canReply ? null : s.state === "working" ? TEXT.conversation.working : TEXT.notListening,

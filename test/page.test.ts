@@ -255,14 +255,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const button = "document.querySelector('#session .chat-footer .send')";
     const box = "document.querySelector('#session .chat-footer textarea')";
     const width = await page.eval<number>(`${box}.getBoundingClientRect().width`);
+    const mine = "[...document.querySelectorAll('#session .msg.from-developer')].filter((m) => m.textContent.includes('and push it when the tests pass'))";
     assert.deepEqual(
-      await page.eval(`(() => { const b = ${button}; b.click(); b.click(); return [b.getAttribute("aria-busy"), ${box}.readOnly, ${box}.getBoundingClientRect().width]; })()`),
-      ["true", true, width],
-      "it says at once that the message is on its way, without resizing the box",
+      await page.eval(`(() => { const b = ${button}; b.click(); b.click(); return [b.getAttribute("aria-busy"), ${box}.readOnly, ${box}.getBoundingClientRect().width, ${box}.value, ${mine}.map((m) => m.querySelector('.msg-meta').textContent)]; })()`),
+      ["true", true, width, "", ["You, from the desk · Sending…"]],
+      "it says at once, in the conversation, that the message is on its way, without resizing the box",
     );
-    await page.waitFor("document.querySelector('#toasts')?.textContent.includes('Sent to web-shop › release notes.')");
-    await page.waitFor(`${box}.value === '' && !${box}.readOnly && !${button}.hasAttribute("aria-busy")`);
+    await page.waitFor(`${mine}.length === 1 && ${mine}[0].querySelector('.msg-meta .delivered') && !${box}.readOnly && !${button}.hasAttribute("aria-busy")`);
+    assert.equal(await page.eval<string>(`${mine}[0].querySelector('.delivered').getAttribute('aria-label')`), "Delivered", "its tick is read out");
     assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"], "sent once");
+    await page.waitFor(`${mine}.length === 1 && !${mine}[0].classList.contains('out')`); // the conversation itself now holds it, once
+    assert.equal(await page.eval<number>("document.querySelectorAll('.toast').length"), 0, "no toast says it was sent");
   });
 
   it("opens what came earlier in a session on the turn right before its question", async () => {
@@ -510,7 +513,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("document.querySelector('#session .attached img')?.complete");
     assert.equal(await page.eval<string>("document.querySelector('#session .chat-footer textarea').value"), "like this one", "the text typed stays as it was");
     await page.click("#session .chat-footer .primary");
-    await page.waitFor("document.querySelector('#toasts')?.textContent.includes('hero picture')");
+    await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('like this one') && m.querySelector('.msg-imgs img') && m.querySelector('.delivered'))");
     const [entry] = store.takeInbox("with-image");
     assert.equal(entry?.answer, "like this one");
     assert.equal(entry?.images?.length, 1);
@@ -576,7 +579,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       // The buttons drawn around it act on the box that stayed.
       await page.type(" more");
       await page.eval("document.querySelector('#session .chat-footer .primary').click()"); // a tap on iOS leaves the focus in the box
-      await page.waitFor(`document.querySelector('#toasts')?.textContent.includes('writing on a phone') && ${box}?.value === ''`);
+      await page.waitFor(`[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('half more a thought') && m.querySelector('.delivered')) && ${box}?.value === ''`);
       assert.deepEqual(store.takeInbox("writing").map((e) => e.answer), ["half more a thought"]);
       assert.equal(await page.eval<boolean>(`${box} === kept`), true, "the box empties, it is not replaced");
     });
@@ -817,7 +820,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.waitFor(`document.activeElement === ${box}`);
       await page.type("first of two");
       await page.tap("#session .chat-footer .send");
-      await page.waitFor(`document.querySelector('#toasts')?.textContent.includes('Sent to web-shop › chatting on a phone.') && ${box}.value === ''`);
+      await page.waitFor(`[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('first of two') && m.querySelector('.delivered')) && ${box}.value === ''`);
       assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), true);
       assert.deepEqual(store.takeInbox("chatting").map((e) => e.answer), ["first of two"]);
       await page.press("Escape");
@@ -852,6 +855,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
     it("under a keyboard that covers the page, as iOS's, turns compact, sits on the keyboard, and toasts come from the top", async () => {
       const done = asking("compact", "compact under the keyboard");
+      store.upsertSession({ id: "compact-other", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "another session", state: "working" });
       try {
         const page = await phone(390, 844, coveringKeyboard(844));
         await openPanel(page, "compact under the keyboard");
@@ -867,7 +871,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         assert.deepEqual(fit, { chips: "none", kind: "none", onKeyboard: 8, roomLeft: true });
         await page.tap("#session .opts button", "Green");
         await page.tap("#session .chat-footer .send");
-        await page.waitFor("document.querySelector('.toast')?.textContent.includes('Answer sent')");
+        await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('Green') && m.querySelector('.delivered'))");
+        store.updateSession("compact-other", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Done elsewhere.", at: new Date().toISOString() } }));
+        await page.waitFor("document.querySelector('.toast')?.textContent.includes('another session')");
         assert.deepEqual(
           await page.eval("(() => { const t = document.querySelector('.toast').getBoundingClientRect(); return [t.top >= document.querySelector('#session .dhead').getBoundingClientRect().bottom, t.bottom < 508 / 2]; })()"),
           [true, true],
@@ -923,19 +929,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
     it("keeps a toast where it came in when the window it came over closes", async () => {
       store.upsertSession({ id: "toast-edge", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a toast's edge", takesMessagesWhileWorking: true });
+      store.upsertSession({ id: "toast-edge-other", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "finishing elsewhere", state: "working" });
       const page = await phone();
       await openPanel(page, "a toast's edge");
-      await page.tap("#session .chat-footer textarea");
-      await page.type("stay where you are");
-      await page.tap("#session .chat-footer .send");
-      const toast = "[...document.querySelectorAll('.toast')].find((t) => t.textContent.includes('a toast\\'s edge'))";
+      store.updateSession("toast-edge-other", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Finished over there.", at: new Date().toISOString() } }));
+      const toast = "[...document.querySelectorAll('.toast')].find((t) => t.textContent.includes('finishing elsewhere'))";
       await page.waitFor(`${toast} && !${toast}.getAnimations().length`);
       const top = await page.eval<number>(`${toast}.getBoundingClientRect().top`);
       assert.ok(top < 844 / 2, "over the window, it comes from the top");
       await page.press("Escape");
       await page.waitFor("!document.getElementById('session').open");
       assert.equal(await page.eval<number>(`${toast}.getBoundingClientRect().top`), top, "the window gone, it stays there until it leaves");
-      store.takeInbox("toast-edge");
     });
   });
 
@@ -1129,11 +1133,13 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     });
 
     it("slides a toast up when another arrives below it", async () => {
+      for (const n of [1, 2]) store.upsertSession({ id: `toasting-${n}`, provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: `toast ${n}`, state: "working" });
+      const finish = (n: number) => store.updateSession(`toasting-${n}`, (s) => ({ ...s, state: "waiting", lastMessage: { text: `Finished ${n}.`, at: new Date().toISOString() } }));
       const page = await open();
-      const first = store.ask({ sessionId: "demo-pagos", kind: "question", text: "First of two toasts?" });
+      finish(1);
       await page.waitFor("document.querySelectorAll('.toast').length === 1 && document.getAnimations().length === 0");
       await page.eval("window.tops = []; (function f() { const t = document.querySelector('.toast'); if (t) tops.push(Math.round(t.getBoundingClientRect().top)); if (tops.length < 120) requestAnimationFrame(f); })()");
-      const second = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Second of two toasts?" });
+      finish(2);
       try {
         await page.waitFor("document.querySelectorAll('.toast').length === 2 && document.getAnimations().length === 0");
         const tops = await page.eval<number[]>("tops");
@@ -1142,8 +1148,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         assert.ok(end < start - 20, `the first toast went up: ${start} → ${end}`);
         assert.ok(new Set(tops.filter((t) => t < start && t > end)).size >= 2, `through the places between: ${tops.join(" ")}`);
       } finally {
-        store.dismiss(first.id);
-        store.dismiss(second.id);
+        for (const n of [1, 2]) store.updateSession(`toasting-${n}`, (s) => ({ ...s, state: "ended" }));
       }
     });
 
@@ -1727,8 +1732,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         assert.equal(await page.eval<string>("document.querySelector('.next textarea').placeholder"), "Reason for denying (optional)");
         assert.equal(await page.eval<boolean>("document.querySelector('.next .send-hint').textContent.includes('exactly as written')"), false);
         await page.click(".next .allow");
+        await page.waitFor("document.querySelector('.next.resolved .resolved-line')?.textContent.includes('Allowed')");
+        assert.equal(await page.eval<number>("document.querySelectorAll('.toast').length"), 0, "the card says it, no toast");
         assert.deepEqual(await answers("permitting", 1), ["Allow"]);
-        await page.waitFor("document.querySelector('#toasts')?.textContent.includes('Allowed in web-shop › permission prompts')");
 
         prompt("Bash: make deploy");
         const row = "[...document.querySelectorAll('.qrow')].find((r) => r.textContent.includes('make deploy'))";
@@ -1896,6 +1902,38 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       store.markResultSeen(old.id);
     }
   });
+
+  it("a message that cannot be sent stays in the conversation with why and Retry, kept on the device, and Retry sends it once", async () => {
+    store.upsertSession({ id: "unsent", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a message that fails", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "a message that fails");
+    await page.click("#session .chat-footer textarea");
+    await page.type("deploy after lunch");
+    await page.eval(`(() => {
+      const real = window.fetch;
+      window.fetch = (url, init) => init?.method === "POST" && String(url).endsWith("/message") ? (window.fetch = real, Promise.resolve(new Response(JSON.stringify({ error: "the desk is busy" }), { status: 503 }))) : real(url, init);
+    })()`);
+    await page.click("#session .chat-footer .send");
+    const failed = "document.querySelector('#session .msg.out.failed')";
+    await page.waitFor(failed);
+    assert.deepEqual(
+      await page.eval(`[${failed}.querySelector('.md').textContent, ${failed}.querySelector('.unsent-why').textContent, document.querySelector('#session .chat-footer textarea').value, document.querySelectorAll('.toast').length]`),
+      ["deploy after lunch", "Not sent: the desk is busy", "", 0],
+      "the message stays where it was sent, saying why, with no toast; the box is free",
+    );
+    assert.equal(store.takeInbox("unsent").length, 0);
+    // Never lost: a reload shows it again, not sent.
+    await page.goto(base + "/");
+    await page.waitFor("document.querySelector('.scard')");
+    await page.click(".scard", "a message that fails");
+    await page.waitFor(failed);
+    await page.click("#session .msg.out.failed button", "Retry");
+    await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('deploy after lunch') && m.querySelector('.delivered')) && !document.querySelector('#session .msg.out.failed')");
+    assert.deepEqual(store.takeInbox("unsent").map((e) => e.answer), ["deploy after lunch"], "sent once, as written");
+    await page.waitFor("localStorage.getItem('agent-desk:drafts') === null");
+    await page.press("Escape");
+  });
+
   it("on a phone, a result's pictures read one under the other, each with its caption, and a tap opens it in the viewer", async () => {
     const page = await open(390, 844);
     await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });

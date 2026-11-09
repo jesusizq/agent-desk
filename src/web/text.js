@@ -143,20 +143,12 @@ export const TEXT = {
     reason: "Reason for denying (optional)",
     hint: "Allow lets it run now. Deny stops it, with the reason written here if there is one.",
     keys: "Ctrl+Enter denies with this reason.",
-    /** @param {string} where */
-    allowed: (where) => `Allowed in ${where}.`,
-    /** @param {string} where */
-    denied: (where) => `Denied in ${where}.`,
     allowedLine: "Allowed",
     deniedLine: "Denied",
   },
   dismiss: "Dismiss",
   dismissTitle: "Remove from the list without answering (it goes to the history)",
-  /** @param {string} where */
-  sent: (where) => `Answer sent to ${where}.`,
   answered: "Answered",
-  /** @param {string} where */
-  messageSent: (where) => `Sent to ${where}.`,
   /** @param {string} where */
   newQuestion: (where) => `New question in ${where}`,
   /** @param {string} where */
@@ -191,6 +183,11 @@ export const TEXT = {
     session: "Session",
     you: "You",
     youDesk: "You, from the desk",
+    delivered: "Delivered",
+    /** @param {string} error */
+    notSent: (error) => `Not sent: ${error}`,
+    retry: "Retry",
+    edit: "Edit",
     showEarlier: "Earlier in this session",
     hideEarlier: "Hide earlier messages",
     none: "Nothing earlier recorded.",

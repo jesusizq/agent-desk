@@ -718,6 +718,14 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .msg.step { color: var(--muted); }
 .msg-meta { font-size: 0.6875rem; color: var(--faint); margin-top: 3px; }
 .msg.from-developer .msg-meta { text-align: right; }
+/* Delivered, as a chat app marks it: a small tick after the time. */
+.msg-meta .delivered { display: inline-flex; vertical-align: -2px; margin-left: 4px; color: var(--done); }
+.msg-meta .delivered svg.i { width: 12px; height: 12px; stroke-width: 2.6; }
+.msg.out.sending { opacity: .72; }
+.msg.out.failed { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 55%, transparent); }
+.unsent { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 4px 12px; margin-top: 4px; font-size: 0.75rem; color: var(--danger); text-align: right; }
+.unsent-do { display: inline-flex; gap: 12px; }
+@media (prefers-reduced-motion: no-preference) { .msg.out { transition: opacity var(--dur-2) var(--ease-out); } }
 .steps-fold { align-self: flex-start; font-size: 0.7812rem; text-decoration: none; }
 .msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .msg-imgs img { height: 72px; max-width: 180px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); cursor: zoom-in; background: #fff; }
