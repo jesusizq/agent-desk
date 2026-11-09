@@ -2572,19 +2572,20 @@ function renderView({ instant = false } = {}) {
   const scrolls = new Map();
   for (const el of view.querySelectorAll("[data-scroll]")) if (el instanceof HTMLElement && el.dataset.scroll) scrolls.set(el.dataset.scroll, el.scrollTop);
   const pageScroll = window.scrollY;
+  // The scrolls come back as part of the redraw: the motion then starts from them, and may move them on.
   const draw = () => {
     patch(view, !ui.loaded ? skeleton() : ui.view === "history" ? historyView() : board());
     fitNewBoxes(view);
+    for (const el of view.querySelectorAll("[data-scroll]")) {
+      const top = el instanceof HTMLElement && el.dataset.scroll ? scrolls.get(el.dataset.scroll) : undefined;
+      if (top !== undefined) el.scrollTop = top;
+    }
+    window.scrollTo(0, pageScroll);
   };
   if (instant) {
     stopLists(view);
     draw();
   } else animateLists(view, draw);
-  for (const el of view.querySelectorAll("[data-scroll]")) {
-    const top = el instanceof HTMLElement && el.dataset.scroll ? scrolls.get(el.dataset.scroll) : undefined;
-    if (top !== undefined) el.scrollTop = top;
-  }
-  window.scrollTo(0, pageScroll);
   focusNextCard(view);
   // The first data takes the placeholders' place by fading in, not in one frame.
   if (placeholder && ui.loaded) fadeIn(view.firstElementChild, byId("needs-pill"), byId("strip"));

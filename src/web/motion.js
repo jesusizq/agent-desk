@@ -19,6 +19,18 @@ function tokens() {
   return { move: ms("--dur-3", 280), fade: ms("--dur-2", 180), easing: css.getPropertyValue("--ease-out").trim() || "ease-out" };
 }
 /** @typedef {ReturnType<typeof tokens>} Tokens */
+/** @typedef {Map<Element, { top: number, edge: number }>} Scrolls */
+
+/** The element whose scroll carries a list: the first one up that scrolls, else the document (a phone's). @param {Element} el */
+function scrollerOf(el) {
+  for (let e = /** @type {Element | null} */ (el); e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+    const y = getComputedStyle(e).overflowY;
+    if ((y === "auto" || y === "scroll") && e.scrollHeight > e.clientHeight) return e;
+  }
+  return document.scrollingElement ?? document.documentElement;
+}
+/** Where a scroll area starts showing its content, in the window. @param {Element} scroller */
+const viewTop = (scroller) => (scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top + scroller.clientTop);
 
 /** @param {Element} el */
 const shown = (el) => el.getClientRects().length > 0;
@@ -52,7 +64,9 @@ function tall(el, height = el.getBoundingClientRect().height) {
 export function animateLists(scope, update) {
   if (reducedMotion() || document.hidden) return update();
   const lists = [...scope.querySelectorAll("[data-list]")].filter(shown);
-  const before = lists.map((list) => ({ list, items: itemsOf(list).filter(shown).map((el) => ({ el, rect: el.getBoundingClientRect() })) }));
+  const before = lists.map((list) => ({ list, scroller: scrollerOf(list), items: itemsOf(list).filter(shown).map((el) => ({ el, rect: el.getBoundingClientRect() })) }));
+  /** @type {Scrolls} where each list's scroll area stood, and where it is to stand once its cards start moving */
+  const scrolls = new Map(before.map(({ scroller }) => [scroller, { top: scroller.scrollTop, edge: viewTop(scroller) }]));
   /** @type {Map<Element, number>} */
   const grows = new Map([...scope.querySelectorAll("[data-grow]")].map((el) => [el, el.getBoundingClientRect().height]));
   update();
@@ -62,10 +76,10 @@ export function animateLists(scope, update) {
   for (const { list, items } of before) for (const it of items) if (it.el.parentElement !== list) gone.set(flipId(it.el), { ...it, list });
   const changes = before
     .filter(({ list }) => list.isConnected && shown(list))
-    .map(({ list, items }) => {
+    .map(({ list, scroller, items }) => {
       const was = new Map(items.map((it) => [it.el, it.rect]));
       const now = itemsOf(list);
-      return { list, items, was, now, added: now.filter((el) => !was.has(el)) };
+      return { list, scroller, items, was, now, added: now.filter((el) => !was.has(el)) };
     });
   /** @type {Map<HTMLElement, Seen>} a new card, and the gone one it grows out of */
   const outOf = new Map();
@@ -90,24 +104,49 @@ export function animateLists(scope, update) {
     // A redraw that changed nothing here leaves what is still moving alone.
     if (!change.added.length && !leaving.length && !moved) continue;
     if (getComputedStyle(change.list).display === "grid") animateGrid(change, leaving, t);
-    else animateColumn(change, leaving, outOf, grows, t);
+    else animateColumn(change, leaving, outOf, grows, scrolls, t);
   }
 }
 
 /**
- * @param {{ list: Element, items: { el: HTMLElement, rect: DOMRect }[], was: Map<HTMLElement, DOMRect>, now: HTMLElement[], added: HTMLElement[] }} change
+ * @param {{ list: Element, scroller: Element, items: { el: HTMLElement, rect: DOMRect }[], was: Map<HTMLElement, DOMRect>, now: HTMLElement[], added: HTMLElement[] }} change
  * @param {{ el: HTMLElement, rect: DOMRect }[]} leaving @param {Map<HTMLElement, { el: HTMLElement, rect: DOMRect }>} outOf
- * @param {Map<Element, number>} grows the heights of the `data-grow` blocks before the redraw @param {Tokens} t
+ * @param {Map<Element, number>} grows the heights of the `data-grow` blocks before the redraw
+ * @param {Scrolls} scrolls where each scroll area stood before the redraw @param {Tokens} t
  */
-function animateColumn({ list, items, was, now, added }, leaving, outOf, grows, t) {
+function animateColumn({ list, scroller, items, was, now, added }, leaving, outOf, grows, scrolls, t) {
   for (const el of now) stop(el);
+  const gap = gapOf(list);
+  const scroll = scrolls.get(scroller) ?? { top: scroller.scrollTop, edge: viewTop(scroller) };
+  // A card that shrinks or folds from above the top of its scroll area loses its hidden part at once, the
+  // scroll going up as much: the motion starts from what shows, and the browser never clamps the scroll
+  // mid-way (the rows below would jump, the card's content scroll back).
+  /** @type {{ top: number, cut: number }[]} */
+  const cuts = [];
+  const cutSum = () => cuts.reduce((sum, c) => sum + c.cut, 0);
+  /** @param {DOMRect} rect @param {number} want */
+  const cutOf = (rect, want) => {
+    const cut = Math.min(want, scroll.top - cutSum());
+    if (cut <= 0.5) return 0;
+    cuts.push({ top: rect.top, cut });
+    return cut;
+  };
+  /** @param {DOMRect} rect */
+  const hidden = (rect) => Math.min(scroll.edge - rect.top, rect.height);
+  /** @type {{ el: HTMLElement, rect: DOMRect, cut: number }[]} */
+  const folding = [];
+  for (const g of leaving) {
+    const above = hidden(g.rect) >= g.rect.height - 0.5;
+    // Wholly out of sight, it goes at once, with the gap it held.
+    const cut = cutOf(g.rect, above ? g.rect.height + (items.length > 1 ? gap : 0) : hidden(g.rect));
+    if (cut < g.rect.height - 0.5) folding.push({ ...g, cut });
+  }
   // Gone cards come back for the length of their exit, where they were among the others.
-  for (const g of [...leaving].reverse()) {
-    const after = items.slice(items.indexOf(g) + 1).map((it) => (it.el.parentElement === list ? it.el : [...outOf].find(([, o]) => o.el === it.el)?.[0]));
+  for (const g of [...folding].reverse()) {
+    const after = items.slice(items.findIndex((it) => it.el === g.el) + 1).map((it) => (it.el.parentElement === list ? it.el : [...outOf].find(([, o]) => o.el === it.el)?.[0]));
     leave(g.el);
     list.insertBefore(g.el, after.find((el) => el?.parentElement === list) ?? null);
   }
-  const gap = gapOf(list);
   const ends = new Map(added.map((el) => [el, tall(el)]));
   const options = { duration: t.move, easing: t.easing, id: MOTION };
   // A card that stays but grows or shrinks (answered, a line more) changes height along the same curve.
@@ -118,18 +157,23 @@ function animateColumn({ list, items, was, now, added }, leaving, outOf, grows, 
     const height = el.getBoundingClientRect().height;
     if (!old || Math.abs(old.height - height) <= 0.5) continue;
     const inner = [...el.querySelectorAll("[data-grow]")].map((g) => ({ g, from: grows.get(g) ?? 0, to: g.getBoundingClientRect().height })).filter(({ from, to }) => Math.abs(from - to) > 0.5);
-    if (!inner.length) el.animate([{ height: `${old.height}px`, overflow: "hidden" }, { height: `${height}px`, overflow: "hidden" }], options);
-    for (const { g, from, to } of inner) g.animate([{ height: `${from}px`, overflow: "hidden" }, { height: `${to}px`, overflow: "hidden" }], options);
+    if (inner.length) {
+      for (const { g, from, to } of inner) g.animate([{ height: `${from}px`, overflow: "hidden" }, { height: `${to}px`, overflow: "hidden" }], options);
+      continue;
+    }
+    const from = old.height - (height < old.height ? cutOf(old, Math.min(hidden(old), old.height - height)) : 0);
+    if (Math.abs(from - height) > 0.5) el.animate([{ height: `${from}px`, overflow: "hidden" }, { height: `${height}px`, overflow: "hidden" }], options);
   }
-  for (const g of leaving) {
+  for (const g of folding) {
     const side = gapSide(g.el);
     const fold = g.el.animate(
       [
-        { ...tall(g.el, g.rect.height), overflow: "hidden", ...(side ? { [side]: "0px" } : {}) },
+        { ...tall(g.el, g.rect.height - g.cut), overflow: "hidden", ...(side ? { [side]: "0px" } : {}) },
         { ...FLAT, overflow: "hidden", ...(side ? { [side]: `${-gap}px` } : {}) },
       ],
       options,
     );
+    g.el.scrollTop = g.cut; // what showed of it stays in place as it folds
     fold.onfinish = fold.oncancel = () => g.el.remove();
     g.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: t.fade, easing: "ease-in", fill: "forwards", id: MOTION });
   }
@@ -149,13 +193,24 @@ function animateColumn({ list, items, was, now, added }, leaving, outOf, grows, 
       options,
     );
   }
+  // With every card at its start the content is as tall as before the redraw, less the cuts: the scroll
+  // goes back where it stood (the redraw may have clamped it), less the cuts, and what showed stays put.
+  scroll.top -= cutSum();
+  scrolls.set(scroller, scroll);
+  scroller.scrollTop = scroll.top;
   // Measured with the folds and openings at their start: as those run, the layout carries each card
-  // the rest of the way, along the same curve, so it ends where the redraw put it.
+  // the rest of the way, along the same curve, so it ends where the redraw put it. A card cut, and those
+  // above it, came down with the scroll: they start from there.
+  /** @param {DOMRect} rect */
+  const scrolled = (rect) => {
+    const by = cuts.reduce((sum, c) => (rect.top <= c.top + 0.5 ? sum + c.cut : sum), 0);
+    return by ? new DOMRect(rect.x, rect.y + by, rect.width, rect.height) : rect;
+  };
   /** @type {[HTMLElement, DOMRect][]} */
   const moves = [];
   for (const el of now) {
     const old = was.get(el) ?? outOf.get(el)?.rect;
-    if (old) moves.push([el, old]);
+    if (old) moves.push([el, scrolled(old)]);
   }
   const starts = moves.map(([el]) => el.getBoundingClientRect());
   moves.forEach(([el, old], i) => slide(el, old, starts[i], t));
