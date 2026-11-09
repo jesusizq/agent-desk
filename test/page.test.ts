@@ -1387,6 +1387,23 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('header .search')).display"), "none", "the projects take the row");
   });
 
+  it("keeps a result's window and the button under the pointer still when its comparison changes mode", async () => {
+    const page = await open(1400, 900);
+    await openResultOf(page, "Checkout: before and after");
+    await page.waitFor("[...document.querySelectorAll('#result img')].every((i) => i.complete)");
+    const place = () => page.eval<number[]>("[document.getElementById('result'), document.querySelector('#result .seg')].map((el) => Math.round(el.getBoundingClientRect().top))");
+    const height = () => page.eval<number>("Math.round(document.getElementById('result').getBoundingClientRect().height)");
+    const first = await place();
+    const tall = await height();
+    for (const mode of ["Side by side", "Slider"]) {
+      await page.click("#result .seg button", mode);
+      await page.waitFor(`document.querySelector('#result .seg button[aria-pressed=true]')?.textContent.includes(${JSON.stringify(mode)}) && [...document.querySelectorAll('#result img')].every((i) => i.complete)`);
+      if (mode === "Side by side") assert.notEqual(await height(), tall, "the comparison changes the window's height");
+      assert.deepEqual(await place(), first, `in ${mode}, the window's top and its buttons stay where they were`);
+    }
+    await page.press("Escape");
+  });
+
   it("on a phone, each tab keeps its scroll, and a tap on the tab shown goes back to its top", async () => {
     const page = await open(390, 600);
     await page.click(".tabbar button", "Sessions");

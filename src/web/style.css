@@ -225,7 +225,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* Dialogs: result, session panel, zoom */
 dialog { border: 0; padding: 0; color: var(--text); background: var(--surface); border-radius: 12px; box-shadow: var(--shadow-lg); }
 dialog::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(2px); }
-dialog.result { width: min(1040px, 96vw); max-height: 92vh; }
+/* Hung from the top, not centred: a change of its height (the compare's mode) leaves what is above in place. */
+dialog.result { width: min(1040px, 96vw); max-height: 92vh; margin-block: 4vh auto; }
 /* A session: centred and large, to read its conversation at a comfortable width. */
 dialog.sess { width: min(1180px, 94vw); height: min(92vh, 1000px); max-height: 92vh; }
 .dhead { display: flex; align-items: flex-start; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); z-index: 1; }
