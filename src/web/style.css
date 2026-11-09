@@ -219,13 +219,22 @@ dialog.sess .dbody { flex: 1 1 auto; min-height: 0; }
 .vimgs img { max-width: 100%; max-height: 520px; border-radius: 8px; border: 1px solid var(--border); background: #fff; cursor: zoom-in; }
 .vimgs figcaption { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
 .cmp { width: fit-content; max-width: 100%; margin: 0 auto; }
-.cmp input { width: 100%; margin-top: 8px; }
-.compare { position: relative; user-select: none; }
-.compare img { display: block; max-height: 520px; max-width: 100%; border-radius: 8px; border: 1px solid var(--border); background: #fff; }
+/* Before and after: a drag sideways moves the divider, its round handle too; a click zooms the side clicked. */
+.compare { position: relative; user-select: none; -webkit-user-select: none; touch-action: pan-y; cursor: zoom-in; }
+.compare img { display: block; max-height: 520px; max-width: 100%; border-radius: 8px; border: 1px solid var(--border); background: #fff; -webkit-user-drag: none; }
 .compare .top { position: absolute; inset: 0; }
-.compare .line { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; }
-.compare .tagl, .compare .tagr { position: absolute; top: 8px; font: 650 0.6875rem var(--sans); padding: 1px 6px; border-radius: 4px; background: rgb(0 0 0 / .6); color: #fff; }
-.compare .tagl { left: 8px; } .compare .tagr { right: 8px; }
+.compare .line { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); pointer-events: none; }
+.compare .line::before { content: ""; position: absolute; inset: 0 -9px; pointer-events: auto; cursor: ew-resize; }
+.compare .handle { position: absolute; top: 50%; left: 50%; width: 38px; height: 38px; translate: -50% -50%; border-radius: 50%; pointer-events: auto; cursor: ew-resize;
+  display: flex; align-items: center; justify-content: center; color: var(--accent); background: var(--surface); border: 2px solid var(--accent); box-shadow: var(--shadow-lg);
+  touch-action: none; transition: scale var(--dur-1) var(--ease-out), background-color var(--dur-2); }
+.compare .handle svg.i { width: 14px; height: 14px; margin: 0 -2px; stroke-width: 2.6; }
+.compare .handle svg.back { transform: scaleX(-1); }
+.compare .handle:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 3px; }
+.compare.dragging, .compare.dragging * { cursor: ew-resize; }
+.compare.dragging .handle { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+@media (prefers-reduced-motion: no-preference) { .compare.dragging .handle { scale: 1.08; } }
+.cmp-caps { display: flex; justify-content: space-between; gap: 12px; margin-top: 6px; font: 600 0.75rem var(--sans); color: var(--muted); }
 .rsec { margin-top: 16px; }
 .rsec h4 { margin: 0 0 6px; font: 700 0.7188rem var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; gap: 8px; align-items: center; }
 .rsec p { margin: 0 0 6px; }
@@ -866,7 +875,7 @@ body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--v
   .linkish { padding-block: 13px; margin-block: -13px; }
   /* Below 16px, iOS zooms the page into a field on focus, whatever text size is chosen. */
   input, textarea, select, .search input, .answer textarea { font-size: max(1rem, 16px); }
-  .cmp input[type="range"] { height: 44px; margin-top: 2px; }
+  .compare .handle { width: 44px; height: 44px; }
   .keys-only, .mouse-only, .search kbd, .answer .opts button kbd, .go kbd, .go-link kbd, .zbar .zfine { display: none; }
   .touch-only { display: inline; }
   .links a { display: inline-block; padding-block: 12px; margin-block: -10px; }

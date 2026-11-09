@@ -1870,17 +1870,70 @@ function openResult(r, { markSeen = true } = {}) {
 
 /** @param {{ src: string, cap: string }} a @param {{ src: string, cap: string }} b @param {Picture[]} gallery */
 function compareView(a, b, gallery) {
-  const top = h("img", { src: b.src, alt: b.cap, class: "top" });
-  const line = h("div", { class: "line" });
-  /** @param {string} v */
+  const top = h("img", { src: b.src, alt: b.cap, class: "top", draggable: "false" });
+  const handle = h("div", { class: "handle", role: "slider", tabindex: 0, "aria-label": `${a.cap} / ${b.cap}`, "aria-valuemin": 0, "aria-valuemax": 100 }, icon("chev", "i back"), icon("chev"));
+  const line = h("div", { class: "line" }, handle);
+  const box = h("div", { class: "compare" }, h("img", { src: a.src, alt: a.cap, draggable: "false" }), top, line);
+  let at = 50;
+  /** @param {number} v */
   const set = (v) => {
-    top.style.clipPath = `inset(0 0 0 ${v}%)`;
-    line.style.left = `${v}%`;
+    at = Math.min(100, Math.max(0, v));
+    top.style.clipPath = `inset(0 0 0 ${at}%)`;
+    line.style.left = `${at}%`;
+    handle.setAttribute("aria-valuenow", String(Math.round(at)));
   };
-  const range = h("input", { type: "range", min: 0, max: 100, value: 50, "aria-label": `${a.cap} / ${b.cap}`, oninput: (e) => set(/** @type {HTMLInputElement} */ (e.target).value) });
-  const box = h("div", { class: "compare" }, h("img", { src: a.src, alt: a.cap, onclick: () => zoom(gallery, Math.max(0, gallery.findIndex((g) => g.src === a.src))) }), top, line, h("span", { class: "tagl" }, a.cap), h("span", { class: "tagr" }, b.cap));
-  set("50");
-  return h("div", { class: "cmp" }, box, range);
+  /** @param {number} clientX */
+  const percent = (clientX) => {
+    const r = box.getBoundingClientRect();
+    return ((clientX - r.left) / r.width) * 100;
+  };
+  // The divider follows a press on its line, or a sideways drag anywhere on the picture (a vertical
+  // one scrolls the page); a press that does not move zooms the picture on its side of the line.
+  /** @type {{ id: number, x: number, y: number, moving: boolean } | null} */
+  let press = null;
+  let dragged = false;
+  /** @param {PointerEvent} e */
+  const grab = (e) => {
+    if (!press) return;
+    press.moving = true;
+    box.setPointerCapture(e.pointerId);
+    box.classList.add("dragging");
+    set(percent(e.clientX));
+  };
+  box.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    press = { id: e.pointerId, x: e.clientX, y: e.clientY, moving: false };
+    dragged = false;
+    if (e.target instanceof Node && line.contains(e.target)) grab(e);
+  });
+  box.addEventListener("pointermove", (e) => {
+    if (!press || e.pointerId !== press.id) return;
+    const dx = Math.abs(e.clientX - press.x);
+    if (!press.moving && dx > 6 && dx > Math.abs(e.clientY - press.y)) grab(e);
+    if (press.moving) set(percent(e.clientX));
+  });
+  /** @param {PointerEvent} e */
+  const release = (e) => {
+    if (!press || e.pointerId !== press.id) return;
+    dragged = press.moving;
+    press = null;
+    box.classList.remove("dragging");
+  };
+  box.addEventListener("pointerup", release);
+  box.addEventListener("pointercancel", release);
+  box.addEventListener("click", (e) => {
+    if (dragged || (e.target instanceof Node && line.contains(e.target))) return;
+    const side = percent(e.clientX) < at ? a : b;
+    zoom(gallery, Math.max(0, gallery.findIndex((g) => g.src === side.src)));
+  });
+  handle.addEventListener("keydown", (e) => {
+    const step = /** @type {Record<string, number>} */ ({ ArrowLeft: -2, ArrowDown: -2, ArrowRight: 2, ArrowUp: 2, PageDown: -10, PageUp: 10, Home: -100, End: 100 })[e.key];
+    if (step === undefined) return;
+    e.preventDefault();
+    set(at + (e.shiftKey ? step * 5 : step));
+  });
+  set(50);
+  return h("div", { class: "cmp" }, box, a.cap || b.cap ? h("div", { class: "cmp-caps" }, h("span", {}, a.cap), h("span", {}, b.cap)) : null);
 }
 
 /** @typedef {{ src: string, caption: string }} Picture */
