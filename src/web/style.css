@@ -9,8 +9,11 @@
   --ease-out: cubic-bezier(.2, .8, .2, 1); --dur-1: .12s; --dur-2: .18s; --dur-3: .28s;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+  /* Checkboxes, sliders and scrollbars follow the theme chosen on the page, not the system's */
+  color-scheme: light; accent-color: var(--accent);
 }
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0e1016; --surface: #171a21; --surface-2: #1d2129; --border: #2a2f3a; --border-strong: #3c4352;
   --text: #e4e7ec; --muted: #9fa7b5; --faint: #818a9b; --accent: #8a90fb; --accent-text: #0e1016; --raise: #2b303b;
   --shadow: 0 1px 2px rgb(0 0 0 / .45); --shadow-lg: 0 14px 34px rgb(0 0 0 / .55);
@@ -546,6 +549,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   transition: background-color var(--dur-2), border-color var(--dur-2), color var(--dur-2), filter var(--dur-2), transform var(--dur-1) var(--ease-out), box-shadow var(--dur-2); }
 .menu label, .zbar button, .needs-pill, .linkish, .links a, .credits a, .row-go, .rdismiss { transition: background-color var(--dur-2), color var(--dur-2), opacity var(--dur-2), filter var(--dur-2); }
 .bar i, .mini i { transition: width var(--dur-3) var(--ease-out); }
+/* A theme switch repaints everything at once: no control fades on its own from the old colours. */
+.theme-switching, .theme-switching *, .theme-switching *::before, .theme-switching *::after { transition: none !important; }
 :is(button, a).primary:active, :is(button, a).secondary:active, .answer .opts button:active, .icon-btn:active { transform: scale(.97); }
 
 /* Lists re-order, enter and leave on their own cards, inside their column (motion.js): a gone card

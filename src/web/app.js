@@ -2405,7 +2405,14 @@ renderAlerts();
 const THEMES = /** @type {const} */ (["auto", "light", "dark"]);
 /** The display menu: theme and text size, each kept in this browser. */
 function renderDisplay() {
+  const root = document.documentElement;
+  const shown = root.dataset.theme;
   applyDisplay();
+  if (root.dataset.theme !== shown) {
+    // The colours change in one frame: transitions held for it, so no control fades on its own.
+    root.classList.add("theme-switching");
+    requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("theme-switching")));
+  }
   const theme = THEMES.find((x) => x === localStorage.getItem("agent-desk:theme")) ?? "auto";
   const sizes = Object.keys(TEXT_SIZES);
   const size = sizes.find((x) => x === localStorage.getItem("agent-desk:text")) ?? "normal";
