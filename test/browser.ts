@@ -161,13 +161,15 @@ export class Page {
   async click(selector: string, text = ""): Promise<void> {
     const find = `[...document.querySelectorAll(${JSON.stringify(selector)})].find((el) => el.getBoundingClientRect().width && el.getBoundingClientRect().height && el.textContent.includes(${JSON.stringify(text)}))`;
     await this.waitFor(find);
-    // As a person would, it waits for a moving element (a panel sliding in) to come to rest.
+    // As a person would, it waits for a moving element (a panel sliding in) to come to rest. A
+    // transition can hold its first frames before it starts moving, so its own end is waited for too.
     const still = `(async () => {
       const el = ${find};
+      const moving = () => document.getAnimations().some((a) => a.playState !== "finished" && a.effect?.target instanceof Element && a.effect.target.contains(el) && a.effect.getKeyframes().some((k) => "transform" in k || "translate" in k));
       const at = () => JSON.stringify(el?.getBoundingClientRect());
       const before = at();
       for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
-      return before === at();
+      return before === at() && !moving();
     })()`;
     const end = Date.now() + WAIT_MS;
     while (!(await this.eval<boolean>(still))) if (Date.now() > end) throw new Error(`${selector} "${text}" kept moving for ${WAIT_MS} ms`);

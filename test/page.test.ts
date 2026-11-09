@@ -1044,4 +1044,184 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.equal(await width(), before);
     });
   });
+
+  /** A result opened by its link, which leaves it unseen for the other tests. */
+  async function openResultOf(page: Page, title: string): Promise<void> {
+    const r = store.listResults().find((x) => x.title === title);
+    assert.ok(r, `the demo has a result "${title}"`);
+    await page.eval(`location.hash = "#r=${r.id}"`);
+    await page.waitFor(arrived("result"));
+  }
+  /** A phone with a touch screen. */
+  async function openPhone(): Promise<Page> {
+    const page = await open(390, 844);
+    await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    return page;
+  }
+  const touch = (page: Page, type: string, points: [number, number][]) =>
+    page.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
+
+  it("opens and closes a header menu from its button or Escape, keeping the focus on each choice", async () => {
+    const page = await open();
+    await page.click("#theme");
+    assert.equal(await page.eval<string>("document.getElementById('theme').getAttribute('aria-expanded')"), "true", "the button shows its menu open");
+    await page.eval("document.querySelector('#display-menu button[data-value=dark]').focus()");
+    await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
+    await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await page.waitFor("document.documentElement.dataset.theme === 'dark'");
+    assert.equal(await page.eval<string>("document.activeElement.dataset.value"), "dark", "the focus stays on the choice made");
+    assert.equal(await page.eval<string>("document.querySelector('#display-menu button[data-value=dark]').getAttribute('aria-pressed')"), "true");
+    await page.press("Escape");
+    await page.waitFor("document.getElementById('display-menu').hidden && getComputedStyle(document.getElementById('display-menu')).display === 'none'");
+    assert.equal(await page.eval<string>("document.activeElement.id"), "theme", "Escape gives the focus back to the button");
+    assert.equal(await page.eval<string>("document.getElementById('theme').getAttribute('aria-expanded')"), "false");
+
+    await page.click("#alerts");
+    await page.eval("document.querySelectorAll('#alerts-menu input')[2].focus()");
+    await page.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " });
+    await page.send("Input.dispatchKeyEvent", { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32 });
+    await page.waitFor("localStorage.getItem('agent-desk:failures') === 'on'");
+    assert.equal(await page.eval<boolean>("document.activeElement === document.querySelectorAll('#alerts-menu input')[2] && document.activeElement.checked"), true, "a switch keeps the focus");
+    await page.click(".col-head", "Needs you");
+    await page.waitFor("document.getElementById('alerts-menu').hidden");
+    await page.eval("localStorage.clear()");
+  });
+
+  it("switches the theme in one frame, its native controls and accent included", async () => {
+    const page = await open();
+    const scheme = "getComputedStyle(document.documentElement).colorScheme";
+    assert.equal(await page.eval<string>(scheme), "light");
+    assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('#alerts-menu')).accentColor"), "rgb(81, 70, 220)", "checkboxes take the desk's accent");
+    await page.click("#theme");
+    await page.waitFor("!document.getAnimations().length");
+    await page.click("#display-menu button", "Dark");
+    assert.deepEqual(await page.eval<string[]>("document.getAnimations().map((a) => a.transitionProperty)"), [], "no control fades on its own from the old colours");
+    assert.equal(await page.eval<string>(scheme), "dark", "scrollbars and checkboxes follow the theme chosen, not the system's");
+    await page.eval("localStorage.clear()");
+  });
+
+  it("keeps a dialog open when text selected in it is released over the backdrop", async () => {
+    const page = await open();
+    await page.click(".scard", "checkout redesign");
+    await page.waitFor(`${arrived("session")} && document.querySelector('#session .msg.from-session')`);
+    const [x, y] = await page.eval<[number, number]>("(() => { const r = document.querySelector('#session .msg.from-session').getBoundingClientRect(); return [r.x + 5, r.y + 8]; })()");
+    await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+    for (let at = x; at > 20; at -= 40) await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at, y: y + 20, button: "left", buttons: 1 });
+    await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 20, y: y + 20, button: "left", clickCount: 1 });
+    assert.ok((await page.eval<string>("String(getSelection())")).length > 0, "the text is selected");
+    assert.deepEqual(await openDialogs(page), ["session"], "the selection does not close the panel");
+    for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, x: 20, y: y + 20, button: "left", clickCount: 1 });
+    await page.waitFor("!document.getElementById('session').open");
+  });
+
+  it("zooms either side of a before and after, and moves its divider by a drag on the picture or its handle", async () => {
+    const page = await open();
+    await openResultOf(page, "Checkout: before and after");
+    const box = await page.eval<{ x: number; y: number; w: number; h: number }>("(() => { const r = document.querySelector('#result .compare').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()");
+    const y = box.y + box.h * 0.75;
+    const divider = "Number(document.querySelector('#result .compare .handle').getAttribute('aria-valuenow'))";
+    for (const [at, side] of [[0.8, "After"], [0.2, "Before"]] as const) {
+      const x = box.x + box.w * at;
+      for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+      await page.waitFor("document.getElementById('zoom').open");
+      assert.match(await page.eval<string>("document.querySelector('#zoom .zcaption').textContent"), new RegExp(`· ${side}$`), `a click on the ${side} side zooms it`);
+      await page.press("Escape");
+      await page.waitFor("!document.getElementById('zoom').open");
+    }
+    await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x + box.w * 0.5, y, button: "left", clickCount: 1 });
+    for (let i = 10; i >= 5; i--) await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x + (box.w * i) / 20, y, button: "left", buttons: 1 });
+    await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x + box.w * 0.25, y, button: "left", clickCount: 1 });
+    assert.ok(Math.abs((await page.eval<number>(divider)) - 25) <= 2, "a drag on the picture moves the divider");
+    assert.equal(await page.eval<boolean>("document.getElementById('zoom').open"), false, "and does not zoom");
+    await page.eval("document.querySelector('#result .compare .handle').focus()");
+    await page.press("ArrowRight");
+    assert.ok(Math.abs((await page.eval<number>(divider)) - 27) <= 2, "the handle moves with the arrow keys");
+    await page.press("Escape");
+    await page.waitFor("!document.getElementById('result').open");
+  });
+
+  it("opens a small picture at its own size, zooms in on a double click and slides to the next one", async () => {
+    const page = await open();
+    await openResultOf(page, "Three pay button variants");
+    await page.click("#result .vimgs img");
+    await page.waitFor("document.getElementById('zoom').open && document.querySelector('#zoom img.cur').complete");
+    const pct = "document.querySelector('#zoom .zbar .num.zfine').textContent";
+    await page.waitFor(`${pct} === "100 %"`);
+    const cur = "document.querySelector('#zoom img.cur')";
+    const centre = await page.eval<[number, number]>(`(() => { const r = ${cur}.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+    for (let i = 0; i < 2; i++) for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, x: centre[0], y: centre[1], button: "left", clickCount: 1 });
+    await page.waitFor(`${pct} === "250 %"`);
+    await page.press("ArrowRight");
+    await page.waitFor("document.querySelector('#zoom .zcount').textContent === '2 / 3'");
+    await page.waitFor(`${pct} === "100 %" && ${cur}.getBoundingClientRect().x > 0`);
+    assert.match(await page.eval<string>(`${cur}.alt`), / · B$/, "the next picture is the one shown");
+    await page.press("Escape");
+    await page.press("Escape");
+    await page.waitFor("!document.querySelector('dialog[open]')");
+  });
+
+  it("on a phone, pinching a picture out of its fit size springs it back", async () => {
+    const page = await openPhone();
+    await openResultOf(page, "Checkout: before and after");
+    await page.eval("document.querySelector('#result .seg button:last-child').click()");
+    await page.eval("document.querySelector('#result .vimgs img').click()");
+    await page.waitFor("document.getElementById('zoom').open && document.querySelector('#zoom img.cur').complete");
+    const width = "Math.round(document.querySelector('#zoom img.cur').getBoundingClientRect().width)";
+    const fit = await page.eval<number>(width);
+    assert.ok(fit <= 390, "it opens inside the screen");
+    await touch(page, "touchStart", [[95, 420], [295, 420]]);
+    for (let s = 100; s >= 20; s -= 20) await touch(page, "touchMove", [[195 - s, 420], [195 + s, 420]]);
+    assert.ok((await page.eval<number>(width)) < fit, "the fingers shrink it");
+    await touch(page, "touchEnd", []);
+    await page.waitFor(`${width} === ${fit}`);
+    await page.press("Escape");
+    await page.press("Escape");
+  });
+
+  it("on a phone, slides a session in from the right, opaque, and takes it back with a swipe from the left edge", async () => {
+    const page = await openPhone();
+    await page.click(".tabbar button", "Sessions");
+    await page.eval(`(() => {
+      window.frames = [];
+      const d = document.getElementById("session");
+      const tick = () => { frames.push([d.getBoundingClientRect().x, Number(getComputedStyle(d).opacity)]); if (frames.length < 30) requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+      [...document.querySelectorAll(".scard")].find((c) => c.textContent.includes("checkout redesign")).click();
+    })()`);
+    await page.waitFor(`${arrived("session")} && window.frames.length >= 30`);
+    const frames = await page.eval<[number, number][]>("window.frames");
+    assert.ok(frames.some(([x]) => x > 50), "it moves in from the side");
+    assert.ok(frames.every(([, o]) => o === 1), "never see-through over the list");
+    await touch(page, "touchStart", [[6, 500]]);
+    for (let x = 6; x <= 70; x += 16) await touch(page, "touchMove", [[x, 502]]);
+    assert.ok((await page.eval<number>("document.getElementById('session').getBoundingClientRect().x")) > 30, "it follows the finger");
+    await touch(page, "touchEnd", []);
+    await page.waitFor(`${arrived("session")} && document.getElementById('session').getBoundingClientRect().x === 0`);
+    await touch(page, "touchStart", [[6, 500]]);
+    for (let x = 6; x <= 246; x += 30) await touch(page, "touchMove", [[x, 502]]);
+    await touch(page, "touchEnd", []);
+    await page.waitFor("!document.getElementById('session').open");
+  });
+
+  it("on a phone, each tab keeps its scroll, and a tap on the tab shown goes back to its top", async () => {
+    const page = await open(390, 600);
+    await page.click(".tabbar button", "Sessions");
+    const room = await page.eval<number>("document.documentElement.scrollHeight - innerHeight");
+    assert.ok(room > 120, `the sessions scroll (${room} px)`);
+    await page.eval("window.scrollTo(0, 120)");
+    await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Inbox")).click()`);
+    await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Sessions")).click()`);
+    assert.equal(await page.eval<number>("Math.round(scrollY)"), 120, "back on Sessions, where it was left");
+    await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Sessions")).click()`);
+    await page.waitFor("scrollY === 0");
+  });
+
+  it("shows keyboard focus on a session card and the search box, and no grey flash on a tap", async () => {
+    const page = await open();
+    await page.eval("document.querySelector('.scard').focus({ focusVisible: true })");
+    assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('.scard')).outlineOffset"), "-2px", "a ring inside the card, which the list's rounded box would clip");
+    await page.eval("document.getElementById('q').focus()");
+    assert.notEqual(await page.eval<string>("getComputedStyle(document.querySelector('header .search')).boxShadow"), "none", "the search box shows it has the focus");
+    assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('.scard')).webkitTapHighlightColor"), "rgba(0, 0, 0, 0)");
+  });
 });
