@@ -1,7 +1,7 @@
 // @ts-check
 // The desk page: polls the store through the local server and renders it. All strings live in text.js.
 import { byId, dialog, h, icon, md, mdBlocks, on, onKept, patch, svgEl } from "./dom.js";
-import { animateLists, bump, grow } from "./motion.js";
+import { animateLists, bump, fadeIn, grow } from "./motion.js";
 import { TEXT } from "./text.js";
 
 // The most images one answer or message carries, as the server allows (ATTACHED_IMAGES_MAX in protocol.ts).
@@ -480,8 +480,12 @@ function renderHeader() {
     ),
   );
   const pill = byId("needs-pill");
-  pill.classList.toggle("zero", !n);
-  patch(pill, n ? h("span", { class: "beacon on-accent", "aria-hidden": "true" }) : null, TEXT.needsPill(n));
+  // Before the first data, a placeholder: "Nothing pending" would be a false all-clear.
+  pill.classList.toggle("loading", !ui.loaded);
+  pill.classList.toggle("zero", ui.loaded && !n);
+  pill.toggleAttribute("aria-busy", !ui.loaded);
+  if (!ui.loaded) patch(pill, h("span", { class: "skel" }));
+  else patch(pill, n ? h("span", { class: "beacon on-accent", "aria-hidden": "true" }) : null, TEXT.needsPill(n));
   pill.onclick = () => {
     const list = openQuestions();
     // In one column the first tap brings the oldest question into view; each further tap moves on to the next one.
@@ -567,7 +571,8 @@ function renderStrip() {
   patch(
     byId("strip"),
     ui.offline ? h("span", { class: "err" }, offlineText()) : null,
-    h("span", { class: "muted" }, summary),
+    // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear.
+    ui.loaded ? h("span", { class: "muted" }, summary) : h("span", { class: "skel", "aria-hidden": "true" }),
     fresh.length ? h("button", { class: "linkish", onclick: () => run(post("/api/seen")) }, TEXT.markSeen) : null,
     h("span", { class: "spacer" }),
     data.problems.length ? h("span", { class: "chip warn problems", title: data.problems.join("\n") }, TEXT.problems(data.problems.length)) : null,
@@ -1550,11 +1555,14 @@ function chat(s) {
   // At work, a session whose adapter delivers mid-turn gets the message at its next step.
   const midTurn = s.state === "working" && s.takesMessagesWhileWorking === true && isLive(s);
   const canReply = !asking && ((s.state === "waiting" && data.listening.includes(s.id)) || midTurn);
+  // Until the conversation arrives, the shape of what comes before the latest message, which is known.
+  const loading = !fetched ? [h("div", { class: "skel skel-msg mine", "aria-hidden": "true" }), h("div", { class: "skel skel-msg", "aria-hidden": "true" })] : null;
   return [
     h(
       "div",
-      { class: "conversation chat" },
-      !fetched ? h("div", { class: "faint" }, "…") : list.length ? conversationView(list, whileWorking) : h("div", { class: "faint" }, TEXT.conversation.none),
+      { class: "conversation chat", "aria-busy": !fetched },
+      loading,
+      list.length ? conversationView(list, whileWorking) : fetched ? h("div", { class: "faint" }, TEXT.conversation.none) : null,
       workingNow(s, list),
     ),
     h(
@@ -2006,6 +2014,7 @@ function dayLabel(iso) {
 function renderView() {
   document.body.dataset.tab = ui.tab;
   const view = byId("view");
+  const placeholder = view.querySelector(".board[aria-busy]") !== null;
   /** @type {Map<string, number>} */
   const scrolls = new Map();
   for (const el of view.querySelectorAll("[data-scroll]")) if (el instanceof HTMLElement && el.dataset.scroll) scrolls.set(el.dataset.scroll, el.scrollTop);
@@ -2019,6 +2028,8 @@ function renderView() {
     if (top !== undefined) el.scrollTop = top;
   }
   window.scrollTo(0, pageScroll);
+  // The first data takes the placeholders' place by fading in, not in one frame.
+  if (placeholder && ui.loaded) fadeIn(view.firstElementChild, byId("needs-pill"), byId("strip"));
 }
 
 /**
@@ -2077,7 +2088,7 @@ function skeleton() {
   /** @param {string} key @param {number[]} heights */
   const col = (key, heights) =>
     h("section", { class: `col col-${key}` }, h("div", { class: "col-head" }, h("span", { class: "skel", style: "width:90px;height:14px" })), h("div", { class: "col-body" }, heights.map((px) => h("div", { class: "skel", style: `height:${px}px` }))));
-  return h("main", { class: "board", "aria-busy": "true", "data-tab": ui.tab }, col("needs", [230, 54, 54]), col("sessions", [70, 70, 70]), col("review", [90]));
+  return h("main", { class: "board", "aria-busy": "true", "data-tab": ui.tab }, col("needs", [230, 54, 54]), col("sessions", [104, 132, 104]), col("review", [150]));
 }
 function render() {
   renderHeader();

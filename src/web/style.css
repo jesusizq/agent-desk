@@ -536,6 +536,12 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .skel { border-radius: 10px; flex: none; background: linear-gradient(90deg, var(--border) 25%, color-mix(in srgb, var(--border) 45%, var(--surface)) 50%, var(--border) 75%);
   background-size: 300% 100%; animation: shimmer 1.6s ease-in-out infinite; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.needs-pill.loading { background: var(--surface-2); border: 1px solid var(--border); padding-block: 7px; }
+.needs-pill.loading .skel { width: 76px; height: 10px; border-radius: 5px; }
+.strip > .skel { width: min(260px, 50%); height: 12px; margin-block: 3px; border-radius: 6px; }
+/* The session panel while its conversation arrives: its latest message, under the shape of earlier ones. */
+.skel-msg { height: 60px; width: min(70%, 520px); border-radius: 12px; }
+.skel-msg.mine { align-self: flex-end; width: min(40%, 280px); height: 40px; border-radius: 14px 14px 4px 14px; }
 
 @media (prefers-reduced-motion: reduce) {
   dialog, dialog::backdrop, .scard, .rrow, .qrow, .rcard, .toast.leaving, .bar i, .mini i { transition: none; }

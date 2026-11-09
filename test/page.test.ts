@@ -827,5 +827,32 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         store.updateSession("confirming", (s) => ({ ...s, state: "ended" }));
       }
     });
+
+    it("shows placeholders while the first data arrives, not an all-clear", async () => {
+      const page = await browser.newPage(1400, 900);
+      pages.push(page);
+      await page.send("Page.addScriptToEvaluateOnNewDocument", { source: "const f = window.fetch; window.fetch = (u, i) => String(u) === '/api/state' && !window.go ? new Promise((r) => (window.release = () => r(f(u, i)))) : f(u, i);" });
+      await page.goto(base + "/");
+      await page.waitFor("window.release && document.querySelector('.board[aria-busy]')");
+      assert.deepEqual(
+        await page.eval("({ pill: document.getElementById('needs-pill').textContent, loading: document.getElementById('needs-pill').classList.contains('loading'), strip: document.getElementById('strip').textContent })"),
+        { pill: "", loading: true, strip: "" },
+      );
+      await page.eval("(window.go = true, release())");
+      await page.waitFor("document.querySelector('.next')");
+      assert.match(await page.eval<string>("document.getElementById('needs-pill').textContent"), /need/);
+    });
+
+    it("opens a session's panel on its latest message while the conversation is on its way", async () => {
+      const page = await open();
+      await page.eval("const f = window.fetch; window.fetch = (u, i) => String(u).endsWith('/messages') ? new Promise((r) => (window.release = () => r(f(u, i)))) : f(u, i)");
+      await page.click(".scard", "payment webhooks");
+      await page.waitFor("window.release && document.getElementById('session').open");
+      assert.equal(await page.eval<number>("document.querySelectorAll('#session .skel-msg').length"), 2, "the shape of what came before");
+      assert.match(await page.eval<string>("document.querySelector('#session .msg').textContent"), /Both agents stopped/, "its latest message, already known");
+      await page.eval("release()");
+      await page.waitFor("!document.querySelector('#session .skel-msg')");
+      await page.press("Escape");
+    });
   });
 });

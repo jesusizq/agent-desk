@@ -213,6 +213,13 @@ export function grow(el) {
   );
 }
 
+/** What replaces a placeholder fades in, rather than appearing in one frame. @param {(Element | null)[]} els */
+export function fadeIn(...els) {
+  if (reducedMotion()) return;
+  const t = tokens();
+  for (const el of els) el?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: t.fade, easing: t.easing, id: MOTION });
+}
+
 /** A short double bump, the one loud cue of the header. @param {Element} el */
 export function bump(el) {
   if (reducedMotion()) return;
