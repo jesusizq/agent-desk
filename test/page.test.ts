@@ -234,7 +234,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("document.querySelector('#session .session-body')?.dataset.fetched === 'yes'");
     const fold = "document.querySelector('#session .working-now .agents-fold')";
     assert.equal(await page.eval<boolean>(`${fold}.open`), false, "the agents are folded under one line");
-    assert.match(await page.eval<string>(`${fold}.querySelector('summary').textContent`), /^\d+ agents/);
+    assert.match(await page.eval<string>(`${fold}.querySelector('summary').textContent`), /^\d+ still running( · \d+ failed)?$/);
     await page.click("#session .working-now .agents-fold > summary");
     await page.waitFor(`${fold}.open`);
     store.upsertAgent("demo-checkout", "summary", { activity: "Editing src/checkout/Totals.tsx" });
@@ -1494,5 +1494,135 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.ok(above > 0, `the way back is in view, under the chips: ${above}`);
     assert.ok(Math.abs(above - below) <= 4, `as much room under the way back as above it: ${above} above, ${below} below`);
     await page.press("Escape");
+  });
+
+  describe("answering what a session asks", () => {
+    /** A session waiting on the desk, its answers taken from its inbox; ended afterwards. */
+    function asking(id: string, title: string) {
+      store.upsertSession({ id, provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title, state: "waiting" });
+      const stop = store.listen(id);
+      return () => {
+        stop();
+        for (const q of store.openQuestions(id)) store.dismiss(q.id);
+        store.updateSession(id, (s) => ({ ...s, state: "ended" }));
+      };
+    }
+    const answers = async (id: string, n: number) => {
+      const end = Date.now() + 5000;
+      const got: string[] = [];
+      while (got.length < n && Date.now() < end) {
+        got.push(...store.takeInbox(id).map((e) => e.answer));
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return got;
+    };
+
+    it("ticks each option of a question that takes several on and off, in their order", async () => {
+      const done = asking("picking", "picking sections");
+      try {
+        store.ask({ sessionId: "picking", kind: "question", text: "Which sections go in the index?", options: ["Guides", "API reference", "Changelog"], several: true, dialog: true });
+        const page = await open();
+        await page.click(".qrow", "Which sections go in the index?");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('Which sections go in the index?')");
+        await page.waitFor("!document.querySelector('.next').getAnimations({ subtree: true }).length");
+        assert.match(await page.eval<string>("document.querySelector('.next .opts-note').textContent"), /Pick one or more/);
+        const box = "document.querySelector('.next textarea').value";
+        const pressed = "[...document.querySelectorAll('.next .opts button[aria-pressed=\"true\"]')].map((b) => b.textContent.replace(/^\\d/, ''))";
+        await page.click(".next .opts button", "Changelog");
+        await page.click(".next .opts button", "Guides");
+        assert.equal(await page.eval<string>(box), "Guides, Changelog", "picked in the options' order, not the clicks'");
+        assert.deepEqual(await page.eval<string[]>(pressed), ["Guides", "Changelog"]);
+        await page.click(".next .opts button", "Guides");
+        assert.equal(await page.eval<string>(box), "Changelog", "a second click takes it out");
+        await page.click(".next .opts button", "API reference");
+        await page.click(".next .send");
+        assert.deepEqual(await answers("picking", 1), ["API reference, Changelog"]);
+      } finally {
+        done();
+      }
+    });
+
+    it("allows a permission prompt with one click, and denies it with the reason written, if any", async () => {
+      const done = asking("permitting", "permission prompts");
+      try {
+        const prompt = (text: string) => store.ask({ sessionId: "permitting", kind: "permission", text, options: ["Allow", "Deny"] });
+        prompt("Bash: rm -rf build");
+        const page = await open();
+        await page.click(".qrow", "Bash: rm -rf build");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('rm -rf build') && !document.querySelector('.next').getAnimations({ subtree: true }).length");
+        assert.equal(await page.eval<boolean>("!!document.querySelector('.next .opts')"), false, "no options to pick: two buttons that decide");
+        assert.equal(await page.eval<string>("document.querySelector('.next textarea').placeholder"), "Reason for denying (optional)");
+        assert.equal(await page.eval<boolean>("document.querySelector('.next .send-hint').textContent.includes('exactly as written')"), false);
+        await page.click(".next .allow");
+        assert.deepEqual(await answers("permitting", 1), ["Allow"]);
+        await page.waitFor("document.querySelector('#toasts')?.textContent.includes('Allowed in web-shop › permission prompts')");
+
+        prompt("Bash: make deploy");
+        const row = "[...document.querySelectorAll('.qrow')].find((r) => r.textContent.includes('make deploy'))";
+        await page.waitFor(row);
+        assert.equal(await page.eval<string>(`${row}.querySelector('.qs').textContent`), "web-shop › permission prompts", "a permission row counts no options");
+        await page.click(".qrow", "make deploy");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('make deploy') && !document.querySelector('.next').getAnimations({ subtree: true }).length");
+        await page.click(".next textarea");
+        await page.type("not on main");
+        await page.click(".next .deny");
+        assert.deepEqual(await answers("permitting", 1), ["not on main"], "the reason goes with Deny, as written");
+
+        prompt("Bash: npm publish");
+        await page.click(".qrow", "npm publish");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('npm publish') && !document.querySelector('.next').getAnimations({ subtree: true }).length");
+        await page.click(".next textarea");
+        await page.type("Allow");
+        await page.click(".next .deny");
+        assert.deepEqual(await answers("permitting", 1), ["Deny"], "a reason that reads as the allowing answer never allows");
+      } finally {
+        done();
+      }
+    });
+
+    it("shows questions asked together as one item that says the terminal waits for all of them", async () => {
+      const done = asking("grouped", "questions asked together");
+      try {
+        const group = (index: number) => ({ id: "dialog-grouped", index, size: 2 });
+        store.ask({ sessionId: "grouped", kind: "question", dialog: true, group: group(0), text: "Which engine should search use?", options: ["Pagefind", "Lunr"] });
+        store.ask({ sessionId: "grouped", kind: "question", dialog: true, group: group(1), text: "Which theme should it ship with?", options: ["Light", "Dark"] });
+        const page = await open();
+        const rows = "[...document.querySelectorAll('.qrow')].filter((r) => r.textContent.includes('Which engine should search use?'))";
+        await page.waitFor(`${rows}.length === 1`);
+        assert.match(await page.eval<string>(`${rows}[0].textContent`), /Which theme should it ship with\?.*2 questions asked together/, "one row names both");
+        await page.click(".qrow", "Which engine should search use?");
+        await page.waitFor("document.querySelectorAll('.next .qpart').length === 2 && !document.querySelector('.next').getAnimations({ subtree: true }).length");
+        assert.match(await page.eval<string>("document.querySelector('.next .group-note').textContent"), /waits for all 2 answers/);
+        assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.next .qpart-n')].map((n) => n.textContent)"), ["Question 1 of 2", "Question 2 of 2"]);
+
+        await page.click(".next .qpart .opts button", "Lunr");
+        await page.eval("document.querySelector('.next .qpart .send').click()");
+        assert.deepEqual(await answers("grouped", 1), ["Lunr"]);
+        await page.waitFor("document.querySelector('.next .group-note')?.textContent.includes('1 of 2 answered')");
+        assert.match(await page.eval<string>("document.querySelector('.next .qpart.done').textContent"), /Which engine should search use\?.*Answered.*Lunr/, "the answered part stays, with its answer");
+        assert.equal(await page.eval<number>("document.querySelectorAll('.next .qpart:not(.done) .opts button').length"), 2, "the other part is still to answer");
+      } finally {
+        done();
+      }
+    });
+  });
+
+  it("dates a result from an earlier day in its tile and its window, and gives today's its time only", async () => {
+    const weeksAgo = new Store(store.paths.home, () => new Date(Date.now() - 21 * 86400_000));
+    const old = weeksAgo.addResult({ sessionId: "demo-iva", title: "Rounding report from weeks ago", summary: "Old run.", url: "http://127.0.0.1:5173/" });
+    try {
+      const page = await open();
+      const tile = (title: string) => `[...document.querySelectorAll('.rtile')].find((t) => t.textContent.includes(${JSON.stringify(title)}))`;
+      await page.waitFor(tile("Rounding report from weeks ago"));
+      const day = new Date(old.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      assert.equal(await page.eval<string>(`${tile("Rounding report from weeks ago")}.querySelector('.rm .num').textContent`), `${day} ${new Date(old.at).toTimeString().slice(0, 5)}`);
+      assert.match(await page.eval<string>("[...document.querySelectorAll('.rtile .rm .num')].map((m) => m.textContent).find((t) => /^\\d\\d:\\d\\d$/.test(t)) ?? ''"), /^\d\d:\d\d$/, "a result from today shows its time alone");
+      await page.click(".rtile", "Rounding report from weeks ago");
+      await page.waitFor(arrived("result"));
+      assert.match(await page.eval<string>("document.querySelector('#result .dhead .meta').textContent"), new RegExp(`·\\s*${day} `));
+      await page.press("Escape");
+    } finally {
+      store.markResultSeen(old.id);
+    }
   });
 });
