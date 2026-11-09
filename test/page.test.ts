@@ -1591,6 +1591,33 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.ok(await page.eval<boolean>("document.getElementById('projects').getBoundingClientRect().top >= document.getElementById('theme').getBoundingClientRect().bottom"), "too wide: a row of their own");
   });
 
+  it("on a phone, keeps a table's words whole", async () => {
+    const page = await open(390, 844);
+    const split = await page.eval<string[]>(`(() => {
+      const md = document.createElement('div');
+      md.className = 'md';
+      md.innerHTML = '<div class="md-table"><table><tr><th>Agente</th><th>Qué hace</th><th>Toca</th></tr>'
+        + '<tr><td>feat:calm-arrivals</td><td>Globo de pregunta nueva, una marca en la burbuja al enviar, imágenes una debajo de otra en el móvil</td><td>la página</td></tr>'
+        + '<tr><td>fix:agent-lifecycle</td><td>Que los agentes de workflow tomen su nombre real y no se queden trabajando para siempre</td><td>el adaptador</td></tr></table></div>';
+      document.getElementById('view').prepend(md);
+      const split = [];
+      for (const cell of md.querySelectorAll('th, td')) {
+        const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          for (const m of n.data.matchAll(/[^\\s:-]+/g)) {
+            const r = document.createRange();
+            r.setStart(n, m.index);
+            r.setEnd(n, m.index + m[0].length);
+            if (new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size > 1) split.push(m[0]);
+          }
+        }
+      }
+      md.remove();
+      return split;
+    })()`);
+    assert.deepEqual(split, [], "no word is split across lines");
+  });
+
   /** A phone held by a finger, the checkout session's panel open on its latest message. */
   async function touchPanel(): Promise<Page> {
     const page = await open(390, 640);

@@ -794,6 +794,8 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .qrow { grid-template-columns: 16px minmax(0, 1fr) auto auto; } /* so no room is kept for it */
   .rrow .rt { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .md, .qtext, .rtitle, .msg, .hq, .ha, .hi, table.crit td, .links a, .mono, .lastmsg, .callout { overflow-wrap: anywhere; }
+  /* break-word, unlike anywhere, keeps a word's width as the cell's minimum: the table scrolls instead of splitting words */
+  .md :is(th, td) { overflow-wrap: break-word; }
   .qcode { max-height: min(220px, 40dvh); }
 
   /* The answer box: Send sits beside the text, so the keyboard cannot hide one without the other.
