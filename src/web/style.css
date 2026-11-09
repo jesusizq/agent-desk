@@ -918,7 +918,12 @@ body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--v
 .pop { position: relative; display: inline-flex; }
 .menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 280px; display: grid; gap: 2px; padding: 6px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); }
-.menu[hidden] { display: none; }
+/* A menu opens and closes as the dialogs do: a short fade and drop from its button. */
+.menu { transform-origin: top right; transition: opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out), display var(--dur-2) allow-discrete; }
+.menu[hidden] { display: none; opacity: 0; transform: translateY(-4px) scale(.97); pointer-events: none; }
+@starting-style { .menu:not([hidden]) { opacity: 0; transform: translateY(-4px) scale(.97); } }
+.icon-btn[aria-expanded="true"] { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+@media (prefers-reduced-motion: reduce) { .menu { transition: none; } }
 .menu label { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 1px 10px; padding: 7px 8px; border-radius: 7px; cursor: pointer; }
 .menu label:hover { background: var(--surface-2); }
 .menu label.off { cursor: default; color: var(--muted); }

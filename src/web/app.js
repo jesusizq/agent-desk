@@ -2315,6 +2315,27 @@ function chime() {
     osc.stop(start + 0.32);
   });
 }
+/** The menus' switches, made once and updated in place: a change keeps the focus on its box. @type {Map<string, { label: HTMLLabelElement, box: HTMLInputElement, hint: HTMLElement }>} */
+const switches = new Map();
+/**
+ * @param {string} key @param {string} text @param {(box: HTMLInputElement) => void} change
+ * @param {{ checked: boolean, disabled: boolean, hint: string, off: boolean }} state
+ */
+function switchRow(key, text, change, { checked, disabled, hint, off }) {
+  let row = switches.get(key);
+  if (!row) {
+    const box = /** @type {HTMLInputElement} */ (h("input", { type: "checkbox" }));
+    box.addEventListener("change", () => change(box));
+    const small = h("small", {});
+    row = { label: h("label", {}, box, h("span", {}, text), small), box, hint: small };
+    switches.set(key, row);
+  }
+  row.box.checked = checked;
+  row.box.disabled = disabled;
+  row.hint.textContent = hint;
+  row.label.className = off ? "off" : "";
+  return row.label;
+}
 function renderAlerts() {
   const can = "Notification" in window;
   const allowed = can && Notification.permission === "granted";
@@ -2324,36 +2345,52 @@ function renderAlerts() {
   button.setAttribute("aria-label", TEXT.alerts.title);
   button.replaceChildren(icon((ON_THIS_MACHINE ? notifyOn : pushOn === true) || alertOn("sound") ? "bell" : "bellOff"));
   /** @param {keyof typeof ALERTS} k @param {string} text @param {string} hint @param {boolean} checked @param {boolean} disabled */
-  const row = (k, text, hint, checked, disabled) => {
-    const box = /** @type {HTMLInputElement} */ (h("input", { type: "checkbox", disabled }));
-    box.checked = checked;
-    box.addEventListener("change", () => {
-      localStorage.setItem(ALERTS[k], box.checked ? "on" : "off");
-      if (k === "notify" && box.checked && Notification.permission === "default") run(Notification.requestPermission().then(renderAlerts));
-      if (k === "sound" && box.checked) chime();
-      renderAlerts();
-    });
-    return h("label", { class: disabled ? "off" : "" }, box, h("span", {}, text), h("small", {}, hint));
-  };
-  byId("alerts-menu").replaceChildren(
+  const row = (k, text, hint, checked, disabled) =>
+    switchRow(
+      k,
+      text,
+      (box) => {
+        localStorage.setItem(ALERTS[k], box.checked ? "on" : "off");
+        if (k === "notify" && box.checked && Notification.permission === "default") run(Notification.requestPermission().then(renderAlerts));
+        if (k === "sound" && box.checked) chime();
+        renderAlerts();
+      },
+      { checked, disabled, hint, off: disabled },
+    );
+  const rows = [
     // One notifications switch per device: the page's own on the computer, push on the phone.
     ON_THIS_MACHINE ? row("notify", TEXT.alerts.notify, !can ? TEXT.alerts.unavailable : Notification.permission === "denied" ? TEXT.alerts.blocked : TEXT.alerts.notifyHint, notifyOn, !can || Notification.permission === "denied") : pushRow(),
     row("sound", TEXT.alerts.sound, TEXT.alerts.soundHint, alertOn("sound"), false),
     row("failures", TEXT.alerts.failures, TEXT.alerts.failuresHint, alertOn("failures"), false),
-  );
+  ];
+  const menu = byId("alerts-menu");
+  if (rows.some((r, i) => menu.children[i] !== r)) menu.replaceChildren(...rows);
 }
 /**
- * A header button that opens its menu; a click anywhere else closes it. The path is read as
- * dispatched, since a choice made in the menu redraws it. @param {string} buttonId @param {string} menuId @param {() => void} fill
+ * A header button that opens its menu; a click anywhere else or Escape closes it. The path is read
+ * as dispatched. @param {string} buttonId @param {string} menuId @param {() => void} fill
  */
 function headerMenu(buttonId, menuId, fill) {
   const menu = byId(menuId);
-  byId(buttonId).onclick = () => {
-    menu.hidden = !menu.hidden;
-    if (!menu.hidden) fill();
+  const button = byId(buttonId);
+  button.setAttribute("aria-controls", menuId);
+  /** @param {boolean} open */
+  const show = (open) => {
+    if (open) fill();
+    menu.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
   };
+  show(false);
+  button.onclick = () => show(menu.hidden);
   document.addEventListener("click", (e) => {
-    if (!menu.hidden && menu.parentElement && !e.composedPath().includes(menu.parentElement)) menu.hidden = true;
+    if (!menu.hidden && menu.parentElement && !e.composedPath().includes(menu.parentElement)) show(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || menu.hidden) return;
+    e.preventDefault();
+    const inside = menu.contains(document.activeElement);
+    show(false);
+    if (inside) button.focus();
   });
 }
 // ---------- Push: notifications on a phone that is locked, from the computer ----------
@@ -2374,10 +2411,12 @@ function renewPush() {
 }
 /** The row that subscribes this phone; on iOS push exists only in the app added to the Home Screen. */
 function pushRow() {
-  const box = /** @type {HTMLInputElement} */ (h("input", { type: "checkbox", disabled: !canPush || pushOn === null }));
-  box.checked = pushOn === true;
-  box.addEventListener("change", () => run((box.checked ? subscribePush() : unsubscribePush()).then(() => ((pushOn = box.checked), renderAlerts())), renderAlerts));
-  return h("label", { class: canPush ? "" : "off" }, box, h("span", {}, TEXT.alerts.push), h("small", {}, canPush ? TEXT.alerts.pushHint : TEXT.alerts.pushInstall));
+  return switchRow(
+    "push",
+    TEXT.alerts.push,
+    (box) => run((box.checked ? subscribePush() : unsubscribePush()).then(() => ((pushOn = box.checked), renderAlerts())), renderAlerts),
+    { checked: pushOn === true, disabled: !canPush || pushOn === null, hint: canPush ? TEXT.alerts.pushHint : TEXT.alerts.pushInstall, off: !canPush },
+  );
 }
 async function subscribePush() {
   // Asked first, inside the tap: iOS grants the permission only from a gesture.
@@ -2421,13 +2460,20 @@ function renderDisplay() {
   button.setAttribute("aria-label", TEXT.display.title);
   // Settings, not a light/dark switch: the menu holds the theme and the text size.
   button.replaceChildren(icon("sliders"), h("span", { class: "lbl" }, TEXT.display.title));
-  /** @param {string} key @param {string} value @param {string} current @param {Node | string} text @param {string} [name] */
-  const choice = (key, value, current, text, name) =>
-    h("button", { "aria-pressed": String(value === current), "aria-label": name, title: name, onclick: () => (localStorage.setItem(key, value), renderDisplay()) }, text);
-  byId("display-menu").replaceChildren(
-    h("div", { class: "menu-row" }, h("span", {}, TEXT.display.theme), h("div", { class: "seg" }, THEMES.map((t) => choice("agent-desk:theme", t, theme, h("span", { class: "row-i" }, icon(t === "auto" ? "auto" : t === "light" ? "sun" : "moon"), TEXT.theme[t]))))),
-    h("div", { class: "menu-row" }, h("span", {}, TEXT.display.text), h("div", { class: "seg sizes" }, sizes.map((k, i) => choice("agent-desk:text", k, size, h("span", { class: `a${i}` }, "A"), TEXT.display.sizes(k))))),
-  );
+  const menu = byId("display-menu");
+  // Made once; a choice only moves the pressed state, so the focus stays on the button chosen.
+  if (!menu.childElementCount) {
+    /** @param {string} key @param {string} value @param {Node | string} text @param {string} [name] */
+    const choice = (key, value, text, name) =>
+      h("button", { "data-pref": key, "data-value": value, "aria-label": name, title: name, onclick: () => (localStorage.setItem(key, value), renderDisplay()) }, text);
+    menu.replaceChildren(
+      h("div", { class: "menu-row" }, h("span", {}, TEXT.display.theme), h("div", { class: "seg" }, THEMES.map((t) => choice("agent-desk:theme", t, h("span", { class: "row-i" }, icon(t === "auto" ? "auto" : t === "light" ? "sun" : "moon"), TEXT.theme[t]))))),
+      h("div", { class: "menu-row" }, h("span", {}, TEXT.display.text), h("div", { class: "seg sizes" }, sizes.map((k, i) => choice("agent-desk:text", k, h("span", { class: `a${i}` }, "A"), TEXT.display.sizes(k))))),
+    );
+  }
+  /** @type {Record<string, string>} */
+  const chosen = { "agent-desk:theme": theme, "agent-desk:text": size };
+  for (const b of menu.querySelectorAll("button[data-pref]")) if (b instanceof HTMLElement) b.setAttribute("aria-pressed", String(chosen[b.dataset.pref ?? ""] === b.dataset.value));
 }
 headerMenu("theme", "display-menu", renderDisplay);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderDisplay);
