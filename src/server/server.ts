@@ -20,6 +20,7 @@ const WEB_DIR = path.join(import.meta.dirname, "..", "web");
 const STATIC: Record<string, string> = {
   "/app.js": "text/javascript; charset=utf-8",
   "/dom.js": "text/javascript; charset=utf-8",
+  "/motion.js": "text/javascript; charset=utf-8",
   "/theme.js": "text/javascript; charset=utf-8",
   "/text.js": "text/javascript; charset=utf-8",
   "/style.css": "text/css; charset=utf-8",

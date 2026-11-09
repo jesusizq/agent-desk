@@ -14,7 +14,7 @@ export function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs ?? {})) {
     if (v === null || v === undefined || v === false) continue;
-    if (typeof v === "function") el.addEventListener(k.slice(2), v);
+    if (typeof v === "function") on(el, k.slice(2), v);
     else if (k === "class") el.className = String(v);
     else if (k === "style") el.style.cssText = String(v); // CSSOM, allowed under the page's CSP
     else if (k === "href") el.setAttribute(k, safeHref(String(v)));
@@ -24,66 +24,181 @@ export function h(tag, attrs, ...kids) {
   return el;
 }
 
+/** Each element's handler per event type. @type {WeakMap<EventTarget, Record<string, EventListener | undefined>>} */
+const handlers = new WeakMap();
+/** @param {Event} e */
+function dispatch(e) {
+  const target = e.currentTarget;
+  if (target) handlers.get(target)?.[e.type]?.(e);
+}
+/**
+ * Sets an element's handler for an event. One listener per type calls whichever handler is current,
+ * so an element `patch` keeps runs the handler of the latest drawing, never a stale one.
+ * @param {EventTarget} el @param {string} type @param {EventListener | undefined} fn
+ */
+export function on(el, type, fn) {
+  let map = handlers.get(el);
+  if (!map) handlers.set(el, (map = {}));
+  if (!(type in map)) el.addEventListener(type, dispatch);
+  map[type] = fn;
+}
+
 /** Replaces an element's content; skips null, undefined and false like h(). @param {Element} el @param {Child[]} kids */
 export function fill(el, ...kids) {
   el.replaceChildren();
   append(el, kids);
 }
 
-/** @type {WeakMap<Element, (live: HTMLTextAreaElement | HTMLInputElement) => void>} */
+/** @type {WeakMap<Element, (live: Element) => void>} */
 const whenKept = new WeakMap();
-/** Called when `redraw` keeps the box already on the page in place of this new one. @param {Element} fresh @param {(live: HTMLTextAreaElement | HTMLInputElement) => void} fn */
+/**
+ * Called when `patch` keeps the element already on the page in place of this new one, with that
+ * element: what the new one's builder holds on to must then point at the kept one.
+ * @template {Element} E @param {E} fresh @param {(live: E) => void} fn
+ */
 export function onKept(fresh, fn) {
-  whenKept.set(fresh, fn);
+  whenKept.set(fresh, /** @type {(live: Element) => void} */ (fn));
 }
 
 /**
- * Replaces an element's content around the box being typed in. Out of the page even for a moment,
- * the box loses what iOS's keyboard holds for it: the autocorrect's context and the paste menu.
+ * Makes an element's content what `kids` describe, changing only what differs: the nodes that stay
+ * keep their focus, hover, text selection, scroll, running transitions and loaded images. Children
+ * are matched by `data-key` when they have one (a card, a row: they may move), otherwise in order,
+ * by tag and first class. Out of the page even for a moment, the box being typed in would lose what
+ * iOS's keyboard holds for it (the autocorrect's context and the paste menu): a kept node never leaves.
+ * Children marked `data-leaving` (an exit still animating, motion.js) are left alone.
  * @param {Element} root @param {Child[]} kids
  */
-export function redraw(root, ...kids) {
+export function patch(root, ...kids) {
   const fresh = new DocumentFragment();
   append(fresh, kids);
-  const live = document.activeElement;
-  const key = (live instanceof HTMLTextAreaElement || live instanceof HTMLInputElement) && root.contains(live) ? live.dataset.key : undefined;
-  const twin = key === undefined ? null : fresh.querySelector(`[data-key="${CSS.escape(key)}"]`);
-  if (!(live instanceof HTMLElement) || !twin || !sameTrail(live, twin, root)) return root.replaceChildren(fresh);
-  /** @type {Element} */ let keptNode = live;
-  /** @type {Element} */ let freshNode = twin;
-  while (keptNode !== root) {
-    const keptParent = /** @type {Element} */ (keptNode.parentElement);
-    const freshParent = /** @type {ParentNode} */ (freshNode.parentNode);
-    const siblings = [...freshParent.childNodes];
-    const at = siblings.indexOf(freshNode);
-    for (const old of [...keptParent.childNodes]) if (old !== keptNode) old.remove();
-    keptNode.before(...siblings.slice(0, at));
-    keptNode.after(...siblings.slice(at + 1));
-    if (keptParent !== root && freshParent instanceof Element) copyAttributes(freshParent, keptParent);
-    keptNode = keptParent;
-    if (freshParent instanceof Element) freshNode = freshParent;
-  }
-  whenKept.get(twin)?.(/** @type {HTMLTextAreaElement | HTMLInputElement} */ (live));
+  morphChildren(root, fresh);
 }
 
-/** Whether both sit at the same depth under `root` (the new one, under its fragment), through the same tags. @param {Element} live @param {Element} twin @param {Element} root */
-function sameTrail(live, twin, root) {
-  /** @type {Element | null} */ let a = live;
-  /** @type {Element | null} */ let b = twin;
-  while (a && b && a !== root) {
-    if (a.tagName !== b.tagName) return false;
-    a = a.parentElement;
-    b = b.parentElement;
+/** @param {Node} n */
+const keyOf = (n) => (n instanceof Element ? n.getAttribute("data-key") : null);
+/** @param {Node} n */
+const leaving = (n) => n instanceof Element && n.hasAttribute("data-leaving");
+/** @param {Node} n */
+const kind = (n) => (n instanceof Element ? (n.getAttribute("class") ?? "").split(" ")[0] : "");
+
+/** @param {Element} live @param {ParentNode} fresh */
+function morphChildren(live, fresh) {
+  const olds = [...live.childNodes].filter((n) => !leaving(n));
+  /** @type {Map<string, ChildNode>} */
+  const keyed = new Map();
+  for (const n of olds) {
+    const k = keyOf(n);
+    if (k !== null && !keyed.has(k)) keyed.set(k, n);
   }
-  return a === root && b === null;
+  /** @type {Set<ChildNode>} */
+  const used = new Set();
+  /** @type {[ChildNode, ChildNode | null][]} each new child, and the one on the page that becomes it */
+  const pairs = [];
+  let scan = 0; // unkeyed children match in order, so they never move
+  for (const f of [...fresh.childNodes]) {
+    const k = keyOf(f);
+    /** @type {ChildNode | null} */
+    let m = null;
+    if (k !== null) {
+      const c = keyed.get(k);
+      if (c && !used.has(c) && c.nodeName === f.nodeName) m = c;
+    } else {
+      for (let i = scan; i < olds.length; i++) {
+        const c = olds[i];
+        if (c && !used.has(c) && keyOf(c) === null && c.nodeName === f.nodeName && kind(c) === kind(f)) {
+          m = c;
+          scan = i + 1;
+          break;
+        }
+      }
+    }
+    if (m) used.add(m);
+    pairs.push([f, m]);
+  }
+  for (const n of olds) if (!used.has(n)) n.remove();
+  // The kept children already in order stay put; only the others move: the fewest moves.
+  const at = new Map(olds.map((n, i) => [n, i]));
+  const stay = increasing(pairs.map(([, m]) => (m ? (at.get(m) ?? -1) : -1)));
+  /** @type {ChildNode | null} */
+  let anchor = null;
+  for (let i = pairs.length - 1; i >= 0; i--) {
+    const [f, m] = /** @type {[ChildNode, ChildNode | null]} */ (pairs[i]);
+    if (!m) live.insertBefore(f, anchor);
+    else if (!stay.has(i)) move(live, m, anchor);
+    anchor = m ?? f;
+  }
+  for (const [f, m] of pairs) if (m) morph(m, f);
 }
 
-/** @param {Element} from @param {Element} to */
-function copyAttributes(from, to) {
-  for (const name of to.getAttributeNames()) if (!from.hasAttribute(name)) to.removeAttribute(name);
+/** The positions of a longest increasing run of `seq`, ignoring its -1s. @param {number[]} seq */
+function increasing(seq) {
+  /** @type {number[]} */
+  const tails = [];
+  /** @type {number[]} */
+  const prev = [];
+  seq.forEach((v, i) => {
+    if (v < 0) return;
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if ((seq[tails[mid] ?? 0] ?? 0) < v) lo = mid + 1;
+      else hi = mid;
+    }
+    prev[i] = lo > 0 ? (tails[lo - 1] ?? -1) : -1;
+    tails[lo] = i;
+  });
+  /** @type {Set<number>} */
+  const out = new Set();
+  for (let i = tails.at(-1) ?? -1; i >= 0; i = prev[i] ?? -1) out.add(i);
+  return out;
+}
+
+/**
+ * Moves a child within its parent. moveBefore keeps its focus, hover and animations; where the
+ * browser has none, the focus is given back. @param {Element} parent @param {ChildNode} node @param {ChildNode | null} anchor
+ */
+function move(parent, node, anchor) {
+  const atomic = /** @type {Element & { moveBefore?: (node: Node, child: Node | null) => void }} */ (parent);
+  if (atomic.moveBefore && parent.isConnected) return atomic.moveBefore(node, anchor);
+  const active = document.activeElement;
+  const field = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ? { from: active.selectionStart, to: active.selectionEnd } : null;
+  parent.insertBefore(node, anchor);
+  if (!(active instanceof HTMLElement) || !node.contains(active) || document.activeElement === active) return;
+  active.focus({ preventScroll: true });
+  if (field && (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) active.setSelectionRange(field.from, field.to);
+}
+
+// A text field's value is the developer's, and its height follows what is typed (app.js fits it).
+const FIELD_OWN = new Set(["value", "style"]);
+/** @type {Set<string>} */
+const NONE = new Set();
+
+/** @param {ChildNode} live @param {ChildNode} fresh */
+function morph(live, fresh) {
+  if (!(live instanceof Element) || !(fresh instanceof Element)) {
+    if (live.nodeValue !== fresh.nodeValue) live.nodeValue = fresh.nodeValue;
+    return;
+  }
+  copyAttributes(fresh, live, live instanceof HTMLInputElement || live instanceof HTMLTextAreaElement ? FIELD_OWN : NONE);
+  const theirs = handlers.get(fresh);
+  const mine = handlers.get(live);
+  for (const type of new Set([...Object.keys(theirs ?? {}), ...Object.keys(mine ?? {})])) on(live, type, theirs?.[type]);
+  if (!(live instanceof HTMLTextAreaElement)) morphChildren(live, fresh); // a text area's children are its default text, not what it holds
+  whenKept.get(fresh)?.(live);
+}
+
+/** @param {Element} from @param {Element} to @param {Set<string>} own attributes left as they are */
+function copyAttributes(from, to, own) {
+  for (const name of to.getAttributeNames()) if (!own.has(name) && !from.hasAttribute(name)) to.removeAttribute(name);
   for (const name of from.getAttributeNames()) {
+    if (own.has(name)) continue;
     const value = from.getAttribute(name) ?? "";
-    if (to.getAttribute(name) !== value) to.setAttribute(name, value);
+    if (to.getAttribute(name) === value) continue;
+    // A style attribute written as such is inline CSS, which the page's CSP refuses; CSSOM is allowed.
+    if (name === "style" && (to instanceof HTMLElement || to instanceof SVGElement) && (from instanceof HTMLElement || from instanceof SVGElement)) to.style.cssText = from.style.cssText;
+    else to.setAttribute(name, value);
   }
 }
 

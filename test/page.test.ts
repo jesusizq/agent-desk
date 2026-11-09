@@ -6,6 +6,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { procInfo } from "../src/core/proc.ts";
 import { Store } from "../src/store/store.ts";
 import { Browser, findChrome, type Page } from "./browser.ts";
 import { PNG, serve, tempHome } from "./helpers.ts";
@@ -157,7 +158,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
   it("plays a new question's entrance once, not at every redraw", async () => {
     const page = await open();
-    await page.eval(`window.entrances = 0; new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n instanceof Element) entrances += [n, ...n.querySelectorAll('.arrived')].filter((e) => e.matches('.arrived') && e.textContent.includes('Which rounding mode?')).length; }).observe(document.body, { childList: true, subtree: true })`);
+    // An entrance is an animation that starts the row from transparent.
+    await page.eval(`(() => {
+      window.entrances = 0;
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function (frames, options) {
+        if (Array.isArray(frames) && frames[0]?.opacity === 0 && this.textContent.includes('Which rounding mode?')) entrances++;
+        return animate.call(this, frames, options);
+      };
+    })()`);
     const q = store.ask({ sessionId: "demo-iva", kind: "question", text: "Which rounding mode?" });
     await page.waitFor("[...document.querySelectorAll('.qrow, .next')].some((e) => e.textContent.includes('Which rounding mode?'))");
     // Changes that make the page redraw while the arrival is still fresh.
@@ -165,7 +174,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       store.updateSession("demo-iva", (s) => ({ ...s, title }));
       await page.waitFor(`document.body.textContent.includes(${JSON.stringify(title)})`);
     }
-    assert.ok((await page.eval<number>("entrances")) <= 1, "the entrance is drawn at most once");
+    assert.equal(await page.eval<number>("entrances"), 1, "the entrance is drawn once");
     store.dismiss(q.id);
   });
 
@@ -182,9 +191,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.addContext(asked.id, "Run this, then `git worktree prune`:\n\n```\n! rm -rf build\n```");
     await browser.send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
     const page = await open();
-    // Opening the question runs a view transition, which takes the clicks until it ends.
-    await page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
     await page.click(".qrow", "Shall I free the disk?");
+    await page.waitFor("document.getAnimations().length === 0"); // the card grows out of its row: its code is clicked once in view
     await page.click(".next pre[data-copy]");
     await page.waitFor("document.querySelector('.toast')?.textContent.startsWith('Copied: ! rm -rf build')");
     assert.equal(await page.eval<string>("navigator.clipboard.readText()"), "! rm -rf build");
@@ -581,14 +589,14 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
       await page.click(".qrow", "Is the box still in view?");
       await page.waitFor("document.querySelector('.next')?.textContent.includes('Is the box still in view?')");
+      await page.waitFor("document.getAnimations().length === 0"); // the card grows out of its row: measured once it has
       const onCard = "document.querySelector('.next textarea')";
       // Covers the box's last 20 px, whatever its place on the page.
       await page.eval(`(() => { ${onCard}.focus(); window.scrollTo(0, 0); setKeyboard(innerHeight - ${onCard}.getBoundingClientRect().bottom + 20); })()`);
       assert.equal(await inView(onCard), true, "on the inbox's card");
       await page.eval(`(() => { setKeyboard(0); ${onCard}.blur(); })()`);
 
-      // Not a real click: the desk may be running a view transition, which swallows one.
-      await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Sessions")).click()`);
+      await page.click(".tabbar button", "Sessions");
       await page.click(".scard", "chat under the keyboard");
       const inChat = "document.querySelector('#session .chat-footer textarea')";
       await page.waitFor(inChat);
@@ -721,5 +729,103 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.resize(390, 800);
     assert.deepEqual(await visible(), ["needs"], "one part at a time on a phone");
     assert.equal(await page.eval<boolean>("!!document.querySelector('.tabbar').getClientRects().length"), true);
+  });
+
+  describe("redraws change only what changed, and lists move on their own cards", () => {
+    it("keeps the focused card, the selected text and every node through new data and the 30 s tick", async () => {
+      const page = await browser.newPage(1400, 900);
+      pages.push(page);
+      // The page's 30 s tick runs every 200 ms here.
+      await page.send("Page.addScriptToEvaluateOnNewDocument", { source: "const tick = window.setInterval; window.setInterval = (f, ms, ...a) => tick(f, ms === 30000 ? 200 : ms, ...a);" });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('.next') && document.querySelectorAll('.scard').length");
+      await page.eval(`(() => {
+        window.removed = 0;
+        new MutationObserver((ms) => { for (const m of ms) removed += m.removedNodes.length; }).observe(document.getElementById('view'), { childList: true, subtree: true });
+        const text = document.querySelector('.next .qtext').firstChild;
+        const range = document.createRange();
+        range.setStart(text, 0);
+        range.setEnd(text, 12);
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        window.card = [...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('payment webhooks'));
+        card.focus();
+        window.selected = getSelection().toString();
+      })()`);
+      await new Promise((r) => setTimeout(r, 600)); // three ticks
+      store.mergeMetrics({ sessionId: "demo-pagos", contextPercent: 47 });
+      await page.waitFor("window.card.textContent.includes('47%')");
+      assert.deepEqual(
+        await page.eval("({ same: card === [...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('payment webhooks')), focused: document.activeElement === card, selection: getSelection().toString() === selected, removed })"),
+        { same: true, focused: true, selection: true, removed: 0 },
+      );
+    });
+
+    it("animates a question arriving on its row, inside its column, and a click meanwhile still lands", async () => {
+      const page = await open();
+      await page.send("Animation.enable");
+      await page.send("Animation.setPlaybackRate", { playbackRate: 0.05 }); // the motion lasts seconds: the click falls inside it
+      const asked = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Arriving while you click?" });
+      try {
+        const row = "[...document.querySelectorAll('.qrow')].find((r) => r.textContent.includes('Arriving while you click?'))";
+        await page.waitFor(`${row}?.getAnimations().some((a) => a.id === 'motion')`);
+        assert.equal(await page.eval<boolean>("!!document.activeViewTransition"), false, "no picture of the page is taken");
+        assert.equal(await page.eval<boolean>(`${row}.closest('.col-body') !== null`), true);
+        assert.equal(await page.eval<boolean>("document.getElementById('needs-pill').getAnimations().some((a) => a.id === 'bump')"), true, "the pill bumps");
+        await page.click(".scard", "checkout redesign");
+        await page.waitFor("document.getElementById('session').open");
+        await page.press("Escape");
+      } finally {
+        await page.send("Animation.setPlaybackRate", { playbackRate: 1 });
+        store.dismiss(asked.id);
+      }
+    });
+
+    it("slides a toast up when another arrives below it", async () => {
+      const page = await open();
+      const first = store.ask({ sessionId: "demo-pagos", kind: "question", text: "First of two toasts?" });
+      await page.waitFor("document.querySelectorAll('.toast').length === 1 && document.getAnimations().length === 0");
+      await page.eval("window.tops = []; (function f() { const t = document.querySelector('.toast'); if (t) tops.push(Math.round(t.getBoundingClientRect().top)); if (tops.length < 120) requestAnimationFrame(f); })()");
+      const second = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Second of two toasts?" });
+      try {
+        await page.waitFor("document.querySelectorAll('.toast').length === 2 && document.getAnimations().length === 0");
+        const tops = await page.eval<number[]>("tops");
+        const start = tops[0] ?? 0;
+        const end = tops.at(-1) ?? 0;
+        assert.ok(end < start - 20, `the first toast went up: ${start} → ${end}`);
+        assert.ok(new Set(tops.filter((t) => t < start && t > end)).size >= 2, `through the places between: ${tops.join(" ")}`);
+      } finally {
+        store.dismiss(first.id);
+        store.dismiss(second.id);
+      }
+    });
+
+    it("slides the context bar to its new width, and keeps a control's confirmation through a redraw", async () => {
+      // This test's own process stands for the session's: the End button is clicked once only, so it never ends it.
+      const own = procInfo(process.pid);
+      assert.ok(own?.start);
+      store.upsertSession({ id: "confirming", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "confirming a control", process: { pid: process.pid, start: own.start, ancestors: [] } });
+      store.mergeMetrics({ sessionId: "confirming", contextPercent: 30 });
+      try {
+        const page = await open();
+        await page.click(".scard", "confirming a control");
+        await page.waitFor("document.querySelector('#session .mini i')");
+        await page.eval("window.bar = document.querySelector('#session .mini i')");
+        store.mergeMetrics({ sessionId: "confirming", contextPercent: 85 });
+        await page.waitFor("document.querySelector('#session .mini.warn')");
+        assert.equal(await page.eval<boolean>("bar === document.querySelector('#session .mini i')"), true, "the same bar");
+        assert.equal(await page.eval<boolean>("bar.getAnimations().some((a) => a.transitionProperty === 'width')"), true, "its width slides");
+        await page.click("#session .pchips .chip", "More");
+        await page.click("#session .danger");
+        const armed = await page.eval<string>("document.querySelector('#session .danger').textContent");
+        assert.notEqual(armed, "End session", "the first click asks for a second");
+        store.mergeMetrics({ sessionId: "confirming", contextPercent: 60 });
+        await page.waitFor("!document.querySelector('#session .mini.warn')");
+        assert.equal(await page.eval<string>("document.querySelector('#session .danger').textContent"), armed, "still asking after the redraw");
+        await page.press("Escape");
+      } finally {
+        store.updateSession("confirming", (s) => ({ ...s, state: "ended" }));
+      }
+    });
   });
 });

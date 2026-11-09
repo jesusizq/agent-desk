@@ -155,8 +155,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .new { width: 7px; height: 7px; border-radius: 50%; background: var(--review); flex: none; }
 
 /* Running: one row per session, in one box; only the session that needs the developer gets the accent */
-.slist { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; flex: none; }
-.scard { text-align: left; padding: 11px 14px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; }
+.slist { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; flex: none; display: flex; flex-direction: column; }
+/* Opaque, so a card sliding past another covers it rather than mixing their text. */
+.scard { text-align: left; padding: 11px 14px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; background: var(--surface); }
 .scard:first-child { border-top: 0; }
 .scard:hover { background: var(--surface-2); }
 .scard.needs { box-shadow: inset 3px 0 0 var(--accent); }
@@ -283,17 +284,12 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   max-width: min(560px, 92vw); animation: tin var(--dur-3) var(--ease-out); }
 @keyframes tin { from { opacity: 0; transform: translateY(6px); } }
 .toast.leaving { opacity: 0; transform: translateY(4px); transition: opacity var(--dur-2) ease-in, transform var(--dur-2) ease-in; }
-/* Motion only where it says something: a question arriving, agents alive, waits growing old */
-@keyframes arrive { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
-@keyframes ring { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 50%, transparent); } to { box-shadow: 0 0 0 14px transparent; } }
-.qcard.arrived { animation: arrive .35s var(--ease-out), ring 1.4s ease-out .1s 2; }
+/* Motion only where it says something: cards arriving and leaving (motion.js), agents alive, waits growing old */
 .live { display: inline-grid; border-radius: 50%; }
-@keyframes bump { 30% { transform: scale(1.08); } }
-.needs-pill.bump { animation: bump .5s ease-out 2; }
 .age.warm { color: var(--doing); }
 .age.hot { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) {
-  .toast, .next, .next.arrived, .next.resolved, .qrow.arrived, .needs-pill.bump { animation: none; }
+  .toast { animation: none; }
   .e-live { animation: none; }
 }
 
@@ -313,8 +309,6 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .next .go kbd { border-color: color-mix(in srgb, var(--accent-text) 45%, transparent); color: inherit; }
 .next { --pc: var(--accent); }
 .next.warm { --pc: var(--doing); } .next.hot { --pc: var(--danger); }
-.next.arrived { animation: arrive .35s var(--ease-out); }
-.qrow.arrived { animation: arrive .35s var(--ease-out); }
 .qcode { margin: 0; font: 500 0.7812rem/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto;
   padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--text) 6%, var(--surface)); border: 1px solid var(--border); }
 .qlabel { font: 650 0.6875rem var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin-bottom: -4px; }
@@ -534,9 +528,9 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .bar i, .mini i { transition: width var(--dur-3) var(--ease-out); }
 :is(button, a).primary:active, :is(button, a).secondary:active, .answer .opts button:active, .icon-btn:active { transform: scale(.97); }
 
-/* Lists re-order, enter and leave through view transitions (see app.js). */
-::view-transition-group(*) { animation-duration: .32s; animation-timing-function: var(--ease-out); }
-::view-transition-old(root), ::view-transition-new(root) { animation-duration: .18s; }
+/* Lists re-order, enter and leave on their own cards, inside their column (motion.js): a gone card
+   is drawn over by the cards that take its place, so each card covers what it passes. */
+[data-list] { position: relative; }
 
 /* First load: the shape of the desk while the data arrives. */
 .skel { border-radius: 10px; flex: none; background: linear-gradient(90deg, var(--border) 25%, color-mix(in srgb, var(--border) 45%, var(--surface)) 50%, var(--border) 75%);
@@ -548,7 +542,6 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   .scard:hover, .rrow:hover, .qrow:hover { transform: none; }
   :is(button, a).primary:active, :is(button, a).secondary:active, .answer .opts button:active, .icon-btn:active { transform: none; }
   .skel { animation: none; }
-  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none; }
 }
 .wt-list { max-height: 340px; overflow: auto; }
 .wt-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }

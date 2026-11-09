@@ -1,6 +1,7 @@
 // @ts-check
 // The desk page: polls the store through the local server and renders it. All strings live in text.js.
-import { byId, dialog, fill, h, icon, md, mdBlocks, onKept, redraw, svgEl } from "./dom.js";
+import { byId, dialog, h, icon, md, mdBlocks, on, onKept, patch, svgEl } from "./dom.js";
+import { animateLists, bump, grow } from "./motion.js";
 import { TEXT } from "./text.js";
 
 // The most images one answer or message carries, as the server allows (ATTACHED_IMAGES_MAX in protocol.ts).
@@ -20,7 +21,6 @@ const ATTACHED_IMAGES_MAX = 10;
 
 const POLL_MS = 1500;
 const TICK_MS = 30_000;
-const ARRIVAL_MS = 5000;
 const WARM_AFTER = 30;
 const HOT_AFTER = 120;
 const CONTEXT_WARN = 80;
@@ -51,8 +51,6 @@ const ui = {
   /** @type {Map<string, string>} */ drafts: new Map(),
   /** @type {Map<string, string[]>} ids of the images attached to each draft */ draftImages: new Map(),
   /** @type {Map<string, number>} images of each draft still on their way to the store */ uploading: new Map(),
-  /** @type {Map<string, number>} */ arrived: new Map(),
-  /** @type {Set<string>} arrivals whose entrance was already drawn */ entered: new Set(),
   /** @type {Set<string> | null} */ known: null,
   /** @type {Map<string, string> | null} when each session last said something, to notice new messages */ heardAt: null,
   /** @type {Map<string, string>} the message each session was last marked read for; a failure is not retried in a loop */ readFor: new Map(),
@@ -60,6 +58,7 @@ const ui = {
   /** when the developer last scrolled or touched the session panel */ panelTouchedAt: 0,
   /** @type {number | undefined} a redraw of the panel put off while it is scrolled */ panelLater: undefined,
   /** @type {Set<string>} */ sending: new Set(),
+  /** @type {{ key: string, until: number } | null} the session control waiting for its confirming click */ armed: null,
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
   /** @type {Set<string>} questions whose long context is unfolded */ contextOpen: new Set(),
@@ -121,14 +120,6 @@ const inProject = (sid) => ui.project === null || S(sid)?.project.name === ui.pr
 const openQuestions = () => data.questions.filter((q) => q.status === "open" && inProject(q.sessionId));
 /** @param {Result} r */
 const isNew = (r) => !r.seenAt && (!data.seen || r.at > data.seen.since);
-/** @param {string} id */
-const arriving = (id) => Date.now() - (ui.arrived.get(id) ?? 0) < ARRIVAL_MS;
-/** On the first drawing only of what just arrived: the page redraws often, and the entrance must not replay. @param {string} id @param {string} where */
-const entering = (id, where) => {
-  if (!arriving(id) || ui.entered.has(`${where} ${id}`)) return false;
-  ui.entered.add(`${where} ${id}`);
-  return true;
-};
 /** @param {Session} s */
 const isLive = (s) => s.state !== "ended" && !data.gone.includes(s.id);
 /** Ended with a question open and not looked at since: its question must not vanish unseen. @param {Session} s */
@@ -175,6 +166,7 @@ function toast(msg) {
   // Re-shown each time so it sits above any open dialog in the browser's top layer.
   if (box.matches(":popover-open")) box.hidePopover();
   box.showPopover();
+  grow(t); // the toasts above it slide up instead of jumping
   setTimeout(() => t.classList.add("leaving"), 3400);
   setTimeout(() => {
     t.remove();
@@ -340,36 +332,13 @@ async function refresh() {
       data = next;
       dropStaleDrafts();
     } else if (next.build !== loadedBuild) return location.reload(); // the desk restarted, maybe with new code
-    const before = shape();
-    const firstLoad = !ui.loaded;
     data = next;
     ui.loaded = true;
     noticeArrivals();
-    // The first data replaces the skeleton at once: nothing moved, and a transition still running
-    // when a link (#s=…, #r=…) opens a dialog would be aborted.
-    if (!firstLoad && shape() !== before && !ui.offline) return animate(render);
   }
   setOffline(false, next !== null);
 }
 
-/** Which cards are on the desk: when it changes, the change is animated. */
-function shape() {
-  const { questions } = inbox();
-  return [questions.map((q) => q.id), ui.sel, data.results.filter(isNew).map((r) => r.id), data.sessions.filter(isLive).map((s) => s.id)].flat().join(" ");
-}
-
-/**
- * Runs a DOM update as a view transition, so cards move, enter and leave instead of jumping. Not
- * while the developer types or has a window open (a transition briefly freezes the page, and a
- * click on the window would be lost), or prefers reduced motion.
- * @param {() => void} update
- */
-function animate(update) {
-  const typing = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName ?? "");
-  if (typing || document.querySelector("dialog[open]") || !document.startViewTransition || matchMedia("(prefers-reduced-motion: reduce)").matches) return update();
-  // A transition cut short by a newer one rejects `ready`; its update has run all the same.
-  document.startViewTransition(update).ready.catch(() => {});
-}
 /** @param {boolean} offline @param {boolean} [changed] */
 function setOffline(offline, changed = false) {
   if (offline === ui.offline && !changed) return;
@@ -391,15 +360,11 @@ function noticeArrivals() {
   for (const q of open) {
     if (ui.known.has(q.id)) continue;
     ui.known.add(q.id);
-    ui.arrived.set(q.id, Date.now());
     const where = label(S(q.sessionId));
     toast(TEXT.newQuestion(where));
     if (!chimed) chime();
     chimed = true;
-    const pill = byId("needs-pill");
-    pill.classList.remove("bump");
-    void pill.offsetWidth; // restart the animation
-    pill.classList.add("bump");
+    bump(byId("needs-pill"));
     notify(TEXT.newQuestion(where), q.text, q.id, () => {
       ui.view = "desk";
       ui.sel = q.id;
@@ -495,7 +460,8 @@ function renderHeader() {
   const n = inbox().count;
   const views = byId("views");
   views.setAttribute("aria-label", TEXT.viewsLabel);
-  views.replaceChildren(
+  patch(
+    views,
     ...(/** @type {const} */ ([["desk", "board"], ["history", "clock"]])).map(([v, ic]) =>
       h("button", { "aria-pressed": String(ui.view === v), "aria-label": TEXT.views[v], onclick: () => ((ui.view = v), render()) }, icon(ic), h("span", { class: "lbl" }, TEXT.views[v])),
     ),
@@ -507,24 +473,23 @@ function renderHeader() {
   const projects = byId("projects");
   projects.setAttribute("aria-label", TEXT.projectsLabel);
   projects.hidden = names.length < 2;
-  projects.replaceChildren(
+  patch(
+    projects,
     ...[null, ...names].map((name) =>
-      h("button", { "aria-pressed": String(ui.project === name), onclick: () => ((ui.project = name), render()) }, name ? projectMark(name) : TEXT.allProjects),
+      h("button", { "data-key": name ?? "", "aria-pressed": String(ui.project === name), onclick: () => ((ui.project = name), render()) }, name ? projectMark(name) : TEXT.allProjects),
     ),
   );
   const pill = byId("needs-pill");
-  pill.className = `needs-pill${n ? "" : " zero"}`;
-  pill.replaceChildren(...(n ? [h("span", { class: "beacon on-accent", "aria-hidden": "true" })] : []), TEXT.needsPill(n));
+  pill.classList.toggle("zero", !n);
+  patch(pill, n ? h("span", { class: "beacon on-accent", "aria-hidden": "true" }) : null, TEXT.needsPill(n));
   pill.onclick = () => {
     const list = openQuestions();
     // In one column the first tap brings the oldest question into view; each further tap moves on to the next one.
     if (ONE_COLUMN.matches && ui.view === "desk" && ui.tab === "inbox" && list.length > 1 && nextCardAtTop()) {
       const i = list.findIndex((q) => q.id === ui.sel);
       ui.sel = list[(i + 1) % list.length]?.id ?? null;
-      return animate(() => {
-        renderView();
-        revealNext("start");
-      });
+      renderView();
+      return revealNext("start");
     }
     ui.view = "desk";
     ui.tab = "inbox";
@@ -562,7 +527,7 @@ function renderTabbar(needs) {
     ["history", "clock", 0, ""],
   ];
   const current = ui.view === "history" ? "history" : ui.tab;
-  fill(
+  patch(
     byId("tabbar"),
     tabs.map(([key, ic, count, tone]) =>
       h(
@@ -599,7 +564,7 @@ function renderStrip() {
     .filter((s) => isLive(s) && inProject(s.id))
     .map((s) => ({ s, c: metricsOf(s.id)?.contextPercent }))
     .filter(/** @returns {x is { s: Session, c: number }} */ (x) => x.c !== undefined && x.c >= CONTEXT_WARN);
-  fill(
+  patch(
     byId("strip"),
     ui.offline ? h("span", { class: "err" }, offlineText()) : null,
     h("span", { class: "muted" }, summary),
@@ -621,14 +586,14 @@ function renderStrip() {
 // ---------- Desk: the inbox, the sessions and what to review ----------
 /**
  * @param {keyof typeof TEXT.cols} key @param {number | null} count @param {Child} body
- * @param {{ foot?: Child, quiet?: boolean, aside?: Child }} [more]
+ * @param {{ foot?: Child, quiet?: boolean, aside?: Child, list?: boolean }} [more] `list`: the body's own children are cards that move (motion.js)
  */
-function column(key, count, body, { foot, quiet, aside } = {}) {
+function column(key, count, body, { foot, quiet, aside, list } = {}) {
   return h(
     "section",
-    { class: `col col-${key}`, "aria-label": TEXT.cols[key] },
+    { class: `col col-${key}`, "data-key": `col-${key}`, "aria-label": TEXT.cols[key] },
     h("div", { class: "col-head" }, TEXT.cols[key], count !== null ? h("span", { class: `count${quiet ? " quiet" : ""}` }, count) : null, aside ? h("span", { class: "head-aside" }, aside) : null),
-    h("div", { class: "col-body", "data-scroll": `col-${key}` }, body),
+    h("div", { class: "col-body", "data-scroll": `col-${key}`, "data-list": list }, body),
     foot ? h("div", { class: "col-foot" }, foot) : null,
   );
 }
@@ -660,18 +625,6 @@ async function uploadImage(file) {
  * @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder] @param {string} [hint] @param {boolean} [images] @param {Child} [middle] shown between the options and the box
  */
 function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null) {
-  // What is on its way stays as sent: an edit made meanwhile would be lost with the draft.
-  /** The box on the page: this new one, or the one being typed in that `redraw` kept. @type {HTMLTextAreaElement | HTMLInputElement} */
-  let box = h("textarea", { "data-key": key, placeholder, "aria-label": placeholder, readonly: ui.sending.has(key) });
-  const drawn = box;
-  box.value = ui.drafts.get(key) ?? "";
-  // The box grows with what is written, up to 40% of the window; past that it scrolls.
-  const fit = () => {
-    if (!box.isConnected) return;
-    box.style.height = "auto";
-    box.style.height = `${Math.min(box.scrollHeight + 2, Math.round(innerHeight * 0.4))}px`;
-  };
-  requestAnimationFrame(() => box === drawn && fit());
   const attached = images ? (ui.draftImages.get(key) ?? []) : [];
   const busy = ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0;
   /** @param {Blob[]} files */
@@ -682,15 +635,6 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     }
     if (files.length > ATTACHED_IMAGES_MAX - attached.length) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
   };
-  /** @param {ClipboardEvent} e */
-  const onPaste = (e) => {
-    const files = [...(e.clipboardData?.files ?? [])].filter((f) => f.type.startsWith("image/"));
-    if (files.length === 0) return; // text is pasted as usual
-    e.preventDefault();
-    attach(files);
-  };
-  const picker = /** @type {HTMLInputElement} */ (h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true }));
-  picker.addEventListener("change", () => attach([...(picker.files ?? [])]));
   const send = () => {
     const text = box.value;
     // Read now, not as last drawn: a second click before the redraw must not send twice.
@@ -705,57 +649,68 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
       toast(TEXT.sent(label(S(sid))));
     }), () => ui.sending.delete(key));
   };
-  const opts = options.map((o, i) => h("button", { "aria-pressed": String(box.value === o), onclick: () => pick(o) }, i < 9 ? h("kbd", {}, String(i + 1)) : null, o));
-  const syncPressed = () => opts.forEach((b, i) => b.setAttribute("aria-pressed", String(box.value === options[i])));
+  /** The option buttons on the page, which are this drawing's or the kept ones. */
+  const syncPressed = () => box.parentElement?.querySelectorAll(":scope > .opts > button").forEach((b, i) => b.setAttribute("aria-pressed", String(box.value === options[i])));
   /** @param {string} o */
   const pick = (o) => {
     box.value = o;
     ui.drafts.set(key, o);
     saveDrafts();
     syncPressed();
-    fit();
+    fitBox(box);
     box.focus();
   };
-  const onInput = () => {
-    ui.drafts.set(key, box.value);
-    saveDrafts();
-    syncPressed();
-    fit();
-  };
-  /** @param {KeyboardEvent} e */
-  const onKeydown = (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      send();
-    }
-    // While the box is empty or holds an option as picked, a digit picks another option.
-    const option = /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey ? options[Number(e.key) - 1] : undefined;
-    if (option !== undefined && (box.value === "" || options.includes(box.value))) {
-      e.preventDefault();
-      pick(option);
-    }
-  };
-  // Properties, not listeners: each drawing's replace the last on a box that stays.
-  /** @param {HTMLTextAreaElement | HTMLInputElement} el */
-  const listen = (el) => {
-    el.onpaste = images ? onPaste : null;
-    el.oninput = onInput;
-    el.onkeydown = onKeydown;
-  };
-  listen(box);
+  // What is on its way stays as sent: an edit made meanwhile would be lost with the draft.
+  /** The box on the page: this new one, or the one being typed in that `patch` kept. @type {HTMLTextAreaElement} */
+  let box = h("textarea", {
+    "data-key": key,
+    placeholder,
+    "aria-label": placeholder,
+    readonly: ui.sending.has(key),
+    oninput: () => {
+      ui.drafts.set(key, box.value);
+      saveDrafts();
+      syncPressed();
+      fitBox(box);
+    },
+    onkeydown: (e) => {
+      if (!(e instanceof KeyboardEvent)) return;
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        send();
+      }
+      // While the box is empty or holds an option as picked, a digit picks another option.
+      const option = /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey ? options[Number(e.key) - 1] : undefined;
+      if (option !== undefined && (box.value === "" || options.includes(box.value))) {
+        e.preventDefault();
+        pick(option);
+      }
+    },
+    onpaste: images
+      ? (e) => {
+          const files = [...((e instanceof ClipboardEvent && e.clipboardData?.files) || [])].filter((f) => f.type.startsWith("image/"));
+          if (files.length === 0) return; // text is pasted as usual
+          e.preventDefault();
+          attach(files);
+        }
+      : null,
+  });
+  box.value = ui.drafts.get(key) ?? "";
   onKept(box, (live) => {
     box = live;
-    listen(live);
-    live.readOnly = ui.sending.has(key);
-    live.placeholder = placeholder;
-    live.setAttribute("aria-label", placeholder);
     // Written only when it differs (a message sent empties it): setting a value resets the keyboard too.
     const draft = ui.drafts.get(key) ?? "";
     if (live.value !== draft) {
       live.value = draft;
-      fit();
+      fitBox(live);
     }
   });
+  const opts = options.map((o, i) => h("button", { "aria-pressed": String(box.value === o), onclick: () => pick(o) }, i < 9 ? h("kbd", {}, String(i + 1)) : null, o));
+  /** @param {Event} e */
+  const pickFiles = (e) => {
+    const picker = e.currentTarget instanceof Element ? e.currentTarget.parentElement?.querySelector("input") : null;
+    picker?.click();
+  };
   return h(
     "div",
     { class: "answer" },
@@ -768,7 +723,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
           attached.map((id) =>
             h(
               "span",
-              { class: "thumb" },
+              { class: "thumb", "data-key": id },
               h("img", { src: `/images/${encodeURIComponent(id)}`, alt: TEXT.attachedImage }),
               h("button", { class: "icon-btn", title: TEXT.removeImage, "aria-label": TEXT.removeImage, onclick: () => (ui.draftImages.set(key, attached.filter((x) => x !== id)), saveDrafts(), render()) }, icon("x")),
             ),
@@ -783,12 +738,28 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
       h(
         "div",
         { class: "send-col" },
-        images ? [picker, h("button", { class: "icon-btn", title: TEXT.attachImage, "aria-label": TEXT.attachImage, onclick: () => picker.click() }, icon("image"))] : null,
+        images
+          ? [
+              h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true, onchange: (e) => e.currentTarget instanceof HTMLInputElement && attach([...(e.currentTarget.files ?? [])]) }),
+              h("button", { class: "icon-btn", title: TEXT.attachImage, "aria-label": TEXT.attachImage, onclick: pickFiles }, icon("image")),
+            ]
+          : null,
         h("button", { class: "primary", title: TEXT.send, onclick: send, disabled: busy }, icon("send"), ui.sending.has(key) ? TEXT.sending : TEXT.sendShort),
       ),
       h("span", { class: "faint send-hint" }, h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), hint, images ? ` ${TEXT.pasteImages}` : ""),
     ),
   );
+}
+
+/** A text box grows with what is written, up to 40% of the window; past that it scrolls. @param {HTMLTextAreaElement} box */
+function fitBox(box) {
+  if (!box.getClientRects().length) return; // not laid out yet (a window still closed): fitted when it is
+  box.style.height = "auto";
+  box.style.height = `${Math.min(box.scrollHeight + 2, Math.round(innerHeight * 0.4))}px`;
+}
+/** Fits the boxes a redraw just placed, in the same frame: one drawn at its default height first would push the page down a frame later. @param {ParentNode} root */
+function fitNewBoxes(root) {
+  for (const box of root.querySelectorAll("textarea[data-key]")) if (box instanceof HTMLTextAreaElement && !box.style.height) fitBox(box);
 }
 
 /**
@@ -836,7 +807,7 @@ function conversationView(list, whileWorking = new Set()) {
     const mark = m.from === "developer" && whileWorking.has(m.text) ? ` · ${TEXT.conversation.whileWorking}` : "";
     return h(
       "div",
-      { class: `msg from-${m.from}${m.step ? " step" : ""}` },
+      { class: `msg from-${m.from}${m.step ? " step" : ""}`, "data-key": m.id },
       m.text.trim() ? h("div", { class: "md" }, mdBlocks(m.text, { breaks: m.from === "developer" })) : null,
       m.images?.length ? attachedImages(m.images) : null,
       h("div", { class: "msg-meta" }, who ? [who, " · "] : null, hm(m.at), mark),
@@ -858,7 +829,7 @@ function conversationView(list, whileWorking = new Set()) {
       const until = list[end]?.at ?? "";
       const agents = data.agents.filter((a) => a.sessionId === m.sessionId && a.startedAt >= (run[0]?.at ?? "") && a.startedAt <= until).length;
       out.push(
-        h("button", { class: "steps-fold linkish faint", "aria-expanded": String(open), onclick: () => ((open ? ui.stepsOpen.delete(key) : ui.stepsOpen.add(key)), render()) }, `${open ? "▾" : "▸"} ${TEXT.conversation.steps(run.length, agents)}`),
+        h("button", { class: "steps-fold linkish faint", "data-key": `fold-${key}`, "aria-expanded": String(open), onclick: () => ((open ? ui.stepsOpen.delete(key) : ui.stepsOpen.add(key)), render()) }, `${open ? "▾" : "▸"} ${TEXT.conversation.steps(run.length, agents)}`),
       );
       if (open) out.push(...run.map(message));
       i = end;
@@ -901,7 +872,9 @@ function earlierConversation(q) {
 function nextCard(q) {
   const s = S(q.sessionId);
   const canAnswer = data.listening.includes(q.sessionId);
-  const enters = entering(q.id, "next");
+  const meta = h("div", { class: "meta" }, h("span", { class: `qkind k-${q.kind}` }, TEXT.kinds[q.kind]), where(s), h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt)));
+  // A question shares its row's `data-flip`: picked or next in line, the row grows into this card.
+  const card = { "aria-label": TEXT.next, "data-key": `next-${q.id}`, "data-flip": `q-${q.id}` };
   // The question and its answers come first; what the session said around it, folded, after the options.
   const long = (q.context ?? "").length > 320 || (q.context ?? "").split("\n").length > 5;
   const unfolded = ui.contextOpen.has(q.id);
@@ -918,8 +891,8 @@ function nextCard(q) {
     : h("div", { class: "qmore" }, earlierConversation(q));
   return h(
     "article",
-    { class: `next${heat(q.askedAt)}${enters ? " arrived" : ""}`, "aria-label": TEXT.next, style: `view-transition-name: q-${q.id}` },
-    h("div", { class: "meta" }, h("span", { class: `qkind k-${q.kind}` }, TEXT.kinds[q.kind]), where(s), h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt))),
+    { ...card, class: `next${heat(q.askedAt)}` },
+    meta,
     q.kind === "permission" ? h("pre", { class: "qcode", "data-scroll": `code-${q.id}` }, q.text) : questionText(q.text),
     answerForm(q, context),
     h(
@@ -945,14 +918,15 @@ function inbox() {
 
 /**
  * A row of the inbox: a mark, one line saying what it is, where it comes from, and how long it has
- * waited. @param {{ mark: Child, line: Child, meta: string, when: Child, open: () => void, go?: Child, end?: Child, key: string }} row
+ * waited. @param {{ mark: Child, line: Child, meta: string, when: Child, open: () => void, go?: Child, end?: Child, key: string, flip?: string }} row
  */
-function inboxRow({ mark, line, meta, when, open, go, end, key }) {
+function inboxRow({ mark, line, meta, when, open, go, end, key, flip }) {
   return h(
     "div",
     {
-      class: `qrow${entering(key, "row") ? " arrived" : ""}`,
-      style: `view-transition-name: i-${key}`,
+      class: "qrow",
+      "data-key": `row-${key}`,
+      "data-flip": flip,
       role: "button",
       tabindex: "0",
       onclick: open,
@@ -976,6 +950,7 @@ function questionRow(q) {
   const s = S(q.sessionId);
   return inboxRow({
     key: q.id,
+    flip: `q-${q.id}`,
     mark: beacon(q.askedAt),
     line: [q.kind !== "question" ? [badge(q.kind), " "] : null, h("b", {}, headline(q.text))],
     meta: [label(s), q.options.length ? TEXT.nOptions(q.options.length) : ""].filter(Boolean).join(" · "),
@@ -983,10 +958,8 @@ function questionRow(q) {
     go: goLink(s, "row-go", icon("go"), TEXT.go),
     open: () => {
       ui.sel = q.id;
-      animate(() => {
-        renderView();
-        revealNext();
-      });
+      renderView();
+      revealNext();
     },
   });
 }
@@ -1013,12 +986,13 @@ function inboxColumn() {
   const reviewEmpty = !data.results.some((r) => inProject(r.sessionId) && isNew(r));
   const clear = h(
     "div",
-    { class: "allclear", role: "status" },
+    { class: "allclear", role: "status", "data-key": "allclear" },
     dot("done"),
     h("span", {}, TEXT.allClear(reviewEmpty), reviewEmpty ? [" ", h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory)] : null),
   );
   return column("needs", count || null, count ? [selected ? nextCard(selected) : null, rows] : clear, {
     aside: questions.length > 1 ? h("span", { class: "keys-only faint" }, TEXT.keysHint) : null,
+    list: true,
   });
 }
 
@@ -1028,13 +1002,20 @@ function showEarlierResults() {
   render();
 }
 
-/** @param {Result} r */
-function resultRow(r) {
+/** @param {Result} r @param {() => void} [opened] after the result's window opens */
+function resultRow(r, opened) {
   const first = r.images[0];
   const thumb = first ? h("img", { src: `/images/${first.id}`, alt: "" }) : h("span", { class: "ph" }, dot(r.status === "failed" ? "failed" : "done"));
   return h(
     "button",
-    { class: `rrow${isNew(r) ? " is-new" : ""}${r.status === "failed" ? " failed" : ""}`, onclick: () => openResult(r) },
+    {
+      class: `rrow${isNew(r) ? " is-new" : ""}${r.status === "failed" ? " failed" : ""}`,
+      "data-key": r.id,
+      onclick: () => {
+        openResult(r);
+        opened?.();
+      },
+    },
     thumb,
     h("span", { class: "rbody" }, h("span", { class: "rt" }, r.title), h("span", { class: "rm" }, isNew(r) ? h("span", { class: "new", title: TEXT.newResult }) : null, `${label(S(r.sessionId))} · ${hm(r.at)}`)),
   );
@@ -1045,7 +1026,7 @@ function reviewTile(r) {
   const first = r.images[0];
   return h(
     "div",
-    { class: "rtile-wrap", style: `view-transition-name: r-${r.id}` },
+    { class: "rtile-wrap", "data-key": `r-${r.id}` },
     h(
       "button",
       { class: "rtile", onclick: () => openResult(r), title: `${r.title}\n${label(S(r.sessionId))} · ${hm(r.at)}` },
@@ -1061,7 +1042,7 @@ function reviewTile(r) {
 function reviewColumn() {
   const list = data.results.filter((r) => inProject(r.sessionId) && isNew(r) && r.status !== "failed");
   const empty = h("div", { class: "empty" }, TEXT.emptyResults, " ", h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory));
-  return column("review", list.length || null, list.length ? h("div", { class: "rtiles" }, list.map(reviewTile)) : empty, { quiet: true });
+  return column("review", list.length || null, list.length ? h("div", { class: "rtiles", "data-list": true }, list.map(reviewTile)) : empty, { quiet: true });
 }
 
 /** One dot per agent says the shape of a session at a glance. @param {Agent} a */
@@ -1168,7 +1149,7 @@ function sessionCard(s) {
       onkeydown: (e) => {
         if (/** @type {KeyboardEvent} */ (e).key === "Enter") open();
       },
-      style: `view-transition-name: s-${s.id}`,
+      "data-key": `s-${s.id}`,
     },
     h(
       "div",
@@ -1192,25 +1173,30 @@ function sessionCard(s) {
 function controlSection(s) {
   const endable = Boolean(s.process?.start);
   if ((!s.tmux && !endable) || !isLive(s)) return null;
-  /** @param {string} text @param {() => Promise<unknown>} act @param {string} [cls] */
-  const confirmed = (text, act, cls = "secondary") => {
-    const b = h("button", { class: cls }, text);
-    let armed = 0;
-    b.addEventListener("click", () => {
-      if (Date.now() - armed > 3000) {
-        armed = Date.now();
-        b.textContent = TEXT.control.confirm(text);
-        setTimeout(() => (b.textContent = text), 3000);
-        return;
+  // Armed in `ui`, not in the button: the panel redraws as the session's metrics change.
+  /** @param {string} id @param {string} text @param {() => Promise<unknown>} act @param {string} [cls] */
+  const confirmed = (id, text, act, cls = "secondary") => {
+    const key = `${s.id} ${id}`;
+    const armed = () => ui.armed?.key === key && ui.armed.until > Date.now();
+    const click = () => {
+      if (!armed()) {
+        const until = Date.now() + ARM_MS;
+        ui.armed = { key, until };
+        setTimeout(() => {
+          if (ui.armed?.until !== until) return;
+          ui.armed = null;
+          redrawPanel(s.id);
+        }, ARM_MS);
+        return redrawPanel(s.id);
       }
-      armed = 0;
-      b.textContent = text;
+      ui.armed = null;
+      redrawPanel(s.id);
       run(act());
-    });
-    return b;
+    };
+    return h("button", { class: cls, "data-key": id, onclick: click }, armed() ? TEXT.control.confirm(text) : text);
   };
   /** @param {string} action @param {string} text */
-  const key = (action, text) => confirmed(text, () => post(`/api/sessions/${s.id}/keys`, { action }).then(() => toast(TEXT.control.sent(text, label(s)))));
+  const key = (action, text) => confirmed(action, text, () => post(`/api/sessions/${s.id}/keys`, { action }).then(() => toast(TEXT.control.sent(text, label(s)))));
   // The terminal shows a dialog (a permission prompt, a question with options) only while the
   // session has one open; the keys that answer it are offered only then.
   const dialog = data.questions.some((q) => q.status === "open" && q.sessionId === s.id && (q.kind === "permission" || q.kind === "question"));
@@ -1223,10 +1209,15 @@ function controlSection(s) {
       { class: "row wt-actions" },
       s.tmux ? [key("compact", "/compact"), key("interrupt", TEXT.control.interrupt)] : null,
       s.tmux && dialog ? [h("span", { class: "faint" }, TEXT.control.dialog), ...[1, 2, 3, 4, 5].map((n) => key(`option-${n}`, String(n))), key("enter", "Enter")] : null,
-      endable ? confirmed(TEXT.control.end, () => post(`/api/sessions/${s.id}/end`, {}).then(() => toast(TEXT.control.ended(label(s)))), "secondary danger") : null,
+      endable ? confirmed("end", TEXT.control.end, () => post(`/api/sessions/${s.id}/end`, {}).then(() => toast(TEXT.control.ended(label(s)))), "secondary danger") : null,
     ),
     s.tmux && !ON_THIS_MACHINE ? attachLine(s.tmux) : null,
   );
+}
+const ARM_MS = 3000;
+/** Redraws the session panel now, if it still shows this session. @param {string} sid */
+function redrawPanel(sid) {
+  if (ui.panelSession === sid && dialog("session").open) openSession(sid);
 }
 
 /**
@@ -1260,7 +1251,7 @@ function readBadge(s) {
 function sessionsColumn() {
   const list = data.sessions.filter((s) => (isLive(s) || endedUnseen(s)) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
   const legend = h("div", { class: "legend" }, LEGEND.map((st) => h("span", {}, dot(st), TEXT.state[st])));
-  return column("sessions", list.length, list.length ? h("div", { class: "slist" }, list.map(sessionCard)) : h("div", { class: "empty" }, TEXT.emptyRunning), { foot: legend, quiet: true });
+  return column("sessions", list.length, list.length ? h("div", { class: "slist", "data-list": true }, list.map(sessionCard)) : h("div", { class: "empty" }, TEXT.emptyRunning), { foot: legend, quiet: true });
 }
 
 // ---------- Session panel ----------
@@ -1304,11 +1295,7 @@ function panelChips(s, m) {
 function panelPart(s, m, d) {
   if (ui.panelPart === "agents") return agentsPart(s);
   if (ui.panelPart === "results") {
-    return h("div", { class: "stack" }, data.results.filter((r) => r.sessionId === s.id).map((r) => {
-      const row = resultRow(r);
-      row.addEventListener("click", () => d.close());
-      return row;
-    }));
+    return h("div", { class: "stack" }, data.results.filter((r) => r.sessionId === s.id).map((r) => resultRow(r, () => d.close())));
   }
   if (ui.panelPart === "services") {
     return h("div", { class: "links" }, data.services.filter((v) => v.sessionId === s.id).map((v) => h("span", { title: TEXT.svcSince(ago(v.startedAt)) }, h("span", { class: "up" }), `${v.name} `, localLink(v.url, v.url.replace(LOCAL_URL, "")))));
@@ -1455,14 +1442,14 @@ function openSession(sid) {
   const chipsLeft = before?.querySelector(".pchips")?.scrollLeft ?? 0;
   const body = h(
     "div",
-    { class: "dbody session-body", "data-part": part, "data-session": sid, "data-fetched": fetched },
+    { class: "dbody session-body", "data-key": `body-${sid}`, "data-part": part, "data-session": sid, "data-fetched": fetched },
     panelChips(s, m),
     // An open part takes the conversation's place; its chip, or the way back, closes it.
     ui.panelPart
       ? h("div", { class: "ppart" }, h("button", { class: "linkish back", onclick: () => ((ui.panelPart = null), openSession(sid)) }, TEXT.backToConversation), panelPart(s, m, d))
       : chat(s),
   );
-  redraw(
+  patch(
     d,
     h(
       "div",
@@ -1477,7 +1464,8 @@ function openSession(sid) {
   );
   // The conversation reads bottom up: it opens at the latest message and follows new ones, unless
   // the developer scrolled up to read. A part that just unfolded is shown from its top.
-  // `body` is not on the page when the box being typed in kept the old one.
+  // `body` is not on the page when `patch` kept the one already shown.
+  fitNewBoxes(d);
   const shownBody = d.querySelector(".session-body");
   if (samePart && shownBody) shownBody.scrollTop = scrolled;
   // The chip row scrolls sideways on a phone: a tap on a chip keeps it where it was.
@@ -1523,7 +1511,7 @@ function renderPanel() {
     return;
   }
   ui.panelDrawn = shows;
-  keepFocus(d, () => openSession(s.id));
+  openSession(s.id);
 }
 const PANEL_REST_MS = 1200;
 
@@ -2011,7 +1999,10 @@ function dayLabel(iso) {
 }
 
 // ---------- Render ----------
-/** Re-rendering keeps the scroll of every scrollable part, the focused field, its caret and what was typed in it. */
+/**
+ * Redraws the view: only what changed changes, so the scroll of every part, the focused element, the
+ * text selected and what is under the pointer stay; cards that come, go or move are animated.
+ */
 function renderView() {
   document.body.dataset.tab = ui.tab;
   const view = byId("view");
@@ -2019,7 +2010,10 @@ function renderView() {
   const scrolls = new Map();
   for (const el of view.querySelectorAll("[data-scroll]")) if (el instanceof HTMLElement && el.dataset.scroll) scrolls.set(el.dataset.scroll, el.scrollTop);
   const pageScroll = window.scrollY;
-  keepFocus(view, () => redraw(view, !ui.loaded ? skeleton() : ui.view === "history" ? historyView() : board()));
+  animateLists(view, () => {
+    patch(view, !ui.loaded ? skeleton() : ui.view === "history" ? historyView() : board());
+    fitNewBoxes(view);
+  });
   for (const el of view.querySelectorAll("[data-scroll]")) {
     const top = el instanceof HTMLElement && el.dataset.scroll ? scrolls.get(el.dataset.scroll) : undefined;
     if (top !== undefined) el.scrollTop = top;
@@ -2027,22 +2021,6 @@ function renderView() {
   window.scrollTo(0, pageScroll);
 }
 
-/** Rebuilds part of the page; the text box being typed in keeps focus and caret. @param {ParentNode} root @param {() => void} rebuild */
-function keepFocus(root, rebuild) {
-  const active = document.activeElement;
-  const key = active instanceof HTMLElement && root.contains(active) ? active.dataset.key : undefined;
-  const caret = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? { from: active.selectionStart, to: active.selectionEnd, top: active.scrollTop } : null;
-  rebuild();
-  if (!key || document.activeElement === active) return; // `redraw` kept it: restoring the caret would reset the keyboard
-  const again = root.querySelector(`[data-key="${CSS.escape(key)}"]`);
-  if (again instanceof HTMLTextAreaElement || again instanceof HTMLInputElement) {
-    again.focus({ preventScroll: true });
-    if (caret) {
-      again.setSelectionRange(caret.from, caret.to);
-      again.scrollTop = caret.top; // a long draft stays where it was being written, not at its start
-    }
-  }
-}
 /**
  * The inbox on the left; the sessions and what to review on the right. On a phone one of them at a
  * time, chosen in the tab bar.
@@ -2057,38 +2035,41 @@ const SIDE_KEY = "agent-desk:side-width";
 const SIDE_MIN = 280;
 /** @param {number | null} px */
 function setSide(px) {
-  if (px === null) document.documentElement.style.removeProperty("--side-w");
-  else document.documentElement.style.setProperty("--side-w", `${Math.round(px)}px`);
-}
-setSide(Number(localStorage.getItem(SIDE_KEY)) || null);
-
-/** The board is rebuilt on every change, so the drag listens on the window, not on this element. */
-function splitter() {
-  const handle = h("div", { class: "split", title: TEXT.splitTitle });
-  handle.addEventListener("pointerdown", (e) => {
-    const board = handle.parentElement;
-    if (!board) return;
-    e.preventDefault();
-    const right = board.getBoundingClientRect().right - parseFloat(getComputedStyle(board).paddingRight);
-    const move = (/** @type {PointerEvent} */ m) => {
-      const px = Math.max(SIDE_MIN, right - m.clientX - handle.offsetWidth / 2);
-      setSide(px);
-      localStorage.setItem(SIDE_KEY, String(Math.round(px)));
-    };
-    const up = () => {
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      document.body.classList.remove("resizing");
-    };
-    addEventListener("pointermove", move);
-    addEventListener("pointerup", up);
-    document.body.classList.add("resizing");
-  });
-  handle.addEventListener("dblclick", () => {
+  if (px === null) {
     localStorage.removeItem(SIDE_KEY);
-    setSide(null);
+    document.documentElement.style.removeProperty("--side-w");
+    return;
+  }
+  localStorage.setItem(SIDE_KEY, String(Math.round(px)));
+  document.documentElement.style.setProperty("--side-w", `${Math.round(px)}px`);
+}
+const savedSide = Number(localStorage.getItem(SIDE_KEY));
+if (savedSide) document.documentElement.style.setProperty("--side-w", `${Math.round(savedSide)}px`);
+
+/** The line between the inbox and the right column: dragged, it resizes them. */
+function splitter() {
+  return h("div", {
+    class: "split",
+    title: TEXT.splitTitle,
+    onpointerdown: (e) => {
+      const handle = e.currentTarget;
+      const board = handle instanceof HTMLElement ? handle.parentElement : null;
+      if (!(handle instanceof HTMLElement) || !board || !(e instanceof PointerEvent)) return;
+      e.preventDefault();
+      const right = board.getBoundingClientRect().right - parseFloat(getComputedStyle(board).paddingRight);
+      const half = handle.offsetWidth / 2; // read once: a redraw during the drag must not shift the line
+      const move = (/** @type {PointerEvent} */ m) => setSide(Math.max(SIDE_MIN, right - m.clientX - half));
+      const up = () => {
+        removeEventListener("pointermove", move);
+        removeEventListener("pointerup", up);
+        document.body.classList.remove("resizing");
+      };
+      addEventListener("pointermove", move);
+      addEventListener("pointerup", up);
+      document.body.classList.add("resizing");
+    },
+    ondblclick: () => setSide(null),
   });
-  return handle;
 }
 
 /** The desk's shape while the first data arrives. */
