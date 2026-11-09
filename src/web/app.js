@@ -1065,7 +1065,8 @@ function earlierConversation(q) {
   // A turn that ends asking: the question is its message's last part, already on the card with the rest as context.
   const own = (/** @type {ConversationEntry} */ m) => m.from === "session" && m.text.trim().endsWith(q.text.replace(/^…/, "").trim());
   const before = list.filter((m) => m.at <= q.askedAt && !own(m)).slice(-8);
-  return [toggle, h("div", { class: "conversation", "data-scroll": `conv-${q.id}`, "data-grow": true }, before.length ? conversationView(before) : h("div", { class: "faint" }, TEXT.conversation.none))];
+  // It opens on the turn right before the question, so reading goes on into it.
+  return [toggle, h("div", { class: "conversation", "data-scroll": `conv-${q.id}`, "data-scroll-end": true, "data-grow": true }, before.length ? conversationView(before) : h("div", { class: "faint" }, TEXT.conversation.none))];
 }
 
 /** What the session said around a question, folded when long. @param {Question} q */
@@ -2579,6 +2580,7 @@ function renderView({ instant = false } = {}) {
     for (const el of view.querySelectorAll("[data-scroll]")) {
       const top = el instanceof HTMLElement && el.dataset.scroll ? scrolls.get(el.dataset.scroll) : undefined;
       if (top !== undefined) el.scrollTop = top;
+      else if (el.hasAttribute("data-scroll-end")) el.scrollTop = el.scrollHeight; // just shown: from its newest end
     }
     window.scrollTo(0, pageScroll);
   };

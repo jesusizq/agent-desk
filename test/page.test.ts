@@ -265,6 +265,24 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"], "sent once");
   });
 
+  it("opens what came earlier in a session on the turn right before its question", async () => {
+    store.upsertSession({ id: "earlier", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "earlier turns", state: "waiting" });
+    for (let i = 1; i <= 8; i++) store.addMessage({ sessionId: "earlier", from: "session", text: `Turn ${i}: ${"what the session reported at length. ".repeat(6)}` });
+    const asked = store.ask({ sessionId: "earlier", kind: "question", text: "Ship the earlier turns?" });
+    try {
+      const page = await open();
+      await page.click(".qrow", "Ship the earlier turns?");
+      await page.click(".next button", "Earlier in this session");
+      const block = "document.querySelector('.next .conversation')";
+      await page.waitFor(`${block} && !document.getAnimations().length`);
+      const [top, height, shown] = await page.eval<[number, number, number]>(`[${block}.scrollTop, ${block}.scrollHeight, ${block}.clientHeight]`);
+      assert.ok(height > shown, "longer than its box");
+      assert.ok(Math.abs(top + shown - height) <= 1, `scrolled to its newest end: ${top} + ${shown} of ${height}`);
+    } finally {
+      store.dismiss(asked.id);
+    }
+  });
+
   it("shows in an open session what it writes and what is typed to it while it works, without reopening", async () => {
     store.upsertSession({ id: "live-steps", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "live steps", state: "working" });
     store.addMessage({ sessionId: "live-steps", from: "developer", text: "migrate the schema", via: "terminal" });
