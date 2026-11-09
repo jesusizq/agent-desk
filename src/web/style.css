@@ -794,6 +794,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   /* The answer box: Send sits beside the text, so the keyboard cannot hide one without the other.
      Options are rows a thumb can hit: a long one takes the line, short ones (Allow, Deny) share it. */
   .answer .opts button { flex: 1 1 auto; text-align: left; }
+  .answer .decide button { flex: 1 1 0; min-height: 44px; }
   /* A chat app's composer: a rounded one-line box, and round buttons with an icon only (their name stays for screen readers). */
   .answer textarea { min-height: 44px; padding: 10px 14px; line-height: 1.4; border-radius: 22px; scroll-margin: 16px; }
   .answer .send-col > *, .answer .send-col .icon-btn { width: 44px; height: 44px; min-height: 44px; min-width: 44px; padding: 0; border-radius: 999px; justify-content: center; }
