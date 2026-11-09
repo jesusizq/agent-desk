@@ -867,6 +867,27 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         done();
       }
     });
+
+    it("under a keyboard that covers the page, a box on the inbox's card growing line by line keeps its end and Send above the keyboard", async () => {
+      const done = asking("growing", "a growing answer");
+      try {
+        const page = await phone(390, 844, coveringKeyboard(844));
+        await page.click(".qrow", "a growing answer");
+        const box = "document.querySelector('.next textarea')";
+        await page.waitFor(`${box} && document.querySelector('.next').textContent.includes('a growing answer') && document.getAnimations().length === 0`);
+        // The keyboard leaves 20 px under the box: no scroll is needed until it grows.
+        await page.eval(`(() => { ${box}.focus(); setKeyboard(innerHeight - ${box}.getBoundingClientRect().bottom - 20); })()`);
+        await page.waitFor("document.documentElement.hasAttribute('data-keyboard')");
+        for (let i = 0; i < 4; i++) await page.type(`Line ${i} of a longer answer\n`);
+        const room = await page.eval<number[]>(`(() => {
+          const send = document.querySelector('.next .send');
+          return [${box}, send].map((el) => Math.round(visualViewport.height - el.getBoundingClientRect().bottom));
+        })()`);
+        assert.ok(room.every((px) => px >= 16), `the box's end and Send stay 16 px above the keyboard: ${room}`);
+      } finally {
+        done();
+      }
+    });
   });
 
   it("keeps the large card's shape when its session starts or stops listening", async () => {

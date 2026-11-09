@@ -915,11 +915,22 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
 /** A text box is one line when empty and grows with what is written; style.css caps it, past that it scrolls. @param {HTMLTextAreaElement} box */
 function fitBox(box) {
   if (!box.getClientRects().length) return; // not laid out yet (a window still closed): fitted when it is
+  const was = box.offsetHeight;
   box.style.height = "auto";
   // What the panel's foot holds besides the box, at the box's smallest: style.css gives the box the rest of the foot's cap.
   const foot = box.closest(".chat-footer");
   if (foot instanceof HTMLElement) foot.style.setProperty("--footer-rest", `${foot.scrollHeight + foot.clientTop - box.offsetHeight}px`);
   box.style.height = `${box.scrollHeight + 2}px`;
+  // A box on the page grows down under a keyboard that covers it (the panel's foot sits on the keyboard instead).
+  if (!foot && box === document.activeElement && box.offsetHeight > was && document.documentElement.hasAttribute("data-keyboard")) showAboveKeyboard(box);
+}
+/** Scrolls the page so the box being typed in, with its Send button, ends above the visual viewport's bottom. @param {HTMLTextAreaElement} box */
+function showAboveKeyboard(box) {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const send = box.closest(".answer")?.querySelector(".send-col");
+  const bottom = Math.max(box.getBoundingClientRect().bottom, send?.getBoundingClientRect().bottom ?? 0);
+  window.scrollBy(0, Math.max(0, bottom + 16 - (vv.offsetTop + vv.height)));
 }
 /** Fits the boxes a redraw just placed, in the same frame: one drawn at its default height first would push the page down a frame later. @param {ParentNode} root */
 function fitNewBoxes(root) {
@@ -2757,7 +2768,7 @@ function followKeyboard() {
     if (!(keyboard || raised) || !(box instanceof HTMLTextAreaElement)) return;
     const chat = box.closest(".session-body");
     if (chat) chat.scrollTop = chat.scrollHeight;
-    else if (vv) window.scrollBy(0, Math.max(0, box.getBoundingClientRect().bottom + 16 - (vv.offsetTop + vv.height)));
+    else showAboveKeyboard(box);
   };
   follow();
   vv?.addEventListener("resize", follow);
