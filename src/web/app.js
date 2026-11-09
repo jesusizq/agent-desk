@@ -153,7 +153,7 @@ function where(s, name) {
   if (!s) return h("span", { class: "where" }, "?");
   const mark = h("span", { class: "prov", title: s.provider }, providerMark(s.provider));
   mark.style.setProperty("--p", color(s.provider));
-  return h("span", { class: "where" }, projectMark(s.project.name), h("span", { class: "sep" }, "›"), mark, name ?? sessionName(s));
+  return h("span", { class: "where" }, projectMark(s.project.name), h("span", { class: "sep" }, "›"), mark, h("span", { class: "wname" }, name ?? sessionName(s)));
 }
 /** @param {number} v */
 function bar(v) {
@@ -859,9 +859,13 @@ function resolve(questionId) {
  * @param {string} text
  */
 function questionText(text) {
-  if (text.split("\n").filter((l) => l.trim()).length <= 1) return h("div", { class: "qtext" }, md(text));
-  return [h("div", { class: "qtext" }, md(headline(text))), h("div", { class: "qctx md qfull" }, mdBlocks(text))];
+  /** @param {string} line */
+  const head = (line) => h("div", { class: `qtext${line.length > LONG_QUESTION ? " long" : ""}` }, md(line));
+  if (text.split("\n").filter((l) => l.trim()).length <= 1) return head(text);
+  return [head(headline(text)), h("div", { class: "qctx md qfull" }, mdBlocks(text))];
 }
+// Past this many characters a question reads as a paragraph, not a title: it steps down in size and weight.
+const LONG_QUESTION = 160;
 
 /** The line of a question that asks (the line introducing a list of them, or its first line), without list markers. @param {string} text */
 function headline(text) {
@@ -871,7 +875,10 @@ function headline(text) {
   const first = lines.findIndex((l) => item.test(l));
   const intro = first > 0 && lines.filter((l) => item.test(l) && /[?¿]/.test(l)).length > 1 && /:$/.test(lines[first - 1] ?? "") ? lines[first - 1] : undefined;
   const asking = (intro ?? lines.find((l) => /[?¿]/.test(l)) ?? lines[0] ?? "").replace(item, "");
-  return asking.length > 240 ? `${asking.slice(0, 239)}…` : asking;
+  if (asking.length <= 240) return asking;
+  // A long paragraph: the sentence that asks, cut at a word if it is still too long.
+  const sentence = asking.split(/(?<=[.!?…;])\s+/).find((x) => /[?¿]/.test(x)) ?? asking;
+  return sentence.length > 240 ? `${sentence.slice(0, 240).replace(/\s+\S*$/, "")}…` : sentence;
 }
 
 /** Fetches a session's conversation, then re-renders what shows it. @param {string} sid @param {() => void} then */
@@ -1677,7 +1684,7 @@ function chat(s) {
             "div",
             { class: "panel-question" },
             h("div", { class: "meta" }, badge(asking.kind), h("span", { class: "spacer" }), h("button", { class: "linkish", onclick: () => answerOnDesk(asking.id) }, TEXT.conversation.openQuestion)),
-            h("div", { class: "qtext" }, md(headline(asking.text))),
+            h("div", { class: "pq-text", "data-scroll": `pq-${asking.id}` }, questionText(asking.text)),
             answerForm(asking),
           )
         : // One box whatever the session does, inert while it cannot take a message: the panel's foot never jumps.
