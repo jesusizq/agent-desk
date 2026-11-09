@@ -718,6 +718,14 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   /* Dialogs fill the screen; the head stays, the body scrolls. */
   dialog.result, dialog.sess { margin: 0; inset: var(--viewport-top, 0px) 0 auto; width: 100%; max-width: 100%; height: var(--viewport-height, 100dvh); max-height: var(--viewport-height, 100dvh); border-radius: 0; }
   dialog.result[open], dialog.sess[open] { display: flex; flex-direction: column; }
+  /* A session or result is a screen pushed in from the right, opaque all the way, and back out the same way. */
+  dialog.result, dialog.sess { opacity: 1; }
+  dialog.result:not([open]), dialog.sess:not([open]) { transform: translateX(100%); }
+  @starting-style { dialog.result[open], dialog.sess[open] { opacity: 1; transform: translateX(100%); } }
+  @media (prefers-reduced-motion: no-preference) {
+    dialog.result, dialog.sess { transition: transform var(--dur-3) var(--ease-out), overlay var(--dur-3) allow-discrete, display var(--dur-3) allow-discrete; }
+  }
+  dialog.swiping { transition: none; }
   dialog.zoom { height: 100dvh; }
   .dhead { flex: none; gap: 8px; align-items: center; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }
   .dhead > div:first-child { flex: 1 1 0; min-width: 0; }

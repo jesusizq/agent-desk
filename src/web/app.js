@@ -2754,6 +2754,60 @@ for (const id of ["result", "session", "zoom"]) {
     pressedBackdrop = false;
   });
 }
+for (const id of ["result", "session"]) edgeSwipe(dialog(id));
+/**
+ * On a phone, a swipe from the screen's left edge takes a session or result back off to the right,
+ * as a native screen; released early, it slides back. @param {HTMLDialogElement} d
+ */
+function edgeSwipe(d) {
+  /** @type {{ x: number, y: number, at: number } | null} */
+  let from = null;
+  let engaged = false;
+  let dx = 0;
+  d.addEventListener(
+    "touchstart",
+    (e) => {
+      const t = e.touches[0];
+      from = ONE_COLUMN.matches && e.touches.length === 1 && t && t.clientX < 24 ? { x: t.clientX, y: t.clientY, at: e.timeStamp } : null;
+      engaged = false;
+    },
+    { passive: true },
+  );
+  // Not passive: once the swipe is the panel's, the page must not scroll under it.
+  d.addEventListener(
+    "touchmove",
+    (e) => {
+      const t = e.touches[0];
+      if (!from || !t) return;
+      const mx = t.clientX - from.x;
+      const my = t.clientY - from.y;
+      if (!engaged) {
+        if (Math.abs(my) > 10 && Math.abs(my) > Math.abs(mx)) return void (from = null);
+        if (mx < 10) return;
+        engaged = true;
+        d.classList.add("swiping");
+      }
+      e.preventDefault();
+      dx = Math.max(0, mx);
+      d.style.transform = `translateX(${dx}px)`;
+    },
+    { passive: false },
+  );
+  /** @param {TouchEvent} e */
+  const end = (e) => {
+    const start = from;
+    from = null;
+    if (!start || !engaged) return;
+    engaged = false;
+    // Back to the stylesheet's movement: it finishes from where the finger left the panel.
+    d.classList.remove("swiping");
+    d.style.transform = "";
+    const quick = dx > 40 && dx / Math.max(1, e.timeStamp - start.at) > 0.5;
+    if (e.type === "touchend" && (dx > d.clientWidth / 3 || quick)) d.close();
+  };
+  d.addEventListener("touchend", end);
+  d.addEventListener("touchcancel", end);
+}
 /** Links into the page: #history, #needs, #s=<session id>, #r=<result id>. */
 function route() {
   const [k, v] = location.hash.slice(1).split("=");

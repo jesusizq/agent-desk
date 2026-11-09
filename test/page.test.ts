@@ -57,6 +57,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     Object.defineProperty(window, "innerHeight", { get: () => vv.height, configurable: true });
     window.setKeyboard = (px) => { covered = px; vv.dispatchEvent(new Event("resize")); };
   })()`;
+  /** A dialog open and done moving in (on a phone it slides in from the side). */
+  const arrived = (id: string) => `document.getElementById('${id}').open && !document.getElementById('${id}').getAnimations().length`;
   const openDialogs = (page: Page) => page.eval<string[]>("[...document.querySelectorAll('dialog[open]')].map((d) => d.id)");
 
   it("draws the oldest question large and every live session", async () => {
@@ -653,6 +655,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.click(".tabbar button", "Sessions");
     await page.click(".scard", "a wide table");
     await page.waitFor("document.querySelector('#session .md-table td')");
+    await page.waitFor(arrived("session"));
     const widths = await page.eval<number[]>("[...document.querySelectorAll('#session .md-table td')].map((c) => c.getBoundingClientRect().width)");
     assert.ok((widths[0] ?? 999) < 60, `a short column stays short: ${widths}`);
     for (const w of widths.slice(1)) assert.ok(w >= 220, `a long column has room: ${widths}`);

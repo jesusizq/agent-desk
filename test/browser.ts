@@ -161,6 +161,16 @@ export class Page {
   async click(selector: string, text = ""): Promise<void> {
     const find = `[...document.querySelectorAll(${JSON.stringify(selector)})].find((el) => el.getBoundingClientRect().width && el.getBoundingClientRect().height && el.textContent.includes(${JSON.stringify(text)}))`;
     await this.waitFor(find);
+    // As a person would, it waits for a moving element (a panel sliding in) to come to rest.
+    const still = `(async () => {
+      const el = ${find};
+      const at = () => JSON.stringify(el?.getBoundingClientRect());
+      const before = at();
+      for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
+      return before === at();
+    })()`;
+    const end = Date.now() + WAIT_MS;
+    while (!(await this.eval<boolean>(still))) if (Date.now() > end) throw new Error(`${selector} "${text}" kept moving for ${WAIT_MS} ms`);
     const [x, y] = await this.eval<[number, number]>(`(() => {
       const el = ${find};
       el.scrollIntoView({ block: "center" });
