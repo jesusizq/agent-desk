@@ -60,7 +60,7 @@ const ui = {
   /** @type {number | undefined} a redraw of the panel put off while it is scrolled */ panelLater: undefined,
   /** @type {Set<string>} */ sending: new Set(),
   /** @type {Map<string, number>} questions answered from the desk, shown answered on their card until then */ resolved: new Map(),
-  /** @type {string | null} a question answered with the keys: the card that replaces it takes the focus */ focusAfter: null,
+  /** @type {string | null} a question answered with the keys: the box that replaces it takes the focus */ focusAfter: null,
   /** @type {{ key: string, until: number } | null} the session control waiting for its confirming click */ armed: null,
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
@@ -2592,14 +2592,18 @@ document.addEventListener("input", markCuts, { capture: true, passive: true });
 addEventListener("resize", markCuts);
 
 /**
- * Answered with the keys, the question that takes the answered one's place is ready to type in, once
- * its card is drawn (the answered card stays a moment first), unless the developer went elsewhere.
+ * Answered with the keys, the question that takes the answered one's place (in its card, or the next
+ * card) is ready to type in, once drawn (the answered card stays a moment first), unless the developer
+ * went elsewhere.
  * @param {Element} view
  */
 function focusNextCard(view) {
   if (ui.focusAfter === null) return;
   const card = view.querySelector(".next:not([data-leaving])");
-  if (card instanceof HTMLElement && card.dataset.flip === `q-${ui.focusAfter}`) return; // still the answered one
+  const answered = data.questions.find((q) => q.id === ui.focusAfter);
+  // Still the answered one: its box, or its item answered in full. Questions asked together share one card.
+  const same = card instanceof HTMLElement && answered !== undefined && card.dataset.flip === `q-${itemKey(answered)}`;
+  if (same && (card.classList.contains("resolved") || card.querySelector(`textarea[data-key="answer-${CSS.escape(answered.id)}"]`))) return;
   ui.focusAfter = null;
   const box = card?.querySelector("textarea:not([readonly])");
   if (box instanceof HTMLElement && document.activeElement === document.body && !document.querySelector("dialog[open]")) box.focus({ preventScroll: true });

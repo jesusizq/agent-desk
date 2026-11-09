@@ -1605,6 +1605,40 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         done();
       }
     });
+
+    it("answered with Ctrl+Enter, questions asked together hand the keys to the part still open, then to the next question", async () => {
+      const done = asking("grouped-keys", "questions answered with the keys");
+      // Every waiting session listens, so whichever question comes next has a box that takes text.
+      const stops = [...new Set(store.openQuestions().map((q) => q.sessionId))].filter((id) => id !== "grouped-keys").map((id) => store.listen(id));
+      try {
+        const group = (index: number) => ({ id: "dialog-grouped-keys", index, size: 2 });
+        store.ask({ sessionId: "grouped-keys", kind: "question", dialog: true, group: group(0), text: "Which port should the preview use?", options: ["5173", "8080"] });
+        store.ask({ sessionId: "grouped-keys", kind: "question", dialog: true, group: group(1), text: "Which browser should it open?", options: ["Chrome", "Firefox"] });
+        const page = await open();
+        const ctrlEnter = async () => {
+          for (const type of ["rawKeyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 2 });
+        };
+        await page.click(".qrow", "Which port should the preview use?");
+        await page.waitFor("document.querySelectorAll('.next .qpart').length === 2 && document.getAnimations().length === 0");
+        await page.click(".next .qpart textarea");
+        await page.type("5173");
+        await ctrlEnter();
+        assert.deepEqual(await answers("grouped-keys", 1), ["5173"]);
+        await page.waitFor("document.querySelector('.next .qpart.done') && document.activeElement?.matches('.next .qpart:not(.done) textarea')", 5000);
+        await page.type("Chrome");
+        await ctrlEnter();
+        assert.deepEqual(await answers("grouped-keys", 1), ["Chrome"]);
+        await page.waitFor("document.querySelector('.next.resolved')");
+        await page.waitFor("!document.querySelector('.next.resolved') && document.activeElement?.matches('.next:not([data-leaving]) textarea')", 5000);
+        await page.type("x");
+        const box = "document.querySelector('.next:not([data-leaving]) textarea')";
+        assert.equal(await page.eval<string>(`${box}.value`), "x", "the key landed in the next question's box");
+        await page.eval(`(() => { const b = ${box}; b.value = ''; b.dispatchEvent(new Event('input', { bubbles: true })); })()`); // no draft left for the other tests
+      } finally {
+        for (const stop of stops) stop();
+        done();
+      }
+    });
   });
 
   it("dates a result from an earlier day in its tile and its window, and gives today's its time only", async () => {
