@@ -444,6 +444,8 @@ function notify(title, body, tag, open) {
 
 // In one column (a phone) the large card sits above the queue, maybe off screen. Same query as style.css.
 const ONE_COLUMN = matchMedia("(max-width: 700px), (max-height: 500px)");
+/** A finger, not a mouse: no hover, and a focused box raises a keyboard. */
+const COARSE = matchMedia("(pointer: coarse)");
 /** @param {ScrollLogicalPosition} [block] */
 function revealNext(block = "nearest") {
   if (ONE_COLUMN.matches) document.querySelector(".next")?.scrollIntoView({ block });
@@ -605,15 +607,21 @@ function column(key, count, body, { foot, quiet, aside, list } = {}) {
 }
 /** @typedef {import("./dom.js").Child} Child */
 
-/** The options, then `middle` (what the session said around the question), then the box. @param {Question} q @param {Child} [middle] */
+/**
+ * The options, then `middle` (what the session said around the question), then the box. While the
+ * session does not listen, the same box, inert, says to answer in its terminal: nothing jumps when it starts or stops.
+ * @param {Question} q @param {Child} [middle]
+ */
 function answerForm(q, middle = null) {
-  if (!data.listening.includes(q.sessionId)) {
-    const opts = q.options.map((o, i) => h("span", { class: "opt" }, h("b", {}, String(i + 1)), o));
-    return h("div", {}, q.options.length ? h("div", { class: "optline" }, h("span", { class: "faint" }, `${TEXT.options}:`), opts) : null, middle, ui.offline ? null : h("div", { class: "faint" }, TEXT.notListening));
-  }
+  const listening = data.listening.includes(q.sessionId);
   // A permission prompt or a choice dialog is settled by its hook, which takes text only.
   const textOnly = q.kind === "permission" || q.dialog === true;
-  return replyBox(`answer-${q.id}`, q.options, `/api/questions/${q.id}/answer`, q.sessionId, q.kind === "permission" ? TEXT.permissionPlaceholder : undefined, undefined, !textOnly, middle);
+  return replyBox(`answer-${q.id}`, q.options, `/api/questions/${q.id}/answer`, q.sessionId, {
+    placeholder: !listening ? TEXT.notListeningShort : q.kind === "permission" && q.options.length ? TEXT.permissionPlaceholder : undefined,
+    images: !textOnly,
+    middle,
+    off: listening ? null : TEXT.notListening,
+  });
 }
 
 /** Keeps an image in the store for the reply being written; returns its id. @param {Blob} file */
@@ -627,12 +635,16 @@ async function uploadImage(file) {
 
 /**
  * Text box (and option buttons) whose content is sent verbatim to a listening session, with the
- * images pasted into it or picked when `images` is set. Drafts survive re-renders.
- * @param {string} key @param {string[]} options @param {string} route @param {string} sid @param {string} [placeholder] @param {string} [hint] @param {boolean} [images] @param {Child} [middle] shown between the options and the box
+ * images pasted into it or picked when `images` is set. Drafts survive re-renders. With `off` (why
+ * the session cannot take it now) the same box is drawn inert, so it never jumps between states.
+ * @param {string} key @param {string[]} options @param {string} route @param {string} sid
+ * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, off?: string | null }} [how] `middle` is shown between the options and the box
  */
-function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null) {
+function replyBox(key, options, route, sid, { placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, off = null } = {}) {
+  /** Every box of this draft on the page: the panel and the inbox's card can both show a question. */
+  const boxes = () => /** @type {HTMLTextAreaElement[]} */ ([...document.querySelectorAll(`textarea[data-key="${CSS.escape(key)}"]`)]);
   const attached = images ? (ui.draftImages.get(key) ?? []) : [];
-  const busy = ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0;
+  const uploading = (ui.uploading.get(key) ?? 0) > 0;
   /** @param {Blob[]} files */
   const attach = (files) => {
     for (const file of files.slice(0, ATTACHED_IMAGES_MAX - attached.length)) {
@@ -641,39 +653,78 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
     }
     if (files.length > ATTACHED_IMAGES_MAX - attached.length) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
   };
-  const send = () => {
+  /**
+   * Shown on the boxes and buttons on the page at once, not at the next drawing: a panel being
+   * scrolled puts its redraw off, and the text must not look unsent meanwhile.
+   * @param {boolean} sending
+   */
+  const showSending = (sending) => {
+    for (const el of boxes()) {
+      el.readOnly = sending || off !== null;
+      const button = el.closest(".answer")?.querySelector(".send");
+      if (sending) button?.setAttribute("aria-busy", "true");
+      else button?.removeAttribute("aria-busy");
+    }
+  };
+  /** @param {Event} e */
+  const send = (e) => {
     const text = box.value;
     // Read now, not as last drawn: a second click before the redraw must not send twice.
-    if ((!text.trim() && attached.length === 0) || ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0) return;
+    if (off || (!text.trim() && attached.length === 0) || ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0) return;
     ui.sending.add(key);
-    render(); // the button shows at once that the message is on its way
-    run(post(route, attached.length ? { text, images: attached } : { text }).then(() => {
-      ui.drafts.delete(key);
-      ui.draftImages.delete(key);
-      saveDrafts();
-      if (ui.panelSession === sid) ui.panelHeard = null; // the panel fetches the conversation again, with this message
-      if (key.startsWith("answer-")) resolve(key.slice("answer-".length));
-      toast(TEXT.sent(label(S(sid))));
-    }), () => ui.sending.delete(key));
+    showSending(true);
+    // An answered card leaves, and the keyboard with it; a message's box stays, as in a chat app.
+    const answer = key.startsWith("answer-");
+    if (answer) box.blur();
+    run(
+      post(route, attached.length ? { text, images: attached } : { text }).then(() => {
+        ui.drafts.delete(key);
+        ui.draftImages.delete(key);
+        saveDrafts();
+        for (const el of boxes()) {
+          el.value = "";
+          fitBox(el);
+        }
+        if (ui.panelSession === sid) {
+          ui.panelHeard = null; // the panel fetches the conversation again, with this message
+          ui.panelTouchedAt = 0; // and shows it now: the developer's own action is not a scroll to wait out
+        }
+        if (answer) resolve(key.slice("answer-".length));
+        toast(answer ? TEXT.sent(label(S(sid))) : TEXT.messageSent(label(S(sid))));
+        // Answered with the keys, the next question's box is ready to type in.
+        if (answer && e instanceof KeyboardEvent && !document.querySelector("dialog[open]")) {
+          setTimeout(() => /** @type {HTMLElement | null} */ (document.querySelector(".next textarea:not([readonly])"))?.focus({ preventScroll: true }));
+        }
+      }),
+      () => {
+        ui.sending.delete(key);
+        showSending(false);
+      },
+    );
   };
   /** The option buttons on the page, which are this drawing's or the kept ones. */
   const syncPressed = () => box.parentElement?.querySelectorAll(":scope > .opts > button").forEach((b, i) => b.setAttribute("aria-pressed", String(box.value === options[i])));
-  /** @param {string} o */
-  const pick = (o) => {
+  /** @param {string} o @param {boolean} focus */
+  const pick = (o, focus) => {
     box.value = o;
     ui.drafts.set(key, o);
     saveDrafts();
     syncPressed();
     fitBox(box);
-    box.focus();
+    if (focus) box.focus();
   };
+  /** A tap, unlike a click or a key, leaves the box alone: focusing it would raise the keyboard over the options. @param {Event} e */
+  const byFinger = (e) => (e instanceof PointerEvent && e.pointerType ? e.pointerType !== "mouse" : COARSE.matches);
   // What is on its way stays as sent: an edit made meanwhile would be lost with the draft.
   /** The box on the page: this new one, or the one being typed in that `patch` kept. @type {HTMLTextAreaElement} */
   let box = h("textarea", {
     "data-key": key,
+    rows: 1,
     placeholder,
     "aria-label": placeholder,
-    readonly: ui.sending.has(key),
+    "aria-disabled": off ? "true" : null,
+    title: off,
+    readonly: ui.sending.has(key) || off !== null,
     oninput: () => {
       ui.drafts.set(key, box.value);
       saveDrafts();
@@ -684,13 +735,13 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
       if (!(e instanceof KeyboardEvent)) return;
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        send();
+        send(e);
       }
       // While the box is empty or holds an option as picked, a digit picks another option.
-      const option = /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey ? options[Number(e.key) - 1] : undefined;
+      const option = /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !off ? options[Number(e.key) - 1] : undefined;
       if (option !== undefined && (box.value === "" || options.includes(box.value))) {
         e.preventDefault();
-        pick(option);
+        pick(option, true);
       }
     },
     onpaste: images
@@ -712,7 +763,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
       fitBox(live);
     }
   });
-  const opts = options.map((o, i) => h("button", { "aria-pressed": String(box.value === o), onclick: () => pick(o) }, i < 9 ? h("kbd", {}, String(i + 1)) : null, o));
+  const opts = options.map((o, i) => h("button", { "aria-pressed": String(box.value === o), disabled: off !== null, onclick: (e) => pick(o, !byFinger(e)) }, i < 9 ? h("kbd", {}, String(i + 1)) : null, o));
   /** @param {Event} e */
   const pickFiles = (e) => {
     const picker = e.currentTarget instanceof Element ? e.currentTarget.parentElement?.querySelector("input") : null;
@@ -720,10 +771,10 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
   };
   return h(
     "div",
-    { class: "answer" },
+    { class: `answer${off ? " off" : ""}` },
     opts.length ? h("div", { class: "opts" }, opts) : null,
     middle ? h("div", { class: "answer-middle" }, middle) : null,
-    attached.length || ui.uploading.get(key)
+    attached.length || uploading
       ? h(
           "div",
           { class: "attached" },
@@ -735,7 +786,7 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
               h("button", { class: "icon-btn", title: TEXT.removeImage, "aria-label": TEXT.removeImage, onclick: () => (ui.draftImages.set(key, attached.filter((x) => x !== id)), saveDrafts(), render()) }, icon("x")),
             ),
           ),
-          ui.uploading.get(key) ? h("span", { class: "faint" }, TEXT.attaching) : null,
+          uploading ? h("span", { class: "faint" }, TEXT.attaching) : null,
         )
       : null,
     box,
@@ -748,21 +799,35 @@ function replyBox(key, options, route, sid, placeholder = options.length ? TEXT.
         images
           ? [
               h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true, onchange: (e) => e.currentTarget instanceof HTMLInputElement && attach([...(e.currentTarget.files ?? [])]) }),
-              h("button", { class: "icon-btn", title: TEXT.attachImage, "aria-label": TEXT.attachImage, onclick: pickFiles }, icon("image")),
+              h("button", { class: "icon-btn", title: TEXT.attachImage, "aria-label": TEXT.attachImage, disabled: off !== null, onclick: pickFiles }, icon("image")),
             ]
           : null,
-        h("button", { class: "primary", title: TEXT.send, onclick: send, disabled: busy }, icon("send"), ui.sending.has(key) ? TEXT.sending : TEXT.sendShort),
+        h(
+          "button",
+          {
+            class: "primary send",
+            title: off ?? TEXT.send,
+            "aria-label": TEXT.send,
+            "aria-busy": ui.sending.has(key) ? "true" : null,
+            disabled: off !== null || uploading,
+            // The focus stays in the box, so a phone's keyboard stays up for the next message.
+            onmousedown: (e) => e.preventDefault(),
+            onclick: send,
+          },
+          h("span", { class: "send-i" }, icon("send"), h("span", { class: "spin", "aria-hidden": "true" })),
+          h("span", { class: "send-lbl", "aria-hidden": "true" }, h("span", {}, TEXT.sendShort), h("span", {}, TEXT.sending)),
+        ),
       ),
-      h("span", { class: "faint send-hint" }, h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), hint, images ? ` ${TEXT.pasteImages}` : ""),
+      h("span", { class: "faint send-hint" }, off ?? [h("span", { class: "keys-only" }, `${TEXT.sendKeys} `), hint, images ? ` ${TEXT.pasteImages}` : ""]),
     ),
   );
 }
 
-/** A text box grows with what is written, up to 40% of the window; past that it scrolls. @param {HTMLTextAreaElement} box */
+/** A text box is one line when empty and grows with what is written; style.css caps it, past that it scrolls. @param {HTMLTextAreaElement} box */
 function fitBox(box) {
   if (!box.getClientRects().length) return; // not laid out yet (a window still closed): fitted when it is
   box.style.height = "auto";
-  box.style.height = `${Math.min(box.scrollHeight + 2, Math.round(innerHeight * 0.4))}px`;
+  box.style.height = `${box.scrollHeight + 2}px`;
 }
 /** Fits the boxes a redraw just placed, in the same frame: one drawn at its default height first would push the page down a frame later. @param {ParentNode} root */
 function fitNewBoxes(root) {
@@ -925,7 +990,7 @@ function nextCard(q) {
     h(
       "div",
       { class: "actions" },
-      goLink(s, canAnswer ? "linkish go-link" : "primary go", icon("go"), TEXT.goTo, canAnswer ? null : h("kbd", {}, "⏎")),
+      goLink(s, "linkish go-link", icon("go"), TEXT.goTo, canAnswer ? null : h("kbd", {}, "⏎")),
       h("span", { class: "spacer" }),
       h("button", { class: "linkish faint", title: TEXT.dismissTitle, onclick: () => run(post(`/api/questions/${q.id}/dismiss`)) }, TEXT.dismiss),
     ),
@@ -1607,11 +1672,12 @@ function chat(s) {
             h("div", { class: "qtext" }, md(headline(asking.text))),
             answerForm(asking),
           )
-        : canReply
-          ? replyBox(`message-${s.id}`, [], `/api/sessions/${s.id}/message`, s.id, midTurn ? TEXT.workingPlaceholder : undefined, midTurn ? TEXT.sendHintWorking : undefined)
-          : ui.offline
-            ? null
-            : h("div", { class: "faint" }, s.state === "working" ? TEXT.conversation.working : TEXT.notListening),
+        : // One box whatever the session does, inert while it cannot take a message: the panel's foot never jumps.
+          replyBox(`message-${s.id}`, [], `/api/sessions/${s.id}/message`, s.id, {
+            placeholder: canReply ? (midTurn ? TEXT.workingPlaceholder : undefined) : s.state === "working" ? TEXT.workingNoMessages : TEXT.notListeningShort,
+            hint: midTurn ? TEXT.sendHintWorking : undefined,
+            off: canReply ? null : s.state === "working" ? TEXT.conversation.working : TEXT.notListening,
+          }),
     ),
   ];
 }
@@ -2385,7 +2451,8 @@ document.addEventListener("keydown", (e) => {
     }
   }
 });
-for (const event of ["scroll", "touchstart", "touchmove"]) dialog("session").addEventListener(event, () => (ui.panelTouchedAt = Date.now()), { capture: true, passive: true });
+// A tap is not a scroll: counted, it put off the redraw that shows what the tap did.
+for (const event of ["scroll", "touchmove"]) dialog("session").addEventListener(event, () => (ui.panelTouchedAt = Date.now()), { capture: true, passive: true });
 for (const id of ["result", "session", "zoom"]) {
   const d = dialog(id);
   d.addEventListener("click", (e) => {

@@ -101,7 +101,8 @@ export const TEXT = {
   unfoldMessage: "Show the whole message",
   foldMessage: "Show less",
   options: "Options",
-  answerPlaceholder: "Type your answer or pick an option…",
+  // Placeholders fit one line of a phone's box: the options above say the rest.
+  answerPlaceholder: "Or your own answer…",
   replyPlaceholder: "Type your next instruction…",
   workingPlaceholder: "Write to it while it works…",
   sendHintWorking: "It reaches this session at its next step, exactly as written, as if typed in its terminal.",
@@ -111,6 +112,8 @@ export const TEXT = {
   sendKeys: "Ctrl+Enter sends.",
   sendHint: "It reaches this session exactly as written.",
   notListening: "This session is not listening for answers right now: answer in its terminal.",
+  notListeningShort: "Answer in its terminal",
+  workingNoMessages: "At work: use its terminal",
   attachImage: "Attach images",
   pasteImages: "Paste images to attach them.",
   attachedImage: "Attached image",
@@ -118,12 +121,14 @@ export const TEXT = {
   attaching: "Attaching…",
   /** @param {number} n */
   tooManyImages: (n) => `At most ${n} images per message; the rest were left out.`,
-  permissionPlaceholder: "Allow, Deny, or type why it should not do this…",
+  permissionPlaceholder: "Or say why not…",
   dismiss: "Dismiss",
   dismissTitle: "Remove from the list without answering (it goes to the history)",
   /** @param {string} where */
   sent: (where) => `Answer sent to ${where}.`,
   answered: "Answered",
+  /** @param {string} where */
+  messageSent: (where) => `Sent to ${where}.`,
   /** @param {string} where */
   newQuestion: (where) => `New question in ${where}`,
   /** @param {string} where */

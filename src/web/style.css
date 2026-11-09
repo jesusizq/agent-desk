@@ -449,6 +449,16 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer .send-col > * { min-height: 42px; }
 .answer .send-col .icon-btn { height: auto; }
 .answer .row .primary { padding: 8px 16px; justify-content: center; }
+/* Sending keeps the button's size: both labels share one cell, and a ring takes the icon's place. */
+.answer .send .send-lbl, .answer .send .send-i { display: inline-grid; }
+.answer .send .send-lbl > *, .answer .send .send-i > * { grid-area: 1 / 1; }
+.answer .send .send-lbl > :last-child, .answer .send[aria-busy="true"] .send-lbl > :first-child, .answer .send .spin, .answer .send[aria-busy="true"] .send-i > svg { visibility: hidden; }
+.answer .send[aria-busy="true"] .send-lbl > :last-child, .answer .send[aria-busy="true"] .spin { visibility: visible; }
+.answer .send[aria-busy="true"] { cursor: progress; }
+.answer:has(.send[aria-busy="true"]) textarea { color: var(--muted); }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; }
+.answer .send[aria-busy="true"] .spin { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(1turn); } }
 .answer .attached { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .answer .thumb { position: relative; }
 .answer .thumb img { height: 64px; max-width: 160px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; background: #fff; }
@@ -459,7 +469,13 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer .opts button { border: 1px solid var(--border); background: var(--surface); border-radius: 7px; padding: 6px 10px; font: inherit; cursor: pointer; color: var(--text); }
 .answer .opts button kbd { margin-right: 6px; font-size: 0.6875rem; padding: 0 4px; }
 .answer .opts button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
-.answer textarea { grid-column: 1; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; min-height: 42px; height: 42px; resize: vertical; }
+/* One line when empty; it grows with the draft up to 40% of what the keyboard leaves visible, then scrolls. */
+.answer textarea { grid-column: 1; display: block; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  min-height: 42px; max-height: calc(var(--viewport-height, 100dvh) * .4); resize: vertical; }
+.answer textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A session that cannot take an answer now: the same box, inert, saying where to answer. */
+.answer.off textarea { background: var(--surface-2); cursor: default; }
+.answer.off .opts button { color: var(--muted); cursor: default; }
 .answer textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 0; }
 .next .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 a.primary, a.secondary, a.row-go { text-decoration: none; }
@@ -468,7 +484,7 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 .strip .err, .offline-line { color: var(--danger); font-weight: 600; }
 .offline-line { font-size: 0.8125rem; margin-bottom: 8px; }
 .rrow .rbody { min-width: 0; }
-:is(button, a).primary[disabled], button.secondary[disabled] { opacity: .5; cursor: not-allowed; }
+:is(button, a).primary[disabled], button.secondary[disabled], .answer .send-col .icon-btn[disabled] { opacity: .5; cursor: not-allowed; }
 .md { display: flex; flex-direction: column; gap: 8px; line-height: 1.55; }
 .md > * { flex-shrink: 0; }
 .md p { margin: 0; }
@@ -551,7 +567,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   dialog, dialog::backdrop, .scard, .rrow, .qrow, .rcard, .toast.leaving, .bar i, .mini i { transition: none; }
   .scard:hover, .rrow:hover, .qrow:hover { transform: none; }
   :is(button, a).primary:active, :is(button, a).secondary:active, .answer .opts button:active, .icon-btn:active { transform: none; }
-  .skel { animation: none; }
+  .skel, .answer .send[aria-busy="true"] .spin { animation: none; }
 }
 .wt-list { max-height: 340px; overflow: auto; }
 .wt-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
@@ -640,9 +656,12 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   /* The answer box: Send sits beside the text, so the keyboard cannot hide one without the other.
      Options are rows a thumb can hit: a long one takes the line, short ones (Allow, Deny) share it. */
   .answer .opts button { flex: 1 1 auto; text-align: left; }
-  .answer textarea { min-height: 68px; height: 68px; scroll-margin: 16px; }
+  /* A chat app's composer: a rounded one-line box, and round buttons with an icon only (their name stays for screen readers). */
+  .answer textarea { min-height: 44px; padding: 10px 14px; line-height: 1.4; border-radius: 22px; scroll-margin: 16px; }
+  .answer .send-col > *, .answer .send-col .icon-btn { width: 44px; height: 44px; min-height: 44px; min-width: 44px; padding: 0; border-radius: 999px; justify-content: center; }
+  .answer .send .send-lbl { display: none; }
+  .answer .send svg.i { width: 18px; height: 18px; }
   .scard .mini { width: 34px; }
-  .answer .row .primary { flex-direction: column; gap: 3px; max-width: 96px; line-height: 1.2; padding: 8px 12px; }
 
   /* Dialogs fill the screen; the head stays, the body scrolls. */
   dialog.result, dialog.sess { margin: 0; inset: var(--viewport-top, 0px) 0 auto; width: 100%; max-width: 100%; height: var(--viewport-height, 100dvh); max-height: var(--viewport-height, 100dvh); border-radius: 0; }
@@ -789,6 +808,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 /* Touch: targets a finger can hit, inputs iOS does not zoom into, no keyboard hints. */
 @media (pointer: coarse) {
   .seg button, .icon-btn, .needs-pill, :is(button, a).primary, :is(button, a).secondary, .answer .opts button, .zbar button, .row-go, button.chip { min-height: 44px; }
+  .answer textarea { resize: none; } /* it grows with the draft; a finger has no use for the grip */
   .icon-btn, .zbar button { min-width: 44px; justify-content: center; }
   .seg button { justify-content: center; min-width: 44px; }
   .search, .hsearch .search { height: 44px; }
@@ -797,7 +817,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   /* Below 16px, iOS zooms the page into a field on focus, whatever text size is chosen. */
   input, textarea, select, .search input, .answer textarea { font-size: max(1rem, 16px); }
   .cmp input[type="range"] { height: 44px; margin-top: 2px; }
-  .keys-only, .mouse-only, .search kbd, .answer .opts button kbd, .go kbd, .zbar .zfine { display: none; }
+  .keys-only, .mouse-only, .search kbd, .answer .opts button kbd, .go kbd, .go-link kbd, .zbar .zfine { display: none; }
   .touch-only { display: inline; }
   .links a { display: inline-block; padding-block: 12px; margin-block: -10px; }
   .col-foot:has(> .keys-only:only-child) { display: none; }

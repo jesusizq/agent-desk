@@ -171,6 +171,15 @@ export class Page {
     for (const type of ["mousePressed", "mouseReleased"]) await this.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
   }
 
+  /** A finger's tap on the element's centre (the first match containing `text`), on a page with touch emulated. */
+  async tap(selector: string, text = ""): Promise<void> {
+    const find = `[...document.querySelectorAll(${JSON.stringify(selector)})].find((el) => el.getBoundingClientRect().width && el.getBoundingClientRect().height && el.textContent.includes(${JSON.stringify(text)}))`;
+    await this.waitFor(find);
+    const [x, y] = await this.eval<[number, number]>(`(() => { const r = ${find}.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+    await this.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+    await this.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  }
+
   /** Types text into the focused element, as a keyboard would. */
   async type(text: string): Promise<void> {
     await this.send("Input.insertText", { text });

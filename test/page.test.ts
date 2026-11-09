@@ -232,9 +232,16 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<string>("document.querySelector('#session .chat-footer textarea').placeholder"), "Write to it while it works…");
     await page.type("and push it when the tests pass");
     // A second click before the answer arrives (a slow phone network) sends nothing more.
-    const button = "document.querySelector('#session .chat-footer .primary')";
-    assert.equal(await page.eval<string>(`(() => { const b = ${button}; b.click(); b.click(); return ${button}.textContent; })()`), "Sending…");
-    await page.waitFor("document.querySelector('#toasts')?.textContent.includes('release notes')");
+    const button = "document.querySelector('#session .chat-footer .send')";
+    const box = "document.querySelector('#session .chat-footer textarea')";
+    const width = await page.eval<number>(`${box}.getBoundingClientRect().width`);
+    assert.deepEqual(
+      await page.eval(`(() => { const b = ${button}; b.click(); b.click(); return [b.getAttribute("aria-busy"), ${box}.readOnly, ${box}.getBoundingClientRect().width]; })()`),
+      ["true", true, width],
+      "it says at once that the message is on its way, without resizing the box",
+    );
+    await page.waitFor("document.querySelector('#toasts')?.textContent.includes('Sent to web-shop › release notes.')");
+    await page.waitFor(`${box}.value === '' && !${box}.readOnly && !${button}.hasAttribute("aria-busy")`);
     assert.deepEqual(store.takeInbox("mid-turn").map((e) => e.answer), ["and push it when the tests pass"], "sent once");
   });
 
@@ -552,13 +559,22 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
-    it("gives way when what it answers closes, with the rest of the desk drawn", async () => {
+    it("turns inert when what it answers stops taking messages, in place, saying where to answer", async () => {
       store.upsertSession({ id: "closing", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "closing under the box", takesMessagesWhileWorking: true });
       const page = await open();
       await page.click(".scard", "closing under the box");
       await page.click("#session .chat-footer textarea");
+      await page.type("half a thought");
+      const box = "document.querySelector('#session .chat-footer textarea')";
+      await watch(page, box);
       store.updateSession("closing", (s) => ({ ...s, state: "waiting" }));
-      await page.waitFor("!document.querySelector('#session .chat-footer textarea')");
+      await page.waitFor(`${box}.readOnly`);
+      await untouched(page, box);
+      assert.deepEqual(
+        await page.eval(`[kept.value, kept.placeholder, kept.getAttribute("aria-disabled"), document.querySelector('#session .chat-footer .send').disabled]`),
+        ["half a thought", "Answer in its terminal", "true", true],
+        "the draft stays, nothing can be sent, and the box says why",
+      );
       await page.press("Escape");
     });
   });
