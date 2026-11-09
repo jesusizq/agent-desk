@@ -75,6 +75,8 @@ button.chip:hover { border-color: var(--border-strong); }
 .split { grid-area: split; position: relative; cursor: col-resize; touch-action: none; }
 .split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 9px; width: 2px; border-radius: 2px; background: transparent; transition: background .15s; }
 .split:hover::after, body.resizing .split::after { background: var(--border-strong); }
+.split:focus-visible { outline: 0; }
+.split:focus-visible::after { background: var(--accent); }
 body.resizing { cursor: col-resize; user-select: none; }
 .col-needs { grid-area: needs; } .col-sessions { grid-area: sessions; } .col-review { grid-area: review; }
 .col { display: flex; flex-direction: column; min-height: 0; }

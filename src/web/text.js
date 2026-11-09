@@ -232,7 +232,8 @@ export const TEXT = {
   /** @param {string} m */
   pageError: (m) => `Page error: ${m}`,
   backToConversation: "← Conversation",
-  splitTitle: "Drag to resize the columns; double-click to reset",
+  splitTitle: "Drag to resize the columns, or use ← →; double-click to reset",
+  splitLabel: "Width of the sessions column",
   alerts: {
     title: "Notifications and sound",
     notify: "Desktop notifications",

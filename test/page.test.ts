@@ -875,5 +875,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.waitFor("!document.querySelector('#session .skel-msg')");
       await page.press("Escape");
     });
+
+    it("resizes the columns from the keyboard on the line between them", async () => {
+      const page = await open();
+      const width = () => page.eval<number>("document.querySelector('.col-sessions').getBoundingClientRect().width");
+      assert.equal(await page.eval<string>("document.querySelector('.split').getAttribute('role')"), "separator");
+      const before = await width();
+      await page.eval("document.querySelector('.split').focus()");
+      await page.press("ArrowLeft");
+      assert.equal(await width(), before + 16);
+      await page.eval("document.querySelector('.split').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))");
+      assert.equal(await width(), before);
+    });
   });
 });

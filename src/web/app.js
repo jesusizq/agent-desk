@@ -2073,6 +2073,8 @@ function board() {
 // The right column's width, set by dragging the line before it; kept in this browser.
 const SIDE_KEY = "agent-desk:side-width";
 const SIDE_MIN = 280;
+const SIDE_DEFAULT = 400; // style.css's --side-w
+const SIDE_STEP = 16;
 /** @param {number | null} px */
 function setSide(px) {
   if (px === null) {
@@ -2086,11 +2088,17 @@ function setSide(px) {
 const savedSide = Number(localStorage.getItem(SIDE_KEY));
 if (savedSide) document.documentElement.style.setProperty("--side-w", `${Math.round(savedSide)}px`);
 
-/** The line between the inbox and the right column: dragged, it resizes them. */
+/** The line between the inbox and the right column: dragged, or moved with ← →, it resizes them. */
 function splitter() {
   return h("div", {
     class: "split",
     title: TEXT.splitTitle,
+    role: "separator",
+    tabindex: "0",
+    "aria-orientation": "vertical",
+    "aria-label": TEXT.splitLabel,
+    "aria-valuemin": SIDE_MIN,
+    "aria-valuenow": Number(localStorage.getItem(SIDE_KEY)) || SIDE_DEFAULT,
     onpointerdown: (e) => {
       const handle = e.currentTarget;
       const board = handle instanceof HTMLElement ? handle.parentElement : null;
@@ -2098,7 +2106,10 @@ function splitter() {
       e.preventDefault();
       const right = board.getBoundingClientRect().right - parseFloat(getComputedStyle(board).paddingRight);
       const half = handle.offsetWidth / 2; // read once: a redraw during the drag must not shift the line
-      const move = (/** @type {PointerEvent} */ m) => setSide(Math.max(SIDE_MIN, right - m.clientX - half));
+      const move = (/** @type {PointerEvent} */ m) => {
+        setSide(Math.max(SIDE_MIN, right - m.clientX - half));
+        handle.setAttribute("aria-valuenow", localStorage.getItem(SIDE_KEY) ?? "");
+      };
       const up = () => {
         removeEventListener("pointermove", move);
         removeEventListener("pointerup", up);
@@ -2107,6 +2118,14 @@ function splitter() {
       addEventListener("pointermove", move);
       addEventListener("pointerup", up);
       document.body.classList.add("resizing");
+    },
+    onkeydown: (e) => {
+      const step = e instanceof KeyboardEvent ? { ArrowLeft: SIDE_STEP, ArrowRight: -SIDE_STEP }[e.key] : undefined;
+      const side = document.querySelector(".board > .col-sessions");
+      if (!step || !side || !(e.currentTarget instanceof HTMLElement)) return;
+      e.preventDefault();
+      setSide(Math.max(SIDE_MIN, side.getBoundingClientRect().width + step));
+      e.currentTarget.setAttribute("aria-valuenow", localStorage.getItem(SIDE_KEY) ?? "");
     },
     ondblclick: () => setSide(null),
   });
