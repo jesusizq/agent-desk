@@ -3,7 +3,7 @@
 import { dialog, h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
 import { ago, gb } from "./format.js";
-import { copy, projectMark } from "./pieces.js";
+import { copy, dialogHead, projectMark } from "./pieces.js";
 import { data, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
@@ -40,7 +40,7 @@ export function openProject(projectId) {
   // Paths come from git's own listing; quoted for the shell the developer pastes them into.
   const cleanup = merged.map((w) => `git -C '${p.dir.replace(/'/g, "'\\''")}' worktree remove '${w.path.replace(/'/g, "'\\''")}'`).join("\n");
   d.replaceChildren(
-    h("div", { class: "dhead" }, h("div", {}, h("div", { class: "meta" }, projectMark(p.name)), h("h3", {}, t.title)), h("span", { class: "spacer" }), h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x"))),
+    dialogHead(d, projectMark(p.name), t.title),
     h(
       "div",
       { class: "dbody" },

@@ -113,6 +113,21 @@ export function goLink(s, cls, ...content) {
 }
 
 /**
+ * A window's head, the same in every window (style.css lays it out by its parts): where it comes from
+ * and its title, then its actions and Close. @param {HTMLDialogElement} d @param {Child} meta @param {Child} title @param {Child[]} actions
+ */
+export function dialogHead(d, meta, title, ...actions) {
+  return h(
+    "div",
+    { class: "dhead" },
+    h("div", {}, h("div", { class: "meta" }, meta), h("h3", {}, title)),
+    h("span", { class: "spacer" }),
+    ...actions,
+    h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x")),
+  );
+}
+
+/**
  * The one shape of "nothing here" in every column: an optional mark, one line, and at most one way on.
  * @param {string} key @param {string} text @param {{ mark?: Child, action?: Child }} [more]
  */

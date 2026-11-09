@@ -9,7 +9,7 @@ import { controlSection } from "./control.js";
 import { conversationView, loadConversation, outgoingView } from "./conversation.js";
 import { ago, clockAt, duration, gb, stamp } from "./format.js";
 import { fitNewBoxes, showNeedsYou } from "./layout.js";
-import { badge, bar, dot, goLink, LOCAL_URL, localLink, suggestionChip, where } from "./pieces.js";
+import { badge, bar, dialogHead, dot, goLink, LOCAL_URL, localLink, suggestionChip, where } from "./pieces.js";
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
 import { offlineText, post, run } from "./server.js";
@@ -149,14 +149,12 @@ export function openSession(sid) {
   );
   patch(
     d,
-    h(
-      "div",
-      { class: "dhead" },
-      h("div", {}, h("div", { class: "meta" }, where(s, s.provider)), h("h3", {}, sessionName(s))),
-      h("span", { class: "spacer" }),
+    dialogHead(
+      d,
+      where(s, s.provider),
+      sessionName(s),
       s.lastMessage && (isLive(s) || s.endedAsking) ? h("button", { class: "secondary", title: TEXT.markUnreadHint, "aria-label": TEXT.markUnread, onclick: () => markUnread(s) }, icon("unread"), h("span", { class: "lbl" }, TEXT.markUnread)) : null,
       goLink(s, "primary", icon("go"), h("span", { class: "lbl" }, TEXT.goTo)),
-      h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x")),
     ),
     body,
   );

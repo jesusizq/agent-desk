@@ -3,7 +3,7 @@
 import { dialog, h, icon, md } from "./dom.js";
 import { TEXT } from "./text.js";
 import { stamp } from "./format.js";
-import { badge, dot, goLink, localLink, where } from "./pieces.js";
+import { badge, dialogHead, dot, goLink, localLink, where } from "./pieces.js";
 import { post, run } from "./server.js";
 import { isNew, S } from "./state.js";
 import { zoom } from "./zoom.js";
@@ -43,14 +43,12 @@ export function openResult(r, { markSeen = true } = {}) {
   /** @param {string} title @param {string[]} items */
   const list = (title, items) => (items.length ? h("div", { class: "rsec" }, h("h4", {}, title), h("ul", { class: "plain" }, items.map((a) => h("li", {}, md(a))))) : null);
   d.replaceChildren(
-    h(
-      "div",
-      { class: "dhead" },
-      h("div", {}, h("div", { class: "meta" }, badge(r.status === "failed" ? "failed" : "result"), where(s), h("span", { class: "sep" }, "·"), h("span", { class: "num" }, stamp(r.at))), h("h3", {}, r.title)),
-      h("span", { class: "spacer" }),
+    dialogHead(
+      d,
+      [badge(r.status === "failed" ? "failed" : "result"), where(s), h("span", { class: "sep" }, "·"), h("span", { class: "num" }, stamp(r.at))],
+      r.title,
       r.url ? localLink(r.url, [icon("link"), TEXT.openLive], "secondary") : null,
       goLink(s, "primary", icon("go"), TEXT.goTo),
-      h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x")),
     ),
     h(
       "div",
