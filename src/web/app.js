@@ -632,6 +632,7 @@ function answerForm(q, middle = null) {
     placeholder: !listening ? TEXT.notListeningShort : q.kind === "permission" && q.options.length ? TEXT.permissionPlaceholder : undefined,
     images: !textOnly,
     middle,
+    several: q.several === true,
     off: listening ? null : TEXT.notListening,
   });
 }
@@ -649,10 +650,11 @@ async function uploadImage(file) {
  * Text box (and option buttons) whose content is sent verbatim to a listening session, with the
  * images pasted into it or picked when `images` is set. Drafts survive re-renders. With `off` (why
  * the session cannot take it now) the same box is drawn inert, so it never jumps between states.
+ * With `several`, each option toggles: the box holds the ones picked, in their order, separated by ", ".
  * @param {string} key @param {string[]} options @param {string} route @param {string} sid
- * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, off?: string | null }} [how] `middle` is shown between the options and the box
+ * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, several?: boolean, off?: string | null }} [how] `middle` is shown between the options and the box
  */
-function replyBox(key, options, route, sid, { placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, off = null } = {}) {
+function replyBox(key, options, route, sid, { placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, off = null } = {}) {
   /** Every box of this draft on the page: the panel and the inbox's card can both show a question. */
   const boxes = () => /** @type {HTMLTextAreaElement[]} */ ([...document.querySelectorAll(`textarea[data-key="${CSS.escape(key)}"]`)]);
   const attached = images ? (ui.draftImages.get(key) ?? []) : [];
@@ -711,12 +713,20 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
       },
     );
   };
+  /** The options the box holds: one, or with `several` a list of them; null when it holds anything else. @param {string} value */
+  const picked = (value) => {
+    if (value === "") return [];
+    if (!several) return options.includes(value) ? [value] : null;
+    const parts = value.split(",").map((p) => p.trim());
+    return parts.every((p) => options.includes(p)) ? parts : null;
+  };
   /** The option buttons on the page, which are this drawing's or the kept ones. */
-  const syncPressed = () => box.parentElement?.querySelectorAll(":scope > .opts > button").forEach((b, i) => b.setAttribute("aria-pressed", String(box.value === options[i])));
-  /** @param {string} o @param {boolean} focus */
+  const syncPressed = () => box.parentElement?.querySelectorAll(":scope > .opts > button").forEach((b, i) => b.setAttribute("aria-pressed", String(picked(box.value)?.includes(options[i] ?? "") === true)));
+  /** One option picked, or with `several` added or taken out; anything else written is replaced. @param {string} o @param {boolean} focus */
   const pick = (o, focus) => {
-    box.value = o;
-    ui.drafts.set(key, o);
+    const had = picked(box.value) ?? [];
+    box.value = several ? options.filter((x) => (x === o) !== had.includes(x)).join(", ") : o;
+    ui.drafts.set(key, box.value);
     saveDrafts();
     syncPressed();
     fitBox(box);
@@ -746,9 +756,9 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
         e.preventDefault();
         send(e);
       }
-      // While the box is empty or holds an option as picked, a digit picks another option.
+      // While the box is empty or holds only options as picked, a digit picks (or toggles) another.
       const option = /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !off ? options[Number(e.key) - 1] : undefined;
-      if (option !== undefined && (box.value === "" || options.includes(box.value))) {
+      if (option !== undefined && picked(box.value) !== null) {
         e.preventDefault();
         pick(option, true);
       }
@@ -772,7 +782,8 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
       fitBox(live);
     }
   });
-  const opts = options.map((o, i) => h("button", { "aria-pressed": String(box.value === o), disabled: off !== null, onclick: (e) => pick(o, !byFinger(e)) }, i < 9 ? h("kbd", {}, String(i + 1)) : null, o));
+  const chosen = picked(box.value) ?? [];
+  const opts = options.map((o, i) => h("button", { "aria-pressed": String(chosen.includes(o)), disabled: off !== null, onclick: (e) => pick(o, !byFinger(e)) }, several ? h("span", { class: "tick", "aria-hidden": "true" }) : null, i < 9 ? h("kbd", {}, String(i + 1)) : null, o));
   /** @param {Event} e */
   const pickFiles = (e) => {
     const picker = e.currentTarget instanceof Element ? e.currentTarget.parentElement?.querySelector("input") : null;
@@ -781,7 +792,8 @@ function replyBox(key, options, route, sid, { placeholder = options.length ? TEX
   return h(
     "div",
     { class: `answer${off ? " off" : ""}` },
-    opts.length ? h("div", { class: "opts" }, opts) : null,
+    opts.length && several ? h("div", { class: "opts-note faint" }, TEXT.pickSeveral) : null,
+    opts.length ? h("div", { class: `opts${several ? " several" : ""}`, role: several ? "group" : null, "aria-label": several ? TEXT.pickSeveral : null }, opts) : null,
     middle ? h("div", { class: "answer-middle" }, middle) : null,
     attached.length || uploading
       ? h(
@@ -2811,8 +2823,8 @@ document.addEventListener("keydown", (e) => {
   const list = openQuestions();
   const i = list.findIndex((q) => q.id === ui.sel);
   if (/^[1-9]$/.test(e.key)) {
-    // 1–9 pick an option of the large card; the box keeps focus so Ctrl+Enter sends it.
-    const option = document.querySelectorAll(".next .opts button")[Number(e.key) - 1];
+    // 1–9 pick an option of the large card's first open question; the box keeps focus so Ctrl+Enter sends it.
+    const option = document.querySelector(".next .opts")?.children[Number(e.key) - 1];
     if (option instanceof HTMLButtonElement) {
       e.preventDefault();
       option.click();

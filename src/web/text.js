@@ -101,6 +101,7 @@ export const TEXT = {
   unfoldMessage: "Show the whole message",
   foldMessage: "Show less",
   options: "Options",
+  pickSeveral: "Pick one or more",
   // Placeholders fit one line of a phone's box: the options above say the rest.
   answerPlaceholder: "Or your own answer…",
   replyPlaceholder: "Type your next instruction…",

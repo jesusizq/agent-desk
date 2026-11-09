@@ -530,6 +530,11 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer .opts button { border: 1px solid var(--border); background: var(--surface); border-radius: 7px; padding: 6px 10px; font: inherit; cursor: pointer; color: var(--text); }
 .answer .opts button kbd { margin-right: 6px; font-size: 0.6875rem; padding: 0 4px; }
 .answer .opts button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.answer .opts-note { grid-column: 1 / -1; font-size: 0.75rem; margin-bottom: -3px; }
+.answer .opts .tick { display: inline-grid; place-items: center; width: 14px; height: 14px; margin-right: 8px; vertical-align: -1px; border: 1.5px solid var(--border-strong); border-radius: 4px;
+  transition: background-color var(--dur-2), border-color var(--dur-2); }
+.answer .opts button[aria-pressed="true"] .tick { background: var(--accent); border-color: var(--accent); }
+.answer .opts button[aria-pressed="true"] .tick::after { content: ""; width: 7px; height: 4px; border: solid var(--accent-text); border-width: 0 0 2px 2px; transform: translateY(-1px) rotate(-45deg); }
 /* One line when empty; it grows with the draft up to 40% of what the keyboard leaves visible, then scrolls. */
 .answer textarea { grid-column: 1; display: block; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
   min-height: 42px; max-height: calc(var(--viewport-height, 100dvh) * .4); resize: vertical; }
