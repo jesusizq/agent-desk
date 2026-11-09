@@ -1098,16 +1098,20 @@ function inboxColumn() {
   ui.sel = selected?.id ?? null;
   const rows = [...questions.filter((q) => q !== selected).map(questionRow), ...failures.map(failureRow)];
   const reviewEmpty = !data.results.some((r) => inProject(r.sessionId) && isNew(r));
-  const clear = h(
-    "div",
-    { class: "allclear", role: "status", "data-key": "allclear" },
-    dot("done"),
-    h("span", {}, TEXT.allClear(reviewEmpty), reviewEmpty ? [" ", h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory)] : null),
-  );
+  // Earlier results are offered once, by To review.
+  const clear = emptyState("allclear", TEXT.allClear(reviewEmpty), { mark: dot("done") });
   return column("needs", count || null, count || resolved ? [selected ? nextCard(selected) : null, rows] : clear, {
     aside: questions.length > 1 ? h("span", { class: "keys-only faint" }, TEXT.keysHint) : null,
     list: true,
   });
+}
+
+/**
+ * The one shape of "nothing here" in every column: an optional mark, one line, and at most one way on.
+ * @param {string} key @param {string} text @param {{ mark?: Child, action?: Child }} [more]
+ */
+function emptyState(key, text, { mark, action } = {}) {
+  return h("div", { class: "empty", role: "status", "data-key": key }, mark ?? null, h("p", {}, text), action ?? null);
 }
 
 function showEarlierResults() {
@@ -1138,15 +1142,17 @@ function resultRow(r, opened) {
 /** A result not seen yet as a tile: its first picture and its title; × marks it seen without opening it. @param {Result} r */
 function reviewTile(r) {
   const first = r.images[0];
+  const s = S(r.sessionId);
   return h(
     "div",
     { class: "rtile-wrap", "data-key": `r-${r.id}` },
     h(
       "button",
-      { class: "rtile", onclick: () => openResult(r), title: `${r.title}\n${label(S(r.sessionId))} · ${hm(r.at)}` },
+      { class: "rtile", onclick: () => openResult(r), title: `${r.title}\n${label(s)} · ${hm(r.at)}` },
       first ? h("img", { src: `/images/${first.id}`, alt: "" }) : h("span", { class: "ph" }, dot("done"), r.summary ? h("span", {}, firstLine(r.summary)) : null),
       h("span", { class: "rt" }, r.title),
-      h("span", { class: "rm" }, hm(r.at)),
+      // Where it comes from, as on every other card, unless one project is already picked.
+      h("span", { class: "rm" }, ui.project === null && s ? projectMark(s.project.name) : null, h("span", { class: "num" }, hm(r.at))),
     ),
     h("button", { class: "rdismiss icon-btn", "aria-label": TEXT.dismissResult, title: TEXT.dismissResult, onclick: () => run(post(`/api/results/${r.id}/seen`)) }, icon("x")),
   );
@@ -1155,7 +1161,7 @@ function reviewTile(r) {
 /** Finished work to look at; failures wait in the inbox instead. */
 function reviewColumn() {
   const list = data.results.filter((r) => inProject(r.sessionId) && isNew(r) && r.status !== "failed");
-  const empty = h("div", { class: "empty" }, TEXT.emptyResults, " ", h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory));
+  const empty = emptyState("no-results", TEXT.emptyResults, { action: h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory) });
   return column("review", list.length || null, list.length ? h("div", { class: "rtiles", "data-list": true }, list.map(reviewTile)) : empty, { quiet: true });
 }
 
@@ -1365,7 +1371,7 @@ function readBadge(s) {
 function sessionsColumn() {
   const list = data.sessions.filter((s) => (isLive(s) || endedUnseen(s)) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
   const legend = h("div", { class: "legend" }, LEGEND.map((st) => h("span", {}, dot(st), TEXT.state[st])));
-  return column("sessions", list.length, list.length ? h("div", { class: "slist", "data-list": true }, list.map(sessionCard)) : h("div", { class: "empty" }, TEXT.emptyRunning), { foot: legend, quiet: true });
+  return column("sessions", list.length, list.length ? h("div", { class: "slist", "data-list": true }, list.map(sessionCard)) : emptyState("no-sessions", TEXT.emptyRunning), { foot: legend, quiet: true });
 }
 
 // ---------- Session panel ----------
@@ -1862,7 +1868,7 @@ function openResult(r, { markSeen = true } = {}) {
     h(
       "div",
       { class: "dhead" },
-      h("div", {}, h("div", { class: "meta" }, badge(r.status === "failed" ? "failed" : "result"), where(s), h("span", {}, `· ${hm(r.at)}`)), h("h3", {}, r.title)),
+      h("div", {}, h("div", { class: "meta" }, badge(r.status === "failed" ? "failed" : "result"), where(s), h("span", { class: "sep" }, "·"), h("span", { class: "num" }, hm(r.at))), h("h3", {}, r.title)),
       h("span", { class: "spacer" }),
       r.url ? localLink(r.url, [icon("link"), TEXT.openLive], "secondary") : null,
       goLink(s, "primary", icon("go"), TEXT.goTo),
@@ -2315,7 +2321,7 @@ function historyView() {
               ),
             );
           }))
-        : h("div", { class: "empty" }, t.none(q)),
+        : emptyState("no-history", t.none(q)),
     ),
   );
 }
