@@ -14,7 +14,7 @@ command (Bash) only for what hooks cannot know, and keep it to one call each:
   [--decision "<taste decision>"] [--check "<criterion> => <how it was verified>"]` (add `--failed` if it failed).
   It is refused without an `--image` or `--url`, unless it failed.
 - Right after launching each sub-agent, in one call: `agent-desk agent "<the description you gave
-  the Agent tool>" --summary "<one plain sentence: what it must deliver>"`, adding
+  the Agent tool, or the label of a workflow's agent>" --summary "<one plain sentence: what it must deliver>"`, adding
   `--after "<other agent's description>"` and `--branch <name>` when they apply;
   `--state blocked --activity "<why>"` when one is stuck.
 - A local server worth opening: `agent-desk service <name> http://localhost:PORT` (`--stop` when it stops).
