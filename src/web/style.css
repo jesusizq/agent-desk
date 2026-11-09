@@ -767,7 +767,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .search { min-width: 0; }
   /* History has its own search box: the header's gives its room to the projects, unless there are none. */
   header.top .search { display: none; }
-  header.top:has(#projects[hidden]) .search { display: flex; }
+  header.top:has(#projects[hidden]) .search:not([hidden]) { display: flex; }
   /* The strip is one line that scrolls sideways, so the work starts higher on the screen. */
   .strip { padding: 6px max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left));
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }

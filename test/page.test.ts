@@ -1349,6 +1349,27 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     }
   });
 
+  it("on a phone, shows no header search before the desk's first data", async () => {
+    const page = await browser.newPage(390, 844);
+    pages.push(page);
+    // The first state waits for the test, as over a slow network.
+    await page.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        const realFetch = window.fetch;
+        let release;
+        const gate = new Promise((resolve) => (release = resolve));
+        window.releaseState = () => release();
+        window.fetch = (url, init) => String(url) === "/api/state" ? gate.then(() => realFetch(url, init)) : realFetch(url, init);
+      })()`,
+    });
+    await page.goto(base + "/");
+    await page.waitFor("document.querySelector('.board[aria-busy]')");
+    assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('header .search')).display"), "none", "nothing to search yet, and the projects' place stays free");
+    await page.eval("releaseState()");
+    await page.waitFor("document.querySelector('.next') && !document.getElementById('projects').hidden");
+    assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('header .search')).display"), "none", "the projects take the row");
+  });
+
   it("on a phone, each tab keeps its scroll, and a tap on the tab shown goes back to its top", async () => {
     const page = await open(390, 600);
     await page.click(".tabbar button", "Sessions");

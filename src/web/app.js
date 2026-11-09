@@ -532,9 +532,10 @@ function renderHeader() {
   const q = /** @type {HTMLInputElement} */ (byId("q"));
   q.placeholder = TEXT.search;
   q.setAttribute("aria-label", TEXT.search);
-  // History has its own search box; the header's only leads there.
+  // History has its own search box; the header's only leads there. Before the first data, nothing to search,
+  // and on a phone it would take the projects' place until they arrive.
   const headerSearch = q.closest(".search");
-  if (headerSearch instanceof HTMLElement) headerSearch.hidden = ui.view === "history";
+  if (headerSearch instanceof HTMLElement) headerSearch.hidden = !ui.loaded || ui.view === "history";
   document.title = n ? `(${n}) ${TEXT.appName}` : TEXT.appName;
   appBadge(n);
   renderTabbar(n);
