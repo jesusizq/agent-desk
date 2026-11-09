@@ -23,18 +23,19 @@ export function sessionDot() {
   mark.title = TEXT.sessionWorking;
   return h("span", { class: "live" }, mark);
 }
+/** The agents a blocked agent still waits for, by their goals, or null when it waits for none. @param {Agent} a */
+function waitsLine(a) {
+  const waits = waitingOn(a);
+  return waits.length ? TEXT.waits(waits.map((n) => agentOf(a.sessionId, n)?.goal ?? n).join(", ")) : null;
+}
 /** What an agent does now: who it waits for, its latest tool call, or what kind of agent it is. @param {Agent} a */
 function agentDoing(a) {
-  const waits = waitingOn(a);
-  if (waits.length) return TEXT.waits(waits.map((n) => agentOf(a.sessionId, n)?.goal ?? n).join(", "));
-  return a.activity ?? (a.type ? TEXT.agentType(a.type) : "");
+  return waitsLine(a) ?? a.activity ?? (a.type ? TEXT.agentType(a.type) : "");
 }
 /** Why an agent is in trouble, in a few words. @param {Agent} a */
 export function troubleText(a) {
-  const waits = waitingOn(a);
   if (a.state === "failed") return a.activity ?? TEXT.failedAgent;
-  if (waits.length) return TEXT.waits(waits.map((n) => agentOf(a.sessionId, n)?.goal ?? n).join(", "));
-  return TEXT.idleSince(hm(a.updatedAt));
+  return waitsLine(a) ?? TEXT.idleSince(hm(a.updatedAt));
 }
 // An agent or session at work with no tool call for this long, or failing calls this recently, may be stuck.
 const QUIET_MS = 5 * 60_000;
