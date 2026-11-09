@@ -13,7 +13,7 @@ import { endProcess, isAlive } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
-import { RemoteUnlock } from "./remote-unlock.ts";
+import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
 import { type Access, hostAllowed, IMAGE_HEADERS, isRemote, originAllowed, remoteFromEnv, send, sendJson, writeAllowed } from "./security.ts";
 
 const WEB_DIR = path.join(import.meta.dirname, "..", "web");
@@ -205,6 +205,7 @@ async function locked(route: string, access: Access, unlock: RemoteUnlock, req: 
     const cookie = unlock.unlock(fields(await readBody(req), "body").pin);
     return sendJson(res, 200, { unlocked: true }, { "Set-Cookie": cookie });
   } catch (error) {
+    if (error instanceof PinRefused) return sendJson(res, error.status, { error: error.message }, LOCKED);
     if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
     throw error;
   }

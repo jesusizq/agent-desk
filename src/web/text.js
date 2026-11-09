@@ -356,6 +356,8 @@ export const TEXT = {
     placeholder: "PIN",
     submit: "Unlock",
     noConnection: "Can't reach the desk: check this device's connection and Tailscale, then try again.",
+    wrong: "That PIN is not right. Try again.",
+    tooMany: "Too many wrong PINs. Try again in 15 minutes.",
   },
   zoom: { in: "Zoom in", out: "Zoom out", fit: "Fit", previous: "Previous image (←)", next: "Next image (→)" },
 };

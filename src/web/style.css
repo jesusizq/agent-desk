@@ -1036,7 +1036,10 @@ body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--v
 .unlock-form p { margin: 0; font-size: 0.8125rem; }
 .unlock-form input { font: 600 1.25rem/1 var(--mono); letter-spacing: .2em; text-align: center; padding: 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg); color: var(--text); }
 .unlock-form .primary { justify-content: center; padding: 12px; font-size: 0.9375rem; }
-.unlock-msg { color: var(--danger); min-height: 1em; }
+/* Its line is kept, one line tall, so the card does not move when a message comes. */
+.unlock-msg { color: var(--danger); min-height: 1lh; line-height: 1.45; text-align: center; }
+.unlock-form p.unlock-msg { margin: -4px 0; }
+.unlock-form input[aria-invalid="true"] { border-color: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent); }
 
 /* Alerts: the bell's menu of switches */
 .pop { position: relative; display: inline-flex; }

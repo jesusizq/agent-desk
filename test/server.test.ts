@@ -283,7 +283,7 @@ describe("PIN in front of remote access", () => {
       assert.match((await unlock("123456")).body, /no PIN is set/);
 
       setPin(store.paths.pin, "424242");
-      assert.equal((await unlock("000000")).status, 400);
+      assert.equal((await unlock("000000")).status, 401, "a wrong PIN is told apart, for the page to say so");
       assert.equal((await call("POST", "/api/unlock", { Origin: "https://evil.example", "Content-Type": "application/json" }, '{"pin":"424242"}')).status, 403);
       const ok = await unlock("424242");
       assert.equal(ok.status, 200);
@@ -302,7 +302,9 @@ describe("PIN in front of remote access", () => {
       assert.equal((await call("GET", "/api/state", { Cookie: cookie.replace(/.$/, "x") })).status, 401, "a tampered cookie does not unlock");
 
       for (let i = 0; i < 5; i++) await unlock("111111");
-      assert.match((await unlock("424242")).body, /too many wrong PINs/, "five failures lock out even the right PIN");
+      const lockedOut = await unlock("424242");
+      assert.equal(lockedOut.status, 429, "five failures lock out even the right PIN");
+      assert.match(lockedOut.body, /too many wrong PINs/);
       const local = await new Promise<number>((resolve) => http.get({ host: "127.0.0.1", port, path: "/api/state" }, (res) => { res.resume(); resolve(res.statusCode ?? 0); }));
       assert.equal(local, 200, "this machine never needs the PIN");
     } finally {

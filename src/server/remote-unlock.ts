@@ -10,6 +10,15 @@ export const UNLOCK_HOURS = 24;
 const MIN_PIN = 6;
 const MAX_FAILURES = 5;
 const LOCKOUT_MS = 15 * 60_000;
+
+/** A PIN refused: wrong (401), or one more try during the lockout (429); the page words each its own way. */
+export class PinRefused extends InputError {
+  readonly status: 401 | 429;
+  constructor(message: string, status: 401 | 429) {
+    super(message);
+    this.status = status;
+  }
+}
 const SCRYPT = { N: 2 ** 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 } as const;
 
 type Stored = { salt: string; hash: string };
@@ -54,11 +63,11 @@ export class RemoteUnlock {
     if (!stored) throw new InputError("no PIN is set; set one on the computer with: agent-desk pin");
     const recent = this.failures.filter((t) => this.now() - t < LOCKOUT_MS);
     this.failures = recent;
-    if (recent.length >= MAX_FAILURES) throw new InputError("too many wrong PINs; try again in 15 minutes");
+    if (recent.length >= MAX_FAILURES) throw new PinRefused("too many wrong PINs; try again in 15 minutes", 429);
     const given = Buffer.from(scryptSync(text(pin, "pin", 64), Buffer.from(stored.salt, "hex"), 32, SCRYPT));
     if (!timingSafeEqual(given, Buffer.from(stored.hash, "hex"))) {
       this.failures.push(this.now());
-      throw new InputError("wrong PIN");
+      throw new PinRefused("wrong PIN", 401);
     }
     this.failures = [];
     const expires = this.now() + UNLOCK_HOURS * 3600_000;
