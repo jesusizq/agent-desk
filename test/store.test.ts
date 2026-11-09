@@ -85,6 +85,24 @@ describe("concurrency", () => {
     assert.equal(fs.readdirSync(store.paths.agentDir("s1")).length, 1, "no temp or lock file left behind");
   });
 
+  it("gives each agent added at once its own name", async () => {
+    const store = testStore();
+    addSession(store);
+    await workers(store.paths.home, "add", 5, 4);
+    const agents = store.listAgents("s1");
+    assert.equal(new Set(agents.map((a) => a.ref)).size, 20, "no agent took another's record");
+    assert.deepEqual(agents.map((a) => a.name).sort(), ["worker", ...Array.from({ length: 19 }, (_, i) => `worker-${i + 2}`)].sort());
+  });
+
+  it("keeps one record when processes rename an agent while others report it under the new name", async () => {
+    const store = testStore();
+    addSession(store);
+    store.upsertAgent("s1", "worker", { type: "workflow-subagent", ref: "a1", state: "done" });
+    await Promise.all([workers(store.paths.home, "rename", 10, 3), workers(store.paths.home, "report", 10, 3)]);
+    assert.deepEqual(store.listAgents("s1").map((a) => [a.name, a.ref, a.state, a.summary]), [["build-api", "a1", "done", "Builds the API"]]);
+    assert.deepEqual(fs.readdirSync(store.paths.agentDir("s1")), ["build-api.json"], "no temp or lock file left behind");
+  });
+
   it("takes over at once a lock whose process is gone (a status line killed mid-write)", async () => {
     const store = testStore();
     addSession(store);
@@ -392,6 +410,49 @@ describe("agents and results", () => {
     assert.deepEqual(done.after, ["api"]);
     assert.ok(done.endedAt);
     assert.equal(store.upsertAgent("s1", "pay-button", { activity: "x" }).endedAt, done.endedAt);
+  });
+
+  it("renames an agent with its history, and merges it into a record reported under the new name", () => {
+    const store = testStore();
+    addSession(store);
+    const started = store.upsertAgent("s1", "worker", { type: "workflow-subagent", ref: "a1", activity: "Bash: make" });
+    const moved = store.renameAgent("s1", "worker", "build-api");
+    assert.deepEqual([moved?.name, moved?.ref, moved?.activity, moved?.startedAt], ["build-api", "a1", "Bash: make", started.startedAt]);
+    assert.deepEqual(store.listAgents("s1").map((a) => a.name), ["build-api"]);
+    assert.equal(store.renameAgent("s1", "worker", "build-api"), undefined, "already moved: nothing to do");
+
+    // Reported by the session first, then taken by the agent that runs it.
+    store.upsertAgent("s1", "build-ui", { summary: "Builds the UI", branch: "agent/ui", after: ["build-api"] });
+    const real = store.upsertAgent("s1", "worker-2", { type: "workflow-subagent", ref: "a2", goal: "build:ui", state: "done" });
+    const one = store.renameAgent("s1", "worker-2", "build-ui");
+    assert.deepEqual(
+      [one?.ref, one?.state, one?.summary, one?.branch, one?.after, one?.goal, one?.startedAt, one?.endedAt],
+      ["a2", "done", "Builds the UI", "agent/ui", ["build-api"], "build:ui", real.startedAt, real.endedAt],
+    );
+    assert.deepEqual(store.listAgents("s1").map((a) => a.name).sort(), ["build-api", "build-ui"]);
+  });
+
+  it("never merges an agent into one that follows another, and never creates one when updating", () => {
+    const store = testStore();
+    addSession(store);
+    store.upsertAgent("s1", "review", { ref: "a1" });
+    store.upsertAgent("s1", "worker", { ref: "a2" });
+    assert.equal(store.renameAgent("s1", "worker", "review"), undefined);
+    assert.deepEqual(store.listAgents("s1").map((a) => [a.name, a.ref]), [["review", "a1"], ["worker", "a2"]]);
+    assert.equal(store.updateAgent("s1", "gone", { state: "done" }), undefined);
+    assert.equal(store.getAgent("s1", "gone"), undefined);
+    assert.equal(store.updateAgent("s1", "worker", { state: "done" })?.state, "done");
+  });
+
+  it("finishes a rename interrupted between its two writes when run again", () => {
+    const store = testStore();
+    addSession(store);
+    store.upsertAgent("s1", "worker", { ref: "a1", state: "done" });
+    // As left by a process killed after writing the new record and before removing the old one.
+    const copy = { ...JSON.parse(fs.readFileSync(store.paths.agent("s1", "worker"), "utf8")), name: "build-api", summary: "Builds the API" };
+    fs.writeFileSync(store.paths.agent("s1", "build-api"), JSON.stringify(copy));
+    assert.equal(store.renameAgent("s1", "worker", "build-api")?.summary, "Builds the API");
+    assert.deepEqual(store.listAgents("s1").map((a) => [a.name, a.ref, a.state]), [["build-api", "a1", "done"]]);
   });
 
   it("copies images into the store and refuses what is not an image", () => {

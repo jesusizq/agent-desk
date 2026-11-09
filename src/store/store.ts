@@ -51,6 +51,8 @@ export type Snapshot = {
   problems: string[];
 };
 
+export type AgentFields = Partial<Omit<Agent, "sessionId" | "name">>;
+
 export type NewSession = Pick<Session, "id" | "provider" | "project"> & Partial<Omit<Session, "id" | "provider" | "project">>;
 
 export type ResultInput = {
@@ -470,28 +472,82 @@ export class Store {
   }
 
   /** Creates the agent (working, started now) or merges `fields` into it. */
-  upsertAgent(sessionId: string, name: string, fields: Partial<Omit<Agent, "sessionId" | "name">>): Agent {
+  upsertAgent(sessionId: string, name: string, fields: AgentFields): Agent {
     this.requireSession(sessionId);
     const file = this.paths.agent(sessionId, name);
+    return withLock(file, () => this.writeAgent(sessionId, name, this.getAgent(sessionId, name), fields));
+  }
+
+  /** Creates a new agent named `base`, or `base-2`, `base-3`… when that name is taken, also by a concurrent writer. */
+  addAgent(sessionId: string, base: string, fields: AgentFields): Agent {
+    this.requireSession(sessionId);
+    const taken = new Set(this.listAgents(sessionId).map((a) => a.name));
+    for (let n = 1; ; n++) {
+      const name = n === 1 ? base : `${base}-${n}`;
+      if (taken.has(name)) continue;
+      const file = this.paths.agent(sessionId, name);
+      const added = withLock(file, () => (this.getAgent(sessionId, name) ? undefined : this.writeAgent(sessionId, name, undefined, fields)));
+      if (added) return added;
+    }
+  }
+
+  /** Merges `fields` into the agent; undefined, with nothing written, when it is not recorded (e.g. renamed meanwhile). */
+  updateAgent(sessionId: string, name: string, fields: AgentFields): Agent | undefined {
+    const file = this.paths.agent(sessionId, name);
     return withLock(file, () => {
-      const at = this.stamp();
       const current = this.getAgent(sessionId, name);
-      const merged = compact({ ...current, ...fields, sessionId, name, updatedAt: at });
-      const state = merged.state ?? "working";
-      const ended = state === "done" || state === "failed";
-      const next = readAgent(
-        compact({
-          ...merged,
-          state,
-          after: merged.after ?? [],
-          startedAt: current?.startedAt ?? fields.startedAt ?? at,
-          endedAt: ended ? (current?.endedAt ?? at) : undefined,
-        }),
-        file,
-      );
-      writeJson(file, next);
-      return next;
+      return current && this.writeAgent(sessionId, name, current, fields);
     });
+  }
+
+  /**
+   * Gives agent `from` the name `to`, with its state, times and history. When `to` is recorded
+   * already, the two become one record under `to`: what was reported for it (goal, summary, branch,
+   * commit, `after`) stays, the rest comes from `from`. Nothing moves, and undefined is returned,
+   * when `from` is not recorded (another writer moved it first) or `to` follows another agent
+   * (`ref`). Safe to run again: interrupted between writing `to` and removing `from`, it merges the
+   * same record again.
+   */
+  renameAgent(sessionId: string, from: string, to: string): Agent | undefined {
+    const source = this.paths.agent(sessionId, from);
+    const target = this.paths.agent(sessionId, to);
+    if (source === target) return this.getAgent(sessionId, from);
+    // Both locks, always in the same order, so two renames between the same names cannot deadlock.
+    const [first, second] = source < target ? [source, target] : [target, source];
+    return withLock(first, () =>
+      withLock(second, () => {
+        const moved = this.getAgent(sessionId, from);
+        if (!moved) return undefined;
+        const existing = this.getAgent(sessionId, to);
+        if (existing?.ref !== undefined && existing.ref !== moved.ref) return undefined;
+        const reported = existing ? compact({ goal: existing.goal, summary: existing.summary, branch: existing.branch, commit: existing.commit }) : {};
+        const after = existing && existing.after.length > 0 ? existing.after : moved.after;
+        const next = readAgent({ ...moved, ...reported, after, name: to, updatedAt: this.stamp() }, target);
+        writeJson(target, next);
+        fs.rmSync(source, { force: true });
+        return next;
+      }),
+    );
+  }
+
+  private writeAgent(sessionId: string, name: string, current: Agent | undefined, fields: AgentFields): Agent {
+    const file = this.paths.agent(sessionId, name);
+    const at = this.stamp();
+    const merged = compact({ ...current, ...fields, sessionId, name, updatedAt: at });
+    const state = merged.state ?? "working";
+    const ended = state === "done" || state === "failed";
+    const next = readAgent(
+      compact({
+        ...merged,
+        state,
+        after: merged.after ?? [],
+        startedAt: current?.startedAt ?? fields.startedAt ?? at,
+        endedAt: ended ? (current?.endedAt ?? at) : undefined,
+      }),
+      file,
+    );
+    writeJson(file, next);
+    return next;
   }
 
   listAgents(sessionId?: string, problems?: string[]): Agent[] {

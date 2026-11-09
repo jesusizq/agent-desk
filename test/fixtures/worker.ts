@@ -25,6 +25,12 @@ if (task === "increment") {
   for (let i = 0; i < Number(count); i++) store.updateSession("s1", (s) => ({ ...s, activity: `Edit ${process.pid}-${i}` }));
 } else if (task === "agent") {
   for (let i = 0; i < Number(count); i++) store.upsertAgent("s1", "builder", { activity: `step ${process.pid}-${i}` });
+} else if (task === "add") {
+  for (let i = 0; i < Number(count); i++) store.addAgent("s1", "worker", { ref: `${process.pid}-${i}` });
+} else if (task === "rename") {
+  for (let i = 0; i < Number(count); i++) store.renameAgent("s1", "worker", "build-api");
+} else if (task === "report") {
+  for (let i = 0; i < Number(count); i++) store.upsertAgent("s1", "build-api", { summary: "Builds the API" });
 } else {
   throw new Error(`unknown task ${task}`);
 }
