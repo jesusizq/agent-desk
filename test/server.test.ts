@@ -124,6 +124,22 @@ describe("server", () => {
     assert.equal(store.getQuestion(q.id)?.status, "open");
   });
 
+  it("serves every script the page loads and every module they import", async () => {
+    const page = await (await fetch(base + "/")).text();
+    const queue = [...page.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)].map((m) => m[1] ?? "");
+    assert.ok(queue.includes("/app.js"), "the page loads app.js");
+    const seen = new Set<string>();
+    for (let route = queue.shift(); route !== undefined; route = queue.shift()) {
+      if (seen.has(route)) continue;
+      seen.add(route);
+      const res = await fetch(base + route);
+      assert.equal(res.status, 200, `${route} is served (a module missing from STATIC in server.ts breaks the page)`);
+      assert.match(res.headers.get("content-type") ?? "", /^text\/javascript/, route);
+      for (const m of (await res.text()).matchAll(/^import\s[^;]*?["'](\.\/[^"']+)["'];?$/gm)) queue.push(new URL(m[1] ?? "", base + route).pathname);
+    }
+    assert.ok(seen.size > 3, `the walk found the page's modules (${[...seen].join(", ")})`);
+  });
+
   it("serves stored images as inert data, and nothing else from disk", async () => {
     const dir = tempHome();
     fs.writeFileSync(path.join(dir, "a.png"), PNG);
