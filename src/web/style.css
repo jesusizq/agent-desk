@@ -953,6 +953,10 @@ body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--v
   .touch-only { display: inline; }
   .links a { display: inline-block; padding-block: 12px; margin-block: -10px; }
   .col-foot:has(> .keys-only:only-child) { display: none; }
+  /* The session panel's chips keep one height, the buttons among them a finger's reach in an invisible margin. */
+  .pchips > .chip { min-height: 32px; }
+  .pchips button.chip { position: relative; }
+  .pchips button.chip::after { content: ""; position: absolute; inset: -6px 0; }
 }
 
 /* No hover: what hover reveals is shown, and a tap does not leave a card lifted. */

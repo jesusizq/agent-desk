@@ -1451,4 +1451,26 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor(`!${up}`);
     assert.ok(await page.eval<boolean>("document.getElementById('projects').getBoundingClientRect().top >= document.getElementById('theme').getBoundingClientRect().bottom"), "too wide: a row of their own");
   });
+
+  /** A phone held by a finger, the checkout session's panel open on its latest message. */
+  async function touchPanel(): Promise<Page> {
+    const page = await open(390, 640);
+    await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    await page.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
+    await page.click(".tabbar button", "Sessions");
+    await page.click(".scard", "checkout redesign");
+    await page.waitFor("document.querySelector('#session .pchips button.chip') && document.querySelector('#session .session-body').scrollTop > 0 && document.getAnimations().length === 0");
+    return page;
+  }
+
+  it("on a touch phone, keeps the session panel's chips one height, each button a finger's reach", async () => {
+    const page = await touchPanel();
+    const heights = await page.eval<number[]>("[...document.querySelectorAll('#session .pchips > .chip')].map((c) => Math.round(c.getBoundingClientRect().height))");
+    assert.equal(new Set(heights).size, 1, `one height: ${heights}`);
+    assert.ok(
+      await page.eval<boolean>("(() => { const b = document.querySelector('#session .pchips button.chip'); const r = b.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.top - 5)?.closest('button.chip') === b; })()"),
+      "a button chip still takes a tap just outside its pill",
+    );
+    await page.press("Escape");
+  });
 });
