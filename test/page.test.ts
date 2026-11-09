@@ -428,7 +428,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.click(".tabbar button", "Sessions");
     await page.click(".scard", "a long session title");
     const button = "[...document.querySelectorAll('#session .dhead button')].find((b) => b.getAttribute('aria-label') === 'Mark unread')";
-    await page.waitFor(button);
+    await page.waitFor(`${button} && ${arrived("session")}`); // measured at rest: mid-slide its width is off by a float's error
     const size = await page.eval<{ w: number; h: number; inner: number; label: number }>(`(() => { const b = ${button}; const r = b.getBoundingClientRect(); return { w: r.width, h: r.height, inner: b.scrollWidth, label: b.querySelector('.lbl').getClientRects().length }; })()`);
     assert.equal(size.label, 0, "only its icon: the words do not fit");
     assert.ok(size.w >= 44 && size.h >= 30 && size.inner <= size.w, JSON.stringify(size));
