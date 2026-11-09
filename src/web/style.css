@@ -557,6 +557,38 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
    is drawn over by the cards that take its place, so each card covers what it passes. */
 [data-list] { position: relative; }
 
+/* Feedback under the pointer: hover only where a mouse hovers (a tap would leave it stuck), and a
+   press of the desk's own everywhere, instead of the browser's tap flash. */
+* { -webkit-tap-highlight-color: transparent; }
+@media (hover: hover) {
+  .answer .opts button:not([aria-pressed="true"]):hover { border-color: var(--border-strong); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+  .seg button:not([aria-pressed="true"]):hover { color: var(--text); background: var(--surface-2); }
+  :is(button, a).secondary:not([disabled]):hover { background: var(--surface-2); border-color: color-mix(in srgb, var(--text) 30%, var(--border-strong)); }
+  .needs-pill:hover { filter: brightness(1.08); }
+  .needs-pill.zero:hover { filter: none; color: var(--text); background: var(--surface); border-color: var(--border-strong); }
+  .linkish:hover { text-decoration-thickness: 2px; }
+  .linkish.faint:hover { color: var(--text); }
+  .next .actions .go-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+  .tabbar button:not([aria-pressed="true"]):hover { color: var(--text); }
+}
+.seg button, .tabbar .i, .menu label { transition: background-color var(--dur-2), color var(--dur-2), border-color var(--dur-2), box-shadow var(--dur-2), transform var(--dur-1) var(--ease-out); }
+.linkish:active { opacity: .65; }
+.scard:active, .hitem.open:active, .menu label:not(.off):active { background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
+/* A press on a row's own button (Go, dismiss) presses that button, not the row under it. */
+:is(.qrow, .rrow):active:not(:has(button:active, a:active)) { box-shadow: none; background: color-mix(in srgb, var(--text) 4%, var(--surface)); }
+.rtile:active:not(:has(button:active)) { border-color: var(--border-strong); background: var(--surface-2); }
+@media (prefers-reduced-motion: no-preference) {
+  :is(.seg button, .needs-pill, button.chip, .zbar button):active { transform: scale(.96); }
+  .tabbar button:active .i { transform: scale(.86); }
+  :is(.qrow, .rrow):active:not(:has(button:active, a:active)) { transform: scale(.99); }
+  .rtile:active:not(:has(button:active)) { transform: scale(.98); }
+}
+
+/* Keyboard focus: a ring inside what a rounded box clips, and on the search box around its field. */
+:is(.slist > .scard, .hlist > .hitem, .seg button):focus-visible { outline-offset: -2px; }
+.search { transition: border-color var(--dur-2), box-shadow var(--dur-2); }
+.search:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+
 /* First load: the shape of the desk while the data arrives. */
 .skel { border-radius: 10px; flex: none; background: linear-gradient(90deg, var(--border) 25%, color-mix(in srgb, var(--border) 45%, var(--surface)) 50%, var(--border) 75%);
   background-size: 300% 100%; animation: shimmer 1.6s ease-in-out infinite; }
@@ -852,7 +884,7 @@ body:has(dialog[open]) #toasts, :root[data-keyboard] #toasts { top: calc(var(--v
 .rtiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .rtile-wrap { position: relative; min-width: 0; }
 .rtile { width: 100%; display: flex; flex-direction: column; gap: 3px; padding: 6px 6px 8px; border: 1px solid var(--border); border-radius: 10px;
-  background: var(--surface); text-align: left; transition: border-color var(--dur-2), box-shadow var(--dur-2); }
+  background: var(--surface); text-align: left; transition: border-color var(--dur-2), box-shadow var(--dur-2), background-color var(--dur-2), transform var(--dur-1) var(--ease-out); }
 .rtile:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
 .rtile img, .rtile .ph { width: 100%; height: 88px; object-fit: cover; object-position: top; border-radius: 6px; border: 1px solid var(--border); background: #fff; margin-bottom: 3px; }
 .rtile .ph { display: flex; flex-direction: column; gap: 6px; padding: 10px; background: var(--surface-2); font-size: 0.7188rem; line-height: 1.35; color: var(--muted); overflow: hidden; }

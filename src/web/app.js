@@ -2479,6 +2479,8 @@ document.addEventListener("keydown", (e) => {
     }
   }
 });
+// iOS Safari applies :active (the desk's pressed look) only on pages that listen to touchstart.
+document.addEventListener("touchstart", () => {}, { passive: true });
 // A tap is not a scroll: counted, it put off the redraw that shows what the tap did.
 for (const event of ["scroll", "touchmove"]) dialog("session").addEventListener(event, () => (ui.panelTouchedAt = Date.now()), { capture: true, passive: true });
 for (const id of ["result", "session", "zoom"]) {
