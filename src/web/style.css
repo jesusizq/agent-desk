@@ -108,7 +108,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .count.quiet { background: none; color: var(--faint); font-weight: 500; }
 .ghead { display: flex; align-items: center; gap: 6px; margin: 6px 2px -2px; font: 600 0.7812rem var(--sans); color: var(--muted); }
 .ghead:first-child { margin-top: 0; }
-.ghead .sep, .where .sep { color: var(--faint); font-weight: 400; }
+.ghead .sep, .where .sep, .sname .sep { color: var(--faint); font-weight: 400; }
 /* Nothing here: calm and centred in its column, the same in every column. */
 .empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; text-align: center; color: var(--muted); font-size: 0.8125rem; }
 .empty p { margin: 0; max-width: 48ch; }
@@ -205,9 +205,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .s-bad code { display: block; width: fit-content; max-width: 100%; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Quiet may be a long run, not a fault: a warning, not the red of a failure. */
 .s-warn { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
-.s-ask code, .s-bad code { font-size: 0.7188rem; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+.s-ask code, .s-bad code, .scard .quiet-line code { font-size: 0.7188rem; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
 .s-more, .s-l3 { color: var(--faint); font-size: 0.75rem; }
-.scard .quiet-line code { font-size: 0.7188rem; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
 .scard .badge.k-new { background: none; padding: 0; color: var(--accent); font-weight: 650; }
 .ctx { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--muted); }
 .mini { width: 54px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
@@ -466,7 +465,6 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   border: 1.5px solid color-mix(in srgb, var(--c) 70%, transparent); background: color-mix(in srgb, var(--c) 9%, var(--surface)); box-shadow: var(--shadow); font-size: 0.7812rem; }
 .fnode.st-blocked, .fnode.st-idle { background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--c) 12%, var(--surface)) 0 5px, var(--surface) 5px 10px); }
 .fnode.st-done .aname { color: var(--muted); }
-.fnode .aname { display: flex; align-items: center; gap: 7px; font-weight: 600; }
 .fact { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.75rem; }
 .status { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 0.875rem; }
 .status > span { display: inline-flex; align-items: center; gap: 8px; }
@@ -475,16 +473,14 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .arow { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 7px 4px; border-bottom: 1px solid var(--border); font-size: 0.8125rem; }
 .arow.axis { border: 0; padding-top: 4px; }
 .arow.failed .adoing { color: var(--danger); }
-.arow .aname { display: flex; align-items: center; gap: 7px; font-weight: 600; white-space: nowrap; overflow: hidden; min-width: 0; }
+.arow .aname { overflow: hidden; min-width: 0; }
 .awhat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.awhat .adoing, .awhat .asummary { padding-left: 19px; font-size: 0.7812rem; }
-.awhat .astuck { padding-left: 19px; font-size: 0.7812rem; }
+.awhat .adoing, .awhat .asummary, .awhat .astuck { padding-left: 19px; font-size: 0.7812rem; }
 .astuck { color: var(--danger); font-weight: 600; }
 .agents-fold > summary { cursor: pointer; color: var(--muted); font-size: 0.7812rem; margin-top: 4px; }
 .agents-fold[open] > summary { margin-bottom: 6px; }
 .asummary { color: var(--text); }
-.awhat .adoing { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fnode .agoal { font-weight: 600; }
+.awhat .adoing { color: var(--faint); }
 .adoing { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .arow .num { text-align: right; white-space: nowrap; }
 .tl-track { position: relative; height: 14px; border-radius: 7px; background: var(--surface-2); }
@@ -539,7 +535,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .view-root { display: contents; }
 .touch-only { display: none; }
 .answer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; margin-top: 4px; }
-.answer .opts { grid-column: 1 / -1; }
+.answer .opts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
 .answer .row { display: contents; }
 /* The buttons keep their size at the box's foot while the box grows with the draft. */
 .answer .send-col { grid-column: 2; align-self: end; display: flex; align-items: stretch; gap: 6px; }
@@ -562,7 +558,6 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer .thumb .icon-btn { position: absolute; top: -7px; right: -7px; height: 22px; width: 22px; padding: 0; justify-content: center; border-radius: 999px; }
 .answer .thumb .icon-btn svg.i { width: 12px; height: 12px; }
 .answer .send-hint { grid-column: 1 / -1; margin-top: -2px; font-size: 0.75rem; }
-.answer .opts { display: flex; flex-wrap: wrap; gap: 6px; }
 .answer .opts button { border: 1px solid var(--border); background: var(--surface); border-radius: 7px; padding: 6px 10px; font: inherit; cursor: pointer; color: var(--text); }
 .answer .opts button kbd { margin-right: 6px; font-size: 0.6875rem; padding: 0 4px; }
 .answer .opts button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
@@ -614,7 +609,6 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 .scard { min-width: 0; overflow: hidden; cursor: pointer; }
 .sname { display: flex; align-items: center; gap: 5px; flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; }
 .sname .sproj { font-weight: 500; flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; } /* the project stays readable; the session's name gives way */
-.sname .sep { color: var(--faint); font-weight: 400; }
 .sname b { font-weight: 650; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 2.5em; }
 .scard > .chip { align-self: flex-start; font-size: 0.75rem; }
 .scard .where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -851,6 +845,10 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .dhead > div:first-child { flex: 1 1 0; min-width: 0; }
   .dhead > .spacer { display: none; }
   .dhead h3 { font-size: 1rem; overflow-wrap: anywhere; }
+  /* A dialog's where-and-when stays on one line: the where is cut, the time is not. */
+  .dhead .meta { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
+  .dhead .meta .where { flex-wrap: nowrap; white-space: nowrap; }
+  dialog.sess .dhead .lbl { display: none; }
   dialog.result .dbody, dialog.sess .dbody { flex: 1 1 auto; min-height: 0; max-height: none; overscroll-behavior: contain;
     padding: 12px max(14px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); }
   dialog .dbody { --pad-l: max(14px, env(safe-area-inset-left)); --pad-r: max(14px, env(safe-area-inset-right)); }
@@ -942,9 +940,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   header.top.projects-up .brand { flex: none; font-size: 0; gap: 0; }
   header.top.projects-up #projects { order: 1; flex: none; margin-right: auto; }
   header.top.projects-up::before { display: none; }
-  /* A dialog's where-and-when stays on one line: the where is cut, the time is not. */
-  .dhead .meta { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
-  .dhead .meta .where { flex-wrap: nowrap; white-space: nowrap; min-width: 0; overflow: hidden; }
+  .dhead .meta .where { min-width: 0; overflow: hidden; }
   .dhead .meta > :not(.where) { flex: none; }
   /* Head of a dialog: what it is and the close button, then its actions on a line of their own. */
   .dhead { flex-wrap: wrap; }
@@ -954,7 +950,6 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   /* The session panel keeps one head line: Go to session shrinks to its arrow beside Close. */
   dialog.sess .dhead > div:first-child { flex-basis: 0; }
   dialog.sess .dhead > :is(a, button):not(.icon-btn) { order: 0; width: 44px; height: 30px; padding: 0; justify-content: center; flex: none; }
-  dialog.sess .dhead .lbl { display: none; }
   .hitem { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
 
@@ -971,11 +966,8 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   header.top .search { width: 180px; flex: 0 1 180px; min-width: 96px; }
   .dhead { flex-wrap: nowrap; padding-block: max(6px, env(safe-area-inset-top)) 6px; }
   .dhead h3 { font-size: 0.9375rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dhead .meta { flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }
-  .dhead .meta .where { flex-wrap: nowrap; white-space: nowrap; }
   .next .qimgs img { height: 80px; }
   dialog.sess .dhead > :is(a, button):not(.icon-btn) { width: 44px; padding: 0; justify-content: center; }
-  dialog.sess .dhead .lbl { display: none; }
   /* A slimmer tab bar: icon and label side by side. */
   body { --bar: 42px; }
   .tabbar button { min-height: 40px; flex-direction: row; gap: 6px; }
