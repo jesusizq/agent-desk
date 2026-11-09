@@ -6,6 +6,7 @@ import {
   AGENT_STATES,
   ANSWER_CHANNELS,
   ATTACHED_IMAGES_MAX,
+  GROUP_SIZE_MAX,
   QUESTION_KINDS,
   QUESTION_STATUSES,
   SESSION_STATES,
@@ -20,6 +21,7 @@ import {
   type Metrics,
   type PlanWindow,
   type Question,
+  type QuestionGroup,
   type Result,
   type Seen,
   type Service,
@@ -107,7 +109,15 @@ export function readQuestion(value: unknown, where = "question"): Question {
     interpretation: optional(f.interpretation, `${where}.interpretation`, text),
     closedAt: optional(f.closedAt, `${where}.closedAt`, isoTime),
     dialog: optional(f.dialog, `${where}.dialog`, bool),
+    several: optional(f.several, `${where}.several`, bool),
+    group: optional(f.group, `${where}.group`, readGroup),
   });
+}
+
+function readGroup(value: unknown, where: string): QuestionGroup {
+  const f = fields(value, where);
+  const size = int(f.size, `${where}.size`, 2, GROUP_SIZE_MAX);
+  return { id: id(f.id, `${where}.id`), index: int(f.index, `${where}.index`, 0, size - 1), size };
 }
 
 function readAnswer(value: unknown, where: string): Answer {

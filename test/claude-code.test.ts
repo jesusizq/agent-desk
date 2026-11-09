@@ -548,7 +548,11 @@ describe("answers from the desk", () => {
     const open = store.openQuestions("cc-1");
     assert.deepEqual(open.map((q) => [q.kind, q.text, q.options, q.dialog]), [["question", "Which layout?", ["A", "B"], true], ["question", "Which extras?", ["Player", "Legend"], true]], "no permission item, and the duplicate is gone");
     assert.match(open[0]?.context ?? "", /\*\*A\*\*: Sidebar/);
-    assert.match(open[1]?.context ?? "", /Several can be chosen/);
+    assert.deepEqual(open.map((q) => q.several), [undefined, true], "the page lets several options be picked for a multiSelect question");
+    assert.equal(open[1]?.context, undefined, "nothing to describe: the options had no descriptions");
+    const [g0, g1] = open.map((q) => q.group);
+    assert.ok(g0 && g1 && g0.id === g1.id, "the questions of one dialog share a group");
+    assert.deepEqual([g0.index, g0.size, g1.index, g1.size], [0, 2, 1, 2]);
     assert.ok(out.dialog);
 
     const waiting = waitForDialog("cc-1", out.dialog, store, { pollMs: 10, armWithinMs: 0, deadline: Date.now() + 5000 });
@@ -570,6 +574,7 @@ describe("answers from the desk", () => {
     assert.deepEqual(await waiting, { code: 0 }, "the hook gives up: the terminal decided");
     const [q] = store.listQuestions();
     assert.deepEqual([q?.status, q?.answer?.text, q?.answer?.via], ["answered", "M", "terminal"]);
+    assert.equal(q?.group, undefined, "a dialog of one question is no group");
   });
 
   it("allows or denies a permission prompt from the desk while its hook waits", async () => {

@@ -14,6 +14,7 @@ import {
   type ConversationEntry,
   type ProjectScan,
   type Question,
+  type QuestionGroup,
   type QuestionKind,
   type Result,
   type Seen,
@@ -173,7 +174,7 @@ export class Store {
     return undefined;
   }
 
-  ask(input: { sessionId: string; kind: QuestionKind; text: string; context?: string; options?: string[]; dialog?: boolean; writing?: boolean }): Question {
+  ask(input: { sessionId: string; kind: QuestionKind; text: string; context?: string; options?: string[]; dialog?: boolean; several?: boolean; group?: QuestionGroup; writing?: boolean }): Question {
     this.requireSession(input.sessionId);
     const question = readQuestion({
       id: newId("q"),
@@ -185,6 +186,8 @@ export class Store {
       askedAt: this.stamp(),
       status: "open",
       dialog: input.dialog || undefined,
+      several: input.several || undefined,
+      group: input.group,
       writing: input.writing || undefined,
     });
     writeJson(this.paths.question(question.id, "open"), question);

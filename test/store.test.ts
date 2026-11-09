@@ -132,6 +132,29 @@ describe("questions", () => {
     assert.deepEqual(store.openQuestions().map((q) => q.id), [b.id]);
   });
 
+  it("keeps whether several options can be picked and the group a question was asked in", () => {
+    const store = testStore();
+    addSession(store);
+    const group = { id: "dialog-1", index: 1, size: 2 };
+    const q = store.ask({ sessionId: "s1", kind: "question", text: "Which sections?", options: ["Guides", "Blog"], dialog: true, several: true, group });
+    assert.deepEqual([store.getQuestion(q.id)?.several, store.getQuestion(q.id)?.group], [true, group]);
+    const plain = store.ask({ sessionId: "s1", kind: "question", text: "Which one?", options: ["A", "B"] });
+    assert.deepEqual([plain.several, plain.group], [undefined, undefined], "a question asked alone carries neither");
+    const file = store.paths.question(q.id, "open");
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    for (const [field, bad, named] of [
+      ["several", "yes", "several"],
+      ["group", "dialog-1", "group"],
+      ["group", { id: "../x", index: 0, size: 2 }, "group.id"],
+      ["group", { id: "dialog-1", index: 2, size: 2 }, "group.index"],
+      ["group", { id: "dialog-1", index: 0, size: 1 }, "group.size"],
+      ["group", { id: "dialog-1", index: 0 }, "group.size"],
+    ] as const) {
+      fs.writeFileSync(file, JSON.stringify({ ...raw, [field]: bad }));
+      assert.throws(() => store.getQuestion(q.id), (e: Error) => e.message.includes(`.${named}`), `${field}: ${JSON.stringify(bad)}`);
+    }
+  });
+
   it("closes only the kinds asked for", () => {
     const store = testStore();
     addSession(store);

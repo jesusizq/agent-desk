@@ -68,6 +68,12 @@ export const ATTACHED_IMAGES_MAX = 10;
 /** `images`: ids of images in the store the developer attached on the desk. */
 export type Answer = { text: string; at: string; via: (typeof ANSWER_CHANNELS)[number]; images?: string[] };
 
+/** The questions asked together: `index` is this one's place among `size` of them, from 0. */
+export type QuestionGroup = { id: string; index: number; size: number };
+
+/** The most questions one group holds. */
+export const GROUP_SIZE_MAX = 10;
+
 export type Question = {
   id: string;
   sessionId: string;
@@ -87,6 +93,10 @@ export type Question = {
    * goes only to the provider hook that waits for it, as a permission answer does.
    */
   dialog?: boolean;
+  /** More than one option can be picked: the answer names them, separated by commas. */
+  several?: boolean;
+  /** Asked together with other questions (one dialog), which waits until every one of them is answered. */
+  group?: QuestionGroup;
   /**
    * Asked while the session's turn still runs: the message that explains it comes when the turn ends,
    * so the desk holds the question until then.

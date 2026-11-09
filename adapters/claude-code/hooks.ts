@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
-import { id, slug } from "../../src/core/ids.ts";
+import { id, newId, slug } from "../../src/core/ids.ts";
 import { FAILURES_KEPT, type SessionProcess } from "../../src/core/model.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
@@ -648,9 +648,9 @@ function forTheTurn(store: Store): (questionId: string) => boolean {
 export const ASK_TOOL = "AskUserQuestion";
 
 /**
- * Shows an AskUserQuestion call on the desk: one question per question it asks, with its options;
- * their descriptions, and whether several can be chosen, go in the context. A question the model
- * also asked through `agent-desk ask` with the same text is replaced.
+ * Shows an AskUserQuestion call on the desk: one question per question it asks, with its options
+ * and whether several can be picked, grouped when there are more than one; the options' descriptions
+ * go in the context. A question the model also asked through `agent-desk ask` with the same text is replaced.
  */
 function askDialog(sessionId: string, toolInput: unknown, store: Store, problems: string[]): Dialog {
   const input = fields(toolInput, "tool_input");
@@ -665,11 +665,13 @@ function askDialog(sessionId: string, toolInput: unknown, store: Store, problems
       several: optional(q.multiSelect, `${w}.multiSelect`, bool) === true,
     };
   }, 10);
-  const questions = asked.map((q) => {
+  const group = asked.length > 1 ? newId("dialog") : undefined;
+  const questions = asked.map((q, index) => {
     store.closeOpen(sessionId, { kinds: ["question"], which: (o) => !o.dialog && o.text === q.text, status: "dismissed", problems });
-    const described = q.options.filter((o) => o.description).map((o) => `- **${o.label}**: ${o.description}`);
-    const context = [...described, q.several ? "Several can be chosen: write them separated by commas." : ""].filter(Boolean).join("\n");
-    const item = store.ask(compact({ sessionId, kind: "question" as const, text: q.text, options: q.options.map((o) => o.label), context: context || undefined, dialog: true }));
+    const context = q.options.filter((o) => o.description).map((o) => `- **${o.label}**: ${o.description}`).join("\n");
+    const item = store.ask(
+      compact({ sessionId, kind: "question" as const, text: q.text, options: q.options.map((o) => o.label), context: context || undefined, dialog: true, several: q.several || undefined, group: group ? { id: group, index, size: asked.length } : undefined }),
+    );
     return { id: item.id, text: q.text };
   });
   return { input, questions };
