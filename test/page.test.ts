@@ -1144,7 +1144,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const page = await open();
     await openResultOf(page, "Three pay button variants");
     await page.click("#result .vimgs img");
-    await page.waitFor("document.getElementById('zoom').open && document.querySelector('#zoom img.cur').complete");
+    await page.waitFor(`${arrived("zoom")} && document.querySelector('#zoom img.cur').complete`);
     const pct = "document.querySelector('#zoom .zbar .num.zfine').textContent";
     await page.waitFor(`${pct} === "100 %"`);
     const cur = "document.querySelector('#zoom img.cur')";
@@ -1165,7 +1165,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await openResultOf(page, "Checkout: before and after");
     await page.eval("document.querySelector('#result .seg button:last-child').click()");
     await page.eval("document.querySelector('#result .vimgs img').click()");
-    await page.waitFor("document.getElementById('zoom').open && document.querySelector('#zoom img.cur').complete");
+    await page.waitFor(`${arrived("zoom")} && document.querySelector('#zoom img.cur').complete`);
     const width = "Math.round(document.querySelector('#zoom img.cur').getBoundingClientRect().width)";
     const fit = await page.eval<number>(width);
     assert.ok(fit <= 390, "it opens inside the screen");
