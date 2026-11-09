@@ -107,6 +107,8 @@ function duration(m) {
   if (hours < 48) return `${hours} h${m % 60 ? ` ${m % 60} min` : ""}`;
   return `${Math.floor(hours / 24)} d${hours % 24 ? ` ${hours % 24} h` : ""}`;
 }
+/** When something happened: its time today, its day too before then. @param {string} iso */
+const stamp = (iso) => (new Date(iso).toDateString() === new Date().toDateString() ? hm(iso) : dayLabel(iso));
 /** A time to come as a clock time, with its weekday once it is not today. @param {string} iso */
 function clockAt(iso) {
   const d = new Date(iso);
@@ -1198,7 +1200,7 @@ function failureRow(r) {
     mark: dot("failed"),
     line: [badge("failed"), " ", r.title],
     meta: [label(S(r.sessionId)), r.summary ? firstLine(r.summary) : ""].filter(Boolean).join(" · "),
-    when: h("span", { class: "age quiet", title: hm(r.at) }, ago(r.at)),
+    when: h("span", { class: "age quiet", title: stamp(r.at) }, ago(r.at)),
     open: () => openResult(r),
     end: h("button", { class: "rdismiss icon-btn", "aria-label": TEXT.dismissResult, title: TEXT.dismissResult, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(post(`/api/results/${r.id}/seen`))) }, icon("x")),
   });
@@ -1256,7 +1258,7 @@ function resultRow(r, opened) {
       },
     },
     thumb,
-    h("span", { class: "rbody" }, h("span", { class: "rt" }, r.title), h("span", { class: "rm" }, isNew(r) ? h("span", { class: "new", title: TEXT.newResult }) : null, `${label(S(r.sessionId))} · ${hm(r.at)}`)),
+    h("span", { class: "rbody" }, h("span", { class: "rt" }, r.title), h("span", { class: "rm" }, isNew(r) ? h("span", { class: "new", title: TEXT.newResult }) : null, `${label(S(r.sessionId))} · ${stamp(r.at)}`)),
   );
 }
 
@@ -1269,11 +1271,11 @@ function reviewTile(r) {
     { class: "rtile-wrap", "data-key": `r-${r.id}` },
     h(
       "button",
-      { class: "rtile", onclick: () => openResult(r), title: `${r.title}\n${label(s)} · ${hm(r.at)}` },
+      { class: "rtile", onclick: () => openResult(r), title: `${r.title}\n${label(s)} · ${stamp(r.at)}` },
       first ? h("img", { src: `/images/${first.id}`, alt: "" }) : h("span", { class: "ph" }, dot("done"), r.summary ? h("span", {}, firstLine(r.summary)) : null),
       h("span", { class: "rt" }, r.title),
       // Where it comes from, as on every other card, unless one project is already picked.
-      h("span", { class: "rm" }, ui.project === null && s ? projectMark(s.project.name) : null, h("span", { class: "num" }, hm(r.at))),
+      h("span", { class: "rm" }, ui.project === null && s ? projectMark(s.project.name) : null, h("span", { class: "num" }, stamp(r.at))),
     ),
     h("button", { class: "rdismiss icon-btn", "aria-label": TEXT.dismissResult, title: TEXT.dismissResult, onclick: () => run(post(`/api/results/${r.id}/seen`)) }, icon("x")),
   );
@@ -2043,7 +2045,7 @@ function openResult(r, { markSeen = true } = {}) {
     h(
       "div",
       { class: "dhead" },
-      h("div", {}, h("div", { class: "meta" }, badge(r.status === "failed" ? "failed" : "result"), where(s), h("span", { class: "sep" }, "·"), h("span", { class: "num" }, hm(r.at))), h("h3", {}, r.title)),
+      h("div", {}, h("div", { class: "meta" }, badge(r.status === "failed" ? "failed" : "result"), where(s), h("span", { class: "sep" }, "·"), h("span", { class: "num" }, stamp(r.at))), h("h3", {}, r.title)),
       h("span", { class: "spacer" }),
       r.url ? localLink(r.url, [icon("link"), TEXT.openLive], "secondary") : null,
       goLink(s, "primary", icon("go"), TEXT.goTo),
