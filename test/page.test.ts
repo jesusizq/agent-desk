@@ -362,11 +362,11 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.click(".tabbar button", "History");
     await page.waitFor(on("History"));
     await page.eval(`navigator.serviceWorker.dispatchEvent(new MessageEvent("message", { data: { show: "needs" } }))`);
-    await page.waitFor(on("Inbox"));
+    await page.waitFor(on("Needs you"));
     await page.click(".tabbar button", "History");
     await page.waitFor(on("History"));
     await page.eval(`location.hash = "#needs"`);
-    await page.waitFor(on("Inbox"));
+    await page.waitFor(on("Needs you"));
     await page.eval(`location.hash = ""`);
   });
 
@@ -1309,7 +1309,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const room = await page.eval<number>("document.documentElement.scrollHeight - innerHeight");
     assert.ok(room > 120, `the sessions scroll (${room} px)`);
     await page.eval("window.scrollTo(0, 120)");
-    await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Inbox")).click()`);
+    await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Needs you")).click()`);
     await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Sessions")).click()`);
     assert.equal(await page.eval<number>("Math.round(scrollY)"), 120, "back on Sessions, where it was left");
     await page.eval(`[...document.querySelectorAll(".tabbar button")].find((b) => b.textContent.includes("Sessions")).click()`);

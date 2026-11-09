@@ -101,7 +101,16 @@ const hm = (iso) => new Date(iso).toTimeString().slice(0, 5);
 const minutes = (iso, to = Date.now()) => Math.max(0, Math.round((to - Date.parse(iso)) / 60000));
 /** @param {number} m */
 function duration(m) {
-  return m < 1 ? TEXT.now : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`;
+  if (m < 1) return TEXT.now;
+  if (m < 60) return `${m} min`;
+  const hours = Math.floor(m / 60);
+  if (hours < 48) return `${hours} h${m % 60 ? ` ${m % 60} min` : ""}`;
+  return `${Math.floor(hours / 24)} d${hours % 24 ? ` ${hours % 24} h` : ""}`;
+}
+/** A time to come as a clock time, with its weekday once it is not today. @param {string} iso */
+function clockAt(iso) {
+  const d = new Date(iso);
+  return d.toDateString() === new Date().toDateString() ? hm(iso) : `${d.toLocaleDateString(TEXT.locale, { weekday: "short" })} ${hm(iso)}`;
 }
 /** @param {string} iso @param {string} [until] */
 const ago = (iso, until) => duration(minutes(iso, until ? Date.parse(until) : Date.now()));
@@ -1398,8 +1407,17 @@ function sessionCard(s) {
     shown.length ? shown : quietLine(s),
     matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
     working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
-    m?.suggestion ? h("span", { class: "chip warn", title: TEXT.suggest[m.suggestion.reason](ctx ?? 0) }, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
+    m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
   );
+}
+
+/**
+ * The command a session's state calls for, copied with a click, on its card and in its panel alike.
+ * @param {NonNullable<Metrics["suggestion"]>} suggestion @param {number} context @param {string} text
+ */
+function suggestionChip(suggestion, context, text) {
+  const { command, reason } = suggestion;
+  return h("button", { class: "chip warn", title: TEXT.suggest[reason](context), onclick: (/** @type {Event} */ e) => (e.stopPropagation(), copy(command)) }, icon("copy"), text);
 }
 
 /**
@@ -1540,8 +1558,8 @@ function panelChips(s, m) {
     "div",
     { class: "pchips" },
     m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
-    (m?.planWindows ?? []).map((w) => h("span", { class: "chip", title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, TEXT.planChip(w.label, w.percent))),
-    m?.suggestion && command ? h("button", { class: "chip warn", title: TEXT.suggest[m.suggestion.reason](m.contextPercent ?? 0), onclick: () => copy(command) }, icon("copy"), command) : null,
+    (m?.planWindows ?? []).map((w) => h("span", { class: "chip", title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, bar(w.percent), TEXT.planChip(w.label, w.percent, w.resetsAt ? clockAt(w.resetsAt) : ""))),
+    m?.suggestion && command ? suggestionChip(m.suggestion, m.contextPercent ?? 0, command) : null,
     s.state === "ended" || data.gone.includes(s.id) ? h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone) : null,
     as.length ? unfold("agents", [failed ? dot("failed") : null, TEXT.chips.agents(as.length, failed)], failed ? "bad" : "") : null,
     results ? unfold("results", TEXT.chips.results(results)) : null,
@@ -1565,8 +1583,8 @@ function panelPart(s, m, d) {
 
 /** @param {Session} s @param {Metrics | undefined} m */
 function sessionDetails(s, m) {
-  const cacheLeft = m?.cacheExpiresAt ? minutes(new Date().toISOString(), Date.parse(m.cacheExpiresAt)) : undefined;
-  const cache = m?.cacheExpiresAt ? TEXT.cache(Date.parse(m.cacheExpiresAt) > Date.now() ? TEXT.cacheLeft(duration(cacheLeft ?? 0)) : TEXT.cacheExpired) : null;
+  const cacheMs = m?.cacheExpiresAt ? Date.parse(m.cacheExpiresAt) - Date.now() : undefined;
+  const cache = cacheMs === undefined ? null : TEXT.cache(cacheMs <= 0 ? TEXT.cacheExpired : TEXT.cacheLeft(cacheMs < 60_000 ? TEXT.underMinute : duration(Math.floor(cacheMs / 60_000))));
   const parts = [
     m?.model && [m.model, m.effort].filter(Boolean).join(" · "),
     m?.branch,
@@ -1891,7 +1909,7 @@ function workingNow(s, list) {
           h(
             "summary",
             { onclick: () => (ui.agentsOpen.has(s.id) ? ui.agentsOpen.delete(s.id) : ui.agentsOpen.add(s.id)) },
-            TEXT.chips.agents(agents.length, agents.filter((a) => a.state === "failed").length),
+            TEXT.conversation.agentsLeft(agents.length, agents.filter((a) => a.state === "failed").length),
           ),
           agentRows(agents),
         )

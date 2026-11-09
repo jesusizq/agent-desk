@@ -9,6 +9,10 @@ const counts = (done, failed) =>
   [done && plural(done, "finished", "finished"), failed && plural(failed, "failure", "failures")].filter(Boolean).join(", ");
 
 const NOW = "now";
+// One name per part of the desk, the same on a phone's tab bar as on the desktop's columns.
+const COLS = { needs: "Needs you", sessions: "Sessions", review: "To review" };
+/** @param {number} c */
+const contextAt = (c) => `Context ${Math.round(c)}%`;
 
 export const TEXT = {
   appName: "Agent Desk",
@@ -28,8 +32,8 @@ export const TEXT = {
     /** @param {string} size */
     sizes: (size) => `${size[0]?.toUpperCase()}${size.slice(1)} text`,
   },
-  cols: { needs: "Needs you", sessions: "Sessions", review: "To review" },
-  tabbar: { inbox: "Inbox", sessions: "Sessions", review: "Results", history: "History" },
+  cols: COLS,
+  tabbar: { inbox: COLS.needs, sessions: COLS.sessions, review: COLS.review, history: "History" },
   /** @param {number} n */
   nOptions: (n) => plural(n, "option", "options"),
   trouble: {
@@ -66,7 +70,7 @@ export const TEXT = {
   /** @param {string} what @param {string} where */
   failedAlert: (what, where) => `Failed in ${where}: ${what}`,
   /** @param {number} c @param {string} command */
-  suggestChip: (c, command) => `Context ${Math.round(c)}%: ${command}`,
+  suggestChip: (c, command) => `${contextAt(c)} · ${command}`,
   chips: {
     /** @param {number} n @param {number} failed */
     agents: (n, failed) => `${plural(n, "agent", "agents")}${failed ? ` · ${failed} failed` : ""}`,
@@ -76,8 +80,8 @@ export const TEXT = {
     live: (n) => `${n} live`,
     more: "More",
   },
-  /** @param {string} label @param {number} v */
-  planChip: (label, v) => `${label} ${Math.round(v)}%`,
+  /** @param {string} label @param {number} v @param {string} at when it resets, as a clock time */
+  planChip: (label, v, at) => `${label} limit ${Math.round(v)}%${at ? ` · resets ${at}` : ""}`,
   kinds: { question: "Question", permission: "Permission", waiting: "Your turn", decision: "Decision", dismissed: "Dismissed", result: "Result", failed: "Failed" },
   /** @param {string} t */
   askedAt: (t) => `Asked at ${t}`,
@@ -181,6 +185,8 @@ export const TEXT = {
     workingFor: (t) => (t && t !== NOW ? `Working for ${t}` : "Working"),
     /** @param {number} n */
     agentsAtWork: (n) => `Its turn ended; ${n === 1 ? "1 agent is" : `${n} agents are`} still at work`,
+    /** Its agents not finished, of which `failed` failed. @param {number} n @param {number} failed */
+    agentsLeft: (n, failed) => [n - failed && `${n - failed} still running`, failed && `${failed} failed`].filter(Boolean).join(" · "),
     session: "Session",
     you: "You",
     youDesk: "You, from the desk",
@@ -217,8 +223,7 @@ export const TEXT = {
   failedAgent: "failed",
   /** @param {string} t */
   idleSince: (t) => `idle since ${t}`,
-  /** @param {number} c */
-  context: (c) => `context ${Math.round(c)}%`,
+  context: contextAt,
   /** @param {string} t @param {number} done @param {number} failed */
   sinceSummary: (t, done, failed) => `Since ${t}: ${counts(done, failed)}.`,
   /** @param {number} done @param {number} failed */
@@ -230,7 +235,7 @@ export const TEXT = {
   /** @param {string} free @param {string} projects */
   disk: (free, projects) => `Disk: ${free} free (${projects})`,
   /** @param {string} where @param {number} c */
-  contextWarn: (where, c) => `${where}: context at ${Math.round(c)}%`,
+  contextWarn: (where, c) => `${where}: ${contextAt(c)}`,
   /** @param {string} label @param {string} full @param {string} reset */
   limitForecast: (label, full, reset) => `${label} limit: full in about ${full} at this pace, resets in ${reset}`,
   /** @param {number} n */
@@ -299,7 +304,7 @@ export const TEXT = {
   slider: "Slider",
   sideBySide: "Side by side",
   zoomHint: "Click an image to zoom",
-  zoomHintTouch: "Tap a picture to zoom",
+  zoomHintTouch: "Tap an image to zoom",
   assumed: "What the agent assumed",
   taste: "Taste decisions",
   criteria: "Acceptance criteria",
@@ -314,12 +319,13 @@ export const TEXT = {
   /** @param {string} t */
   cacheLeft: (t) => `${t} left`,
   cacheExpired: "expired",
+  underMinute: "< 1 min",
   /** @param {string} m */
-  mode: (m) => `permissions ${m}`,
+  mode: (m) => `permission mode: ${m}`,
   /** @param {number} n */
   shells: (n) => plural(n, "background shell", "background shells"),
   /** @param {number} v */
-  cost: (v) => `US$${v.toFixed(2)}`,
+  cost: (v) => `$${v.toFixed(2)}`,
   /** @param {number} n */
   tokens: (n) => `${n >= 1000 ? `${Math.round(n / 1000)}k` : n} tokens`,
   noAgents: "No agents recorded.",
@@ -328,7 +334,7 @@ export const TEXT = {
   unnamed: "session",
   history: {
     title: "History",
-    search: "Search questions, answers and results",
+    search: "Search history",
     all: "All",
     decisions: "Decisions",
     results: "Results",
@@ -349,5 +355,5 @@ export const TEXT = {
     submit: "Unlock",
     noConnection: "Can't reach the desk: check this device's connection and Tailscale, then try again.",
   },
-  zoom: { in: "Zoom in", out: "Zoom out", fit: "Fit", previous: "Previous picture (←)", next: "Next picture (→)" },
+  zoom: { in: "Zoom in", out: "Zoom out", fit: "Fit", previous: "Previous image (←)", next: "Next image (→)" },
 };
