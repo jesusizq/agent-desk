@@ -1303,6 +1303,31 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("!document.getElementById('session').open");
   });
 
+  it("keeps a session's and a result's window whole while it slides or fades out", async () => {
+    /** Closes a window and measures it in the first frame of its way out: its body as wide as it is, under its head. */
+    const closing = (page: Page, id: string) =>
+      page.eval<Record<string, boolean>>(`(async () => {
+        const d = document.getElementById('${id}');
+        d.close();
+        await new Promise(requestAnimationFrame);
+        // Layout sizes, which its transform on the way out does not scale.
+        const [head, body] = [d.querySelector('.dhead'), d.querySelector('.dbody')];
+        return { leaving: getComputedStyle(d).display !== 'none', bodyFull: Math.abs(body.offsetWidth - d.clientWidth) <= 1, bodyUnderHead: body.offsetTop >= head.offsetTop + head.offsetHeight - 1, headOnTop: head.offsetTop <= 1 };
+      })()`);
+    const whole = { leaving: true, bodyFull: true, bodyUnderHead: true, headOnTop: true };
+    for (const [width, height] of [[1400, 900], [390, 844]] as const) {
+      const page = await open(width, height);
+      if (width < 700) await page.click(".tabbar button", "Sessions");
+      await page.click(".scard", "checkout redesign");
+      await page.waitFor(arrived("session"));
+      assert.deepEqual(await closing(page, "session"), whole, `the session's window at ${width} px`);
+      await page.waitFor("!document.querySelector('dialog[open]') && !document.getAnimations().length");
+      await openResultOf(page, "Checkout: before and after");
+      assert.deepEqual(await closing(page, "result"), whole, `the result's window at ${width} px`);
+      await page.waitFor("!document.querySelector('dialog[open]')");
+    }
+  });
+
   it("on a phone, each tab keeps its scroll, and a tap on the tab shown goes back to its top", async () => {
     const page = await open(390, 600);
     await page.click(".tabbar button", "Sessions");

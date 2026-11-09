@@ -233,7 +233,9 @@ dialog.sess { width: min(1180px, 94vw); height: min(92vh, 1000px); max-height: 9
 .dbody { padding: 16px 18px 24px; overflow: auto; }
 dialog.result .dbody { max-height: calc(92vh - 70px); }
 /* The panel's body fills the height under its head, so the answer box sits on the bottom edge. */
-dialog.sess[open] { display: flex; flex-direction: column; }
+/* The column holds without [open] too: while closing, the display transition keeps it flex until the end. */
+dialog.sess { flex-direction: column; }
+dialog.sess[open] { display: flex; }
 dialog.sess .dhead { flex: none; }
 dialog.sess .dbody { flex: 1 1 auto; min-height: 0; }
 .viewer { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
@@ -804,7 +806,8 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 
   /* Dialogs fill the screen; the head stays, the body scrolls. */
   dialog.result, dialog.sess { margin: 0; inset: var(--viewport-top, 0px) 0 auto; width: 100%; max-width: 100%; height: var(--viewport-height, 100dvh); max-height: var(--viewport-height, 100dvh); border-radius: 0; }
-  dialog.result[open], dialog.sess[open] { display: flex; flex-direction: column; }
+  dialog.result, dialog.sess { flex-direction: column; }
+  dialog.result[open], dialog.sess[open] { display: flex; }
   /* A session or result is a screen pushed in from the right, opaque all the way, and back out the same way. */
   dialog.result, dialog.sess { opacity: 1; }
   dialog.result:not([open]), dialog.sess:not([open]) { transform: translateX(100%); }
