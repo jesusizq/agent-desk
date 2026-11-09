@@ -67,7 +67,7 @@ export function onKept(fresh, fn) {
  * by tag and first class. Out of the page even for a moment, the box being typed in would lose what
  * iOS's keyboard holds for it (the autocorrect's context and the paste menu): a kept node never leaves.
  * Children marked `data-leaving` (an exit still animating, motion.js) are left alone, and so are those
- * marked `data-visitor`: another part of the page put them there (app.js's arrival bubble, over a window).
+ * marked `data-visitor`: another part of the page put them there (the arrival bubble of arrivals.js, over a window).
  * @param {Element} root @param {Child[]} kids
  */
 export function patch(root, ...kids) {
@@ -171,7 +171,7 @@ function move(parent, node, anchor) {
   if (field && (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) active.setSelectionRange(field.from, field.to);
 }
 
-// A text field's value is the developer's, and its height follows what is typed (app.js fits it).
+// A text field's value is the developer's, and its height follows what is typed (layout.js fits it).
 const FIELD_OWN = new Set(["value", "style"]);
 /** @type {Set<string>} */
 const NONE = new Set();

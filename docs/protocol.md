@@ -117,7 +117,7 @@ The server binds 127.0.0.1 and refuses any request whose `Host` is not `127.0.0.
 
 | Request | Purpose |
 | --- | --- |
-| `GET /` and `/app.js`, `/dom.js`, `/motion.js`, `/text.js`, `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
+| `GET /` and `/app.js` with the modules it imports (`src/web/*.js`, each listed in `STATIC`), `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
 | `GET /api/state` | `DeskState`: every record (a closed question without its context), plus `gone`, `listening`, `disk` and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |

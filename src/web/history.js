@@ -1,0 +1,118 @@
+// @ts-check
+// History: past decisions with their answers and past results, searchable.
+import { byId, h, icon } from "./dom.js";
+import { TEXT } from "./text.js";
+import { attachedImages } from "./conversation.js";
+import { dayLabel } from "./format.js";
+import { badge, emptyState } from "./pieces.js";
+import { openResult } from "./result.js";
+import { data, inProject, label, page, S, ui } from "./state.js";
+
+/** @typedef {import("../core/protocol.ts").DeskState} DeskState */
+/** @typedef {import("../core/protocol.ts").Result} Result */
+
+/** Every place `q` occurs in `text`, marked. @param {string} text @param {string} q */
+function highlight(text, q) {
+  if (!q) return text;
+  return text.split(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")).map((part, i) => (i % 2 ? h("mark", {}, part) : part));
+}
+/**
+ * @typedef {{ at: string, sid: string, type: "decision" | "result", kind: keyof typeof TEXT.kinds,
+ *   title: string, answer?: string, viaDesk?: boolean, images?: string[], note?: string, result?: Result, where: string, hay: string }} Entry
+ */
+// History draws this many entries at first, and this many more on demand: a search redraws only those.
+const HISTORY_PAGE = 50;
+/** @type {{ from: DeskState | null, entries: Entry[] }} the entries of the data last drawn, newest first, each with the text a search looks in */
+let historyMemo = { from: null, entries: [] };
+function historyEntries() {
+  if (historyMemo.from === data) return historyMemo.entries;
+  /** @type {Omit<Entry, "where" | "hay">[]} */
+  const decisions = data.questions
+    .filter((x) => x.status !== "open")
+    .map((x) => ({
+      at: x.closedAt ?? x.askedAt,
+      sid: x.sessionId,
+      type: "decision",
+      kind: x.status === "dismissed" ? "dismissed" : x.kind === "permission" ? "permission" : "decision",
+      title: x.text,
+      ...(x.answer ? { answer: x.answer.text, viaDesk: x.answer.via === "desk", images: x.answer.images ?? [] } : {}),
+      ...(x.interpretation ? { note: x.interpretation } : {}),
+    }));
+  /** @type {Omit<Entry, "where" | "hay">[]} */
+  const results = data.results.map((r) => ({ at: r.at, sid: r.sessionId, type: "result", kind: r.status === "failed" ? "failed" : "result", title: r.title, note: r.summary, result: r }));
+  const entries = [...decisions, ...results]
+    .map((e) => {
+      const where = label(S(e.sid));
+      return { ...e, where, hay: [e.title, e.answer, e.note, where].join(" ").toLowerCase() };
+    })
+    .sort((a, b) => b.at.localeCompare(a.at));
+  historyMemo = { from: data, entries };
+  return entries;
+}
+/** Redraws the view once per frame however many keys were typed in it. */
+let viewFrame = 0;
+function renderViewSoon() {
+  viewFrame ||= requestAnimationFrame(() => {
+    viewFrame = 0;
+    page.renderView();
+  });
+}
+export function historyView() {
+  const q = ui.hq.trim();
+  const t = TEXT.history;
+  const needle = q.toLowerCase();
+  const entries = historyEntries().filter((e) => inProject(e.sid) && (ui.hfilter === "all" || e.type === ui.hfilter) && (!needle || e.hay.includes(needle)));
+  const shown = entries.slice(0, Math.max(ui.hshown, HISTORY_PAGE));
+  const input = h("input", {
+    type: "search",
+    value: ui.hq,
+    placeholder: t.search,
+    "aria-label": t.search,
+    "data-key": "history-search",
+    oninput: (e) => {
+      ui.hq = /** @type {HTMLInputElement} */ (e.target).value;
+      /** @type {HTMLInputElement} */ (byId("q")).value = ui.hq;
+      ui.hshown = 0;
+      renderViewSoon();
+    },
+  });
+  return h(
+    "div",
+    { class: "page", "data-scroll": "history" },
+    h(
+      "div",
+      { class: "wrap" },
+      h("h1", { class: "title" }, t.title),
+      h("div", { class: "hsearch" }, h("label", { class: "search" }, icon("search"), input), h("div", { class: "seg" }, (/** @type {const} */ ([["all", t.all], ["decision", t.decisions], ["result", t.results]])).map(([k, l]) => h("button", { "aria-pressed": String(ui.hfilter === k), onclick: () => ((ui.hfilter = k), page.render()) }, l)))),
+      entries.length ? h("div", { class: "faint hcount" }, t.entries(entries.length)) : null,
+      entries.length
+        ? h("div", { class: "hlist" }, shown.map((e) => {
+            const open = e.result;
+            return h(
+              open ? "button" : "div",
+              { class: `hitem${open ? " open" : ""}`, onclick: open ? () => openResult(open) : null },
+              h("div", { class: "hwhen" }, dayLabel(e.at)),
+              h(
+                "div",
+                {},
+                h("div", { class: "meta" }, badge(e.kind), highlight(e.where, q)),
+                h("div", { class: "hq" }, highlight(e.title, q)),
+                e.answer !== undefined ? h("div", { class: "ha" }, t.answer, h("b", {}, highlight(e.answer, q)), e.viaDesk ? t.viaDesk : "") : null,
+                e.images?.length ? attachedImages(e.images) : null,
+                e.note ? h("div", { class: "hi" }, e.type === "decision" ? t.understood : "", highlight(e.note, q)) : null,
+              ),
+            );
+          }))
+        : emptyState("no-history", t.none(q)),
+      entries.length > shown.length ? h("button", { class: "linkish hmore", onclick: () => ((ui.hshown = shown.length + HISTORY_PAGE), page.renderView()) }, t.more(Math.min(HISTORY_PAGE, entries.length - shown.length))) : null,
+    ),
+  );
+}
+
+/** The typing carries on in History's own box, the header's being hidden there. */
+export function focusHistorySearch() {
+  const box = document.querySelector('[data-key="history-search"]');
+  if (!(box instanceof HTMLInputElement)) return;
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+}

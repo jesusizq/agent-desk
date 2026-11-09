@@ -337,7 +337,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 @keyframes tin { from { opacity: 0; transform: translateY(var(--toast-from, 6px)); } }
 .toast.leaving { opacity: 0; transform: translateY(calc(var(--toast-from, 6px) * .66)); transition: opacity var(--dur-2) ease-in, transform var(--dur-2) ease-in; }
 /* A question that came out of sight: a small bubble at the screen's edge, answered there or taken to Needs you.
-   Over a window it comes from the top, under the window's head (app.js measures it), clear of its title and of the box at its foot. */
+   Over a window it comes from the top, under the window's head (arrivals.js measures it), clear of its title and of the box at its foot. */
 .arrival { position: fixed; inset: auto 18px 46px auto; margin: 0; width: min(380px, calc(100vw - 36px)); max-height: min(72vh, 640px);
   overflow: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px; padding: 11px 12px 12px 16px;
   color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: inset 3px 0 0 var(--accent), var(--shadow-lg); }
@@ -505,7 +505,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   .col-needs > :is(.col-head, .col-body) { padding-inline: max(8px, calc((100% - 864px) / 2)); }
   /* The head and foot reserve the list's scrollbar gutter too, whatever its width here, so all three share one right edge. */
   :is(.col-head, .col-foot) { overflow: hidden; scrollbar-gutter: stable; }
-  /* A list cut by its scroll area fades at the edge that hides more (app.js sets data-cut). */
+  /* A list cut by its scroll area fades at the edge that hides more (layout.js sets data-cut). */
   [data-cut] { --fade-dir: to bottom; --fade-a: 0px; --fade-b: 0px;
     -webkit-mask-image: linear-gradient(var(--fade-dir), transparent, #000 var(--fade-a), #000 calc(100% - var(--fade-b)), transparent);
     mask-image: linear-gradient(var(--fade-dir), transparent, #000 var(--fade-a), #000 calc(100% - var(--fade-b)), transparent); }
@@ -714,7 +714,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 /* Ending a session cannot be undone: set apart, in the colour of what stops. */
 .wt-actions .danger { color: var(--danger); }
 /* A control that asks for a second click: both labels in one cell, so its width never changes; armed, it is
-   filled and a line runs out over the 3 s it waits (ARM_MS in app.js). */
+   filled and a line runs out over the 3 s it waits (ARM_MS in control.js). */
 .arm { position: relative; overflow: hidden; }
 .arm-lbl { display: inline-grid; }
 .arm-lbl > * { grid-area: 1 / 1; justify-self: center; }
@@ -780,7 +780,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 
 /* ---------- Phones and touch: portrait (narrow) and landscape (short); desktop rules above stay as they are ---------- */
 .seg[hidden] { display: none; }
-.zstage { touch-action: none; } /* app.js pans and pinches the image itself */
+.zstage { touch-action: none; } /* zoom.js pans and pinches the image itself */
 #toasts { bottom: calc(46px + env(safe-area-inset-bottom)); }
 
 @media (max-width: 700px), (max-height: 500px) {
@@ -900,7 +900,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
     transition: transform var(--dur-2) var(--ease-out), visibility var(--dur-2); }
   .credits { display: none; }
   .menu .menu-credit { display: block; } /* outranks .menu-credit, written further down */
-  /* While the keyboard is up (app.js), the tab bar slides away under it. The page keeps its
+  /* While the keyboard is up (layout.js), the tab bar slides away under it. The page keeps its
      height, so what is under the finger stays; it only grows to scroll its foot above a keyboard that covers it. */
   :root[data-keyboard] body { padding-bottom: max(calc(var(--bar) + env(safe-area-inset-bottom)), calc(var(--keyboard, 0px) + 16px)); }
   :root[data-keyboard] .tabbar { transform: translateY(100%); visibility: hidden; }
@@ -938,7 +938,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   header.top::after { display: none; }
   header.top #projects { order: 7; flex: 1 1 0; max-width: fit-content; }
   header.top .spacer { display: none; }
-  /* The projects tried on the first row, beside the mark and the menus (app.js keeps this only when nothing wraps). */
+  /* The projects tried on the first row, beside the mark and the menus (header.js keeps this only when nothing wraps). */
   header.top.projects-up .brand { flex: none; font-size: 0; gap: 0; }
   header.top.projects-up #projects { order: 1; flex: none; margin-right: auto; }
   header.top.projects-up::before { display: none; }
@@ -981,7 +981,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .tabbar button { min-height: 40px; flex-direction: row; gap: 6px; }
   .tcount { position: static; }
 }
-/* Short screen (landscape, or a phone with its keyboard up; app.js sets the attribute): the answer box stays
+/* Short screen (landscape, or a phone with its keyboard up; layout.js sets the attribute): the answer box stays
    compact so the conversation keeps room, and the session's chips give their line while typing. */
 /* Its own scroll would clip the box's focus ring: a few pixels of room on each side keep it whole. */
 :root[data-compact] .chat-footer { max-height: calc(var(--viewport-height, 100dvh) * .55); overflow-y: auto; padding-top: 6px; padding-inline: 3px; margin-inline: -3px; }
@@ -991,15 +991,15 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 :root[data-compact] .panel-question .qfull { display: none; }
 :root[data-compact] .chat-footer .answer .opts { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 :root[data-compact] .chat-footer .answer .opts button { flex: none; }
-/* The box takes what the foot's cap leaves (app.js measures the rest), so the foot never scrolls the Send button away. */
+/* The box takes what the foot's cap leaves (layout.js measures the rest), so the foot never scrolls the Send button away. */
 :root[data-compact] .chat-footer .answer textarea { max-height: min(calc(var(--viewport-height, 100dvh) * .3), calc(var(--viewport-height, 100dvh) * .55 - var(--footer-rest, 0px))); }
 :root[data-keyboard] dialog.sess .pchips { display: none; }
 /* The keyboard covers the home indicator: the box sits right on the keyboard. */
 :root[data-keyboard] .chat-footer { padding-bottom: 8px; }
 /* Over a window or above a keyboard, the bottom is where the box being typed in is: toasts come from the top
-   (app.js picks the edge as the first toast shows, and keeps it until the last one leaves). */
+   (pieces.js picks the edge as the first toast shows, and keeps it until the last one leaves). */
 #toasts[data-edge="top"] { top: calc(var(--viewport-top, 0px) + max(12px, env(safe-area-inset-top))); bottom: auto; --toast-from: -6px; }
-/* On a phone a window fills the screen: its toasts come in under its head (app.js measures it), never over its title and buttons. */
+/* On a phone a window fills the screen: its toasts come in under its head (pieces.js measures it), never over its title and buttons. */
 @media (max-width: 700px), (max-height: 500px) {
   #toasts[data-edge="top"] { top: max(calc(var(--viewport-top, 0px) + max(12px, env(safe-area-inset-top))), calc(var(--dialog-head, 0px) + 8px)); }
 }
