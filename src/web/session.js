@@ -7,9 +7,9 @@ import { agentRows, agentsPart, sessionAgents, sessionQuiet } from "./agents.js"
 import { askBody, replyBox } from "./answer.js";
 import { controlSection, forgetButton } from "./control.js";
 import { conversationView, loadConversation, outgoingView } from "./conversation.js";
-import { ago, clockAt, duration, gb, stamp } from "./format.js";
+import { ago, duration, gb, stamp } from "./format.js";
 import { fitNewBoxes, showNeedsYou } from "./layout.js";
-import { badge, bar, dialogHead, dot, goLink, LOCAL_URL, localLink, suggestionChip, where } from "./pieces.js";
+import { badge, bar, dialogHead, dot, goLink, LOCAL_URL, localLink, planGauge, suggestionChip, where } from "./pieces.js";
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
 import { imageUrl, offlineNotice, offlineText, post, run } from "./server.js";
@@ -53,7 +53,7 @@ function panelChips(s, m) {
     s.state === "ended" || data.gone.includes(s.id) ? [h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone), forgetButton(s, () => redrawPanel(s.id), "chip")] : null,
     failed ? agents : null,
     m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
-    (m?.planWindows ?? []).map((w) => h("span", { class: "chip", title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, bar(w.percent), TEXT.planChip(w.label, w.percent, w.resetsAt ? clockAt(w.resetsAt) : ""))),
+    (m?.planWindows ?? []).map((w) => planGauge(w, "chip")),
     failed ? null : agents,
     results ? unfold("results", TEXT.chips.results(results)) : null,
     services ? unfold("services", TEXT.chips.live(services)) : null,

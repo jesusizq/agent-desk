@@ -5,9 +5,9 @@ import { TEXT } from "./text.js";
 import { agentDoing, agentDot, agentQuiet, failedInARow, failing, failingTip, sessionAgents, sessionDot, sessionQuiet, troubleText } from "./agents.js";
 import { askBody, decisionOf } from "./answer.js";
 import { forgetButton } from "./control.js";
-import { ago, clockAt, color, firstLine, headline, heat, hm, stamp } from "./format.js";
+import { ago, color, firstLine, headline, heat, hm, stamp } from "./format.js";
 import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
-import { badge, bar, beacon, dot, emptyState, goLink, LOCAL_URL, localLink, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
+import { badge, bar, beacon, dot, emptyState, goLink, LOCAL_URL, localLink, planGauge, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
 import { openResult } from "./result.js";
 import { imageUrl, post, run } from "./server.js";
 import { openSession, resultRow } from "./session.js";
@@ -229,9 +229,9 @@ const sessionWeight = (s) =>
  * asks, which of its agents fail or have gone quiet — or else what it does now; its agents counted.
  * Rich, when the sessions have the room (a quiet desk, a phone's Sessions tab): what it does now,
  * then each agent on its row with its state, and its context, plan, live previews, model and branch.
- * @param {Session} s @param {boolean} rich
+ * @param {Session} s @param {boolean} rich @param {boolean} [planInHead] the plan windows stand once in the column's head instead
  */
-function sessionCard(s, rich) {
+function sessionCard(s, rich, planInHead = false) {
   const as = sessionAgents(s.id);
   const asks = asksOf(s.id).sort((a, b) => a.askedAt.localeCompare(b.askedAt));
   const asking = asks[0];
@@ -290,7 +290,7 @@ function sessionCard(s, rich) {
     shown.length && !rich ? null : quietLine(s),
     matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
     rich ? agentLines(as) : working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
-    rich ? workLine(s, m) : m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
+    rich ? workLine(s, m, planInHead) : m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
     // Its own click: not the card's, which opens the session.
     isLive(s) ? null : h("div", { class: "s-actions", onclick: stopClick }, forgetButton(s, () => page.renderView(), "secondary")),
   );
@@ -325,10 +325,10 @@ function agentLines(as) {
 
 /**
  * What a session runs on, in one wrapping line: its context (with the command it calls for), its plan
- * windows, its live previews, its model and branch. Each part only when its provider reports it.
- * @param {Session} s @param {Metrics | undefined} m
+ * windows unless the column's head shows them, its live previews, its model and branch. Each part only
+ * when its provider reports it. @param {Session} s @param {Metrics | undefined} m @param {boolean} planInHead
  */
-function workLine(s, m) {
+function workLine(s, m, planInHead) {
   const ctx = m?.contextPercent;
   const services = data.services.filter((v) => v.sessionId === s.id);
   const where = [[m?.model, m?.effort].filter(Boolean).join(" · "), m?.branch].filter(Boolean).join(" · ");
@@ -336,7 +336,7 @@ function workLine(s, m) {
     ctx !== undefined || m?.suggestion
       ? h("span", { class: "s-gauge" }, ctx !== undefined ? bar(ctx) : null, m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : TEXT.context(ctx ?? 0))
       : null,
-    ...(m?.planWindows ?? []).map((w) => h("span", { class: "s-gauge", title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, bar(w.percent), TEXT.planChip(w.label, w.percent, w.resetsAt ? clockAt(w.resetsAt) : ""))),
+    ...(planInHead ? [] : (m?.planWindows ?? []).map((w) => planGauge(w, "s-gauge"))),
     // A preview opens in its own tab, not the session.
     ...services.map((v) => h("span", { class: "s-live", title: TEXT.svcSince(ago(v.startedAt)), onclick: stopClick }, h("span", { class: "up" }), localLink(v.url, `${v.name} ${v.url.replace(LOCAL_URL, "")}`))),
     where ? h("span", { class: "s-where", title: where }, where) : null,
@@ -364,10 +364,13 @@ function sessionsColumn(rich, quiet) {
   const legend = h("div", { class: "legend" }, LEGEND.map((st) => h("span", {}, dot(st), TEXT.state[st])));
   const working = list.filter((s) => s.state === "working").length;
   const agents = data.agents.filter((a) => a.state === "working" && list.some((s) => s.id === a.sessionId)).length;
-  return column("sessions", list.length, list.length ? h("div", { class: `slist${rich ? " rich" : ""}`, "data-list": true }, list.map((s) => sessionCard(s, rich))) : emptyState("no-sessions", TEXT.emptyRunning), {
+  // Every session reports the same account's plan windows: a quiet desk shows them once, from the latest report.
+  const plan = quiet ? list.map((s) => metricsOf(s.id)).filter((m) => m?.planWindows?.length).sort((a, b) => (b?.at ?? "").localeCompare(a?.at ?? ""))[0]?.planWindows : undefined;
+  const aside = [quiet && (working || agents) ? h("span", { class: "faint" }, TEXT.quiet.sessionsAside(working, agents)) : null, ...(plan ?? []).map((w) => planGauge(w, "s-gauge"))].filter(Boolean);
+  return column("sessions", list.length, list.length ? h("div", { class: `slist${rich ? " rich" : ""}`, "data-list": true }, list.map((s) => sessionCard(s, rich, quiet))) : emptyState("no-sessions", TEXT.emptyRunning), {
     foot: legend,
     quiet: true,
-    aside: quiet && (working || agents) ? h("span", { class: "faint" }, TEXT.quiet.sessionsAside(working, agents)) : null,
+    aside: aside.length ? aside : null,
   });
 }
 

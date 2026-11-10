@@ -1288,6 +1288,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     }
     const box = (page: Page, sel: string) => page.eval<{ top: number; bottom: number; left: number; right: number; height: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; })()`);
     const checkout = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('checkout redesign'))`;
+    // The rich cards' agent marks: their sizes, goals that start where the session's name does, marks centred on the goal's line.
+    const agentMarks = (page: Page) =>
+      page.eval<{ sizes: number[]; left: boolean; centred: boolean }>(`(() => {
+        const rows = [...document.querySelectorAll('.scard.rich .s-agent')];
+        const near = (a, b) => Math.abs(a - b) < 1;
+        return {
+          sizes: [...new Set(rows.map((r) => r.querySelector('.dot').getBoundingClientRect().width))],
+          left: rows.every((r) => near(r.querySelector('.s-agent-t').getBoundingClientRect().left, r.closest('.scard').querySelector('.sname').getBoundingClientRect().left)),
+          centred: rows.every((r) => { const d = r.querySelector('.dot').getBoundingClientRect(); const g = r.querySelector('b').getBoundingClientRect(); return near(d.top + d.height / 2, g.top + g.height / 2); }),
+        };
+      })()`);
 
     it("shrinks Needs you to one line and gives the centre to the sessions, with what each does now, its agents and what it runs on", async () => {
       const page = await openQuiet();
@@ -1318,8 +1329,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.deepEqual(await page.eval<string[]>(`[...${checkout}.querySelectorAll('.s-agent-at')].map((t) => t.textContent.replace(/\\d+/g, "N"))`), ["took N h N min", "N min", "N min", "N min", "took N h N min"]);
       assert.equal(await page.eval<number>(`${checkout}.querySelectorAll('.s-bad').length`), 0, "a failed or blocked agent says why on its own row, not twice");
       assert.equal(await page.eval<boolean>(`${checkout}.querySelector('.s-agent').classList.contains('failed')`), true);
+      assert.deepEqual(await agentMarks(page), { sizes: [14], left: true, centred: true }, "each agent's mark at the card's size, its goal under the session's name");
       const work = await page.eval<string>(`${checkout}.querySelector('.s-work').textContent`);
-      assert.match(work, /Context 71%.*5 h limit 42% · resets \d\d:\d\d.*vite dev :5173.*storybook :6006.*Opus 5\.5 · high · feat\/checkout-mobile/);
+      assert.match(work, /Context 71%.*vite dev :5173.*storybook :6006.*Opus 5\.5 · high · feat\/checkout-mobile/);
+      assert.equal(await page.eval<boolean>("[...document.querySelectorAll('.scard .s-work')].some((w) => w.textContent.includes('limit'))"), false, "no card repeats the plan windows");
+      assert.match(
+        await page.eval<string>("[...document.querySelectorAll('.col-sessions .col-head .s-gauge')].map((g) => (g.querySelector('.mini') ? '[bar] ' : '') + g.textContent).join(' | ')"),
+        /^\[bar\] 5 h limit 42% · resets \d\d:\d\d$/,
+        "the account's plan windows, once in the Sessions head, each with its bar",
+      );
       assert.equal(await page.eval<string>(`${checkout}.querySelector('.s-live a').getAttribute('href')`), "http://localhost:5173");
       // A preview opens in its own tab: a click beside its link does not open the session.
       await page.eval(`${checkout}.querySelector('.s-live').click()`);
@@ -1379,6 +1397,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.waitFor("document.querySelector('.col-sessions').getClientRects().length");
       assert.equal(await page.eval<number>("document.querySelectorAll('.scard.rich').length"), 3);
       assert.equal(await page.eval<number>(`${checkout}.querySelectorAll('.s-agent').length`), 5);
+      assert.deepEqual(await agentMarks(page), { sizes: [14], left: true, centred: true }, "on its own line, the goal keeps its mark centred on it");
       assert.equal(await page.eval<number>("document.documentElement.scrollWidth"), 390, "nothing overflows sideways");
       await page.click(".tabbar button", "To review");
       assert.equal(await page.eval<boolean>("!document.querySelector('.rearlier') && !!document.querySelector('.col-review .empty')"), true, "To review as before: nothing new, and the way to earlier results");

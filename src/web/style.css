@@ -215,17 +215,20 @@ body.resizing { cursor: col-resize; user-select: none; }
 .slist.rich > .scard { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; gap: 6px; }
 .scard.rich > :is(.s-ask, .s-bad, .s-more, .quiet-line) { padding-left: 0; }
 .s-agents { display: flex; flex-direction: column; padding-top: 4px; border-top: 1px solid var(--border); }
-.s-agent { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 0; font-size: 0.8125rem; }
-.s-agent > .live, .s-agent > .dot { justify-self: center; }
+/* Each agent's mark at the card's size, under the session's own, so its goal lines up with the session's name. */
+.s-agent { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 0; font-size: 0.8125rem; }
 .s-agent-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .s-agent-t b { font-weight: 600; }
 .s-agent-t small { margin-left: 6px; font-size: 0.75rem; color: var(--faint); }
 .s-agent.failed small { color: var(--danger); }
 .s-agent-at { color: var(--faint); font-size: 0.75rem; white-space: nowrap; }
-.s-agents > .s-more { padding: 2px 0 0 19px; }
+.s-agents > .s-more { padding: 2px 0 0 21px; }
 .s-work { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); }
 .s-work > span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .s-work .chip { font-size: 0.75rem; }
+/* A quiet desk's plan windows, once for every session, in the Sessions head. */
+.col-sessions .head-aside { display: inline-flex; align-items: center; gap: 14px; color: var(--muted); }
+.head-aside .s-gauge { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .s-live a { color: var(--accent); text-decoration: none; }
 .s-live a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .s-live .up { margin-right: 0; }
@@ -897,7 +900,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .scard .mini { width: 34px; }
   /* On a phone, what a rich card's agent does takes its own line under its goal, rather than being cut to a word. */
   .s-agent { align-items: start; }
-  .s-agent > :is(.live, .dot) { margin-top: 3px; }
+  .s-agent > :is(.live, .dot) { margin-top: calc((1lh - 14px) / 2); }
   .s-agent-t { display: flex; flex-direction: column; }
   .s-agent-t > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .s-agent-t small { margin-left: 0; }

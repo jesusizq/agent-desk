@@ -3,11 +3,12 @@
 import { byId, h, icon } from "./dom.js";
 import { grow } from "./motion.js";
 import { TEXT } from "./text.js";
-import { color, heat, providerMark } from "./format.js";
+import { ago, clockAt, color, heat, providerMark } from "./format.js";
 import { CONTEXT_WARN, ID, label, ON_THIS_MACHINE, sessionName } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Metrics} Metrics */
+/** @typedef {import("../core/protocol.ts").PlanWindow} PlanWindow */
 /** @typedef {import("./dom.js").Child} Child */
 /** @typedef {import("./state.js").DotState} DotState */
 
@@ -48,6 +49,9 @@ export function bar(v) {
   fill.style.width = `${Math.min(100, Math.max(0, v))}%`;
   return h("span", { class: `mini${v >= CONTEXT_WARN ? " warn" : ""}` }, fill);
 }
+/** A plan window: how full it is, and when it resets. @param {PlanWindow} w @param {string} cls */
+export const planGauge = (w, cls) =>
+  h("span", { class: cls, title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, bar(w.percent), TEXT.planChip(w.label, w.percent, w.resetsAt ? clockAt(w.resetsAt) : ""));
 /** @param {string} msg */
 export function toast(msg) {
   const box = byId("toasts");
