@@ -189,7 +189,6 @@ export const TEXT = {
   /** @param {string} t how long ago its turn ended */
   waitingForYou: (t) => `Waiting for you${t && t !== NOW ? ` · ${t}` : ""}`,
   /** @param {string} t */
-  awaiting: (t) => `Finished${t === NOW ? " just now" : t ? ` ${t} ago` : ""} · waiting for your next instruction`,
   details: "Details",
   conversation: {
     whileWorking: "sent while it worked",

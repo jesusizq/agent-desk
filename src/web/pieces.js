@@ -4,7 +4,7 @@ import { byId, h, icon } from "./dom.js";
 import { grow } from "./motion.js";
 import { TEXT } from "./text.js";
 import { ago, clockAt, color, heat, providerMark } from "./format.js";
-import { CONTEXT_WARN, ID, label, ON_THIS_MACHINE, sessionName } from "./state.js";
+import { CONTEXT_WARN, ID, label, ON_THIS_MACHINE, projectColor, sessionName } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Metrics} Metrics */
@@ -31,7 +31,7 @@ export function tagIcon(c) {
 }
 /** A project's tag and name, both in the project's colour. @param {string} name @param {string} [cls] */
 export function projectMark(name, cls = "pname") {
-  const c = color(name);
+  const c = projectColor(name);
   const n = h("span", { class: cls }, name);
   n.style.setProperty("--g", c);
   return [tagIcon(c), n];

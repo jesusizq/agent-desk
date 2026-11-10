@@ -10,8 +10,26 @@ const PALETTE = ["#6366f1", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#84cc16
 /** The first line of a message, without Markdown markers. @param {string} text */
 export const firstLine = (text) => (text.split("\n").map((l) => l.trim()).find(Boolean) ?? "").replace(/^(?:#+|[-*>]|\d+[.)])\s+/, "").replace(/\*\*|`/g, "");
 
+/** Where a text's colour falls in the palette, the same on every device. @param {string} text */
+const slotOf = (text) => [...text].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7) % PALETTE.length;
 /** @param {string} text */
-export const color = (text) => PALETTE[[...text].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7) % PALETTE.length] ?? "#6366f1";
+export const color = (text) => PALETTE[slotOf(text)] ?? "#6366f1";
+/**
+ * Distinct colours for names seen in this order: each keeps its own slot, or takes the next one free, so
+ * two projects share a colour only once the palette runs out. @param {string[]} names oldest first
+ */
+export function distinctColors(names) {
+  /** @type {Map<string, string>} */
+  const colors = new Map();
+  const taken = new Set();
+  for (const name of names) {
+    let slot = slotOf(name);
+    for (let tries = 0; taken.has(slot) && tries < PALETTE.length; tries++) slot = (slot + 1) % PALETTE.length;
+    taken.add(slot);
+    colors.set(name, PALETTE[slot] ?? "#6366f1");
+  }
+  return colors;
+}
 /** @param {string} iso */
 export const hm = (iso) => new Date(iso).toTimeString().slice(0, 5);
 /** @param {string} iso @param {number} [to] */

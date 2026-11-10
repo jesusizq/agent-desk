@@ -1,5 +1,6 @@
 // @ts-check
 // What the page knows: the desk's state as last fetched, the page's own state, and the lookups on them.
+import { color, distinctColors } from "./format.js";
 import { TEXT } from "./text.js";
 
 /** @typedef {import("../core/protocol.ts").DeskState} DeskState */
@@ -50,10 +51,18 @@ export const secret = document.querySelector('meta[name="agent-desk-secret"]')?.
 
 /** @type {DeskState} */
 export let data = { sessions: [], questions: [], agents: [], results: [], services: [], metrics: [], seen: undefined, problems: [], now: new Date().toISOString(), gone: [], listening: [], disk: [], planForecasts: [], projects: [], build: "" };
+/** @type {Map<string, string>} */
+let projectColors = new Map();
 /** @param {DeskState} next */
 export function setData(next) {
   data = next;
+  // Projects keep their colour as new ones arrive: the oldest session of each decides its turn.
+  const firstSeen = new Map();
+  for (const s of [...next.sessions].sort((a, b) => a.startedAt.localeCompare(b.startedAt))) if (!firstSeen.has(s.project.name)) firstSeen.set(s.project.name, s.startedAt);
+  projectColors = distinctColors([...firstSeen.keys()]);
 }
+/** A project's colour on the desk, different from every other project's while the palette lasts. @param {string} name */
+export const projectColor = (name) => projectColors.get(name) ?? color(name);
 
 export const ui = {
   view: /** @type {"desk" | "history"} */ ("desk"),

@@ -156,7 +156,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.notEqual(looping?.color, broken?.color, "only a failed agent is red");
     assert.equal(looping?.color, silent?.color, "calls failing in a row warn, as a quiet agent does");
     assert.equal(looping?.code, 0, "the failing call is not printed in the card");
-    assert.equal(looping?.tip, "Last failed: Bash: npm test -- --grep checkout", "it waits in the tooltip");
+    assert.equal(looping?.tip, "", "not even in a tooltip: the call stays in the session panel");
     const jobCard = cardOf("waiting on its build");
     assert.equal(await page.eval<number>(`${jobCard}.querySelectorAll('.s-bad').length`), 0, "a session waiting on its own job is not quiet");
     assert.equal(await page.eval<string>(`${jobCard}.querySelector('.s-l1 .dot').title`), "Waiting on its job");
@@ -732,6 +732,14 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.dismiss(q.id);
   });
 
+  it("gives two projects whose names hash alike colours of their own", async () => {
+    for (const [id, name] of [["hue-a", "psicolegalmente"], ["hue-b", "cooktops-ng"]] as const) store.upsertSession({ id, provider: "Test", project: { name, dir: `/home/demo/Projects/${name}` }, title: `colour of ${name}` });
+    const page = await open();
+    const colours = await page.eval<string[]>(`["psicolegalmente", "cooktops-ng"].map((n) => getComputedStyle([...document.querySelectorAll('#projects .pname, .scard .pname')].find((e) => e.textContent === n)).color)`);
+    assert.notEqual(colours[0], colours[1], `${colours[0]} and ${colours[1]}`);
+    for (const id of ["hue-a", "hue-b"]) store.updateSession(id, (s) => ({ ...s, state: "ended", endedAt: new Date().toISOString() }));
+  });
+
   it("marks a session unread back to the list, and opening it reads it again", async () => {
     store.upsertSession({ id: "come-back", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "come back later" });
     store.updateSession("come-back", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Here is the long report", at: new Date().toISOString() } }));
@@ -740,13 +748,13 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor(`${card}?.textContent.includes('New message')`);
     await page.click(".scard", "come back later");
     await page.waitFor(`document.querySelector('#session .dhead')?.textContent.includes('Mark unread')`);
-    await page.waitFor(`${card}?.textContent.includes('Seen')`);
+    await page.waitFor(`${card}?.textContent.includes('Waiting for you')`);
     assert.ok(store.getSession("come-back")?.readAt, "opened: read");
     await page.click("#session .dhead button", "Mark unread");
     await page.waitFor(`!document.getElementById('session').open && ${card}?.textContent.includes('New message')`);
     assert.equal(store.getSession("come-back")?.readAt, undefined);
     await page.click(".scard", "come back later");
-    await page.waitFor(`${card}?.textContent.includes('Seen')`);
+    await page.waitFor(`${card}?.textContent.includes('Waiting for you')`);
     await page.press("Escape");
   });
 

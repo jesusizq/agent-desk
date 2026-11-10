@@ -2,17 +2,17 @@
 // The desk: the inbox, the sessions and what to review, side by side, or one per tab on a phone.
 import { h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
-import { agentAge, agentDot, agentGist, agentQuiet, failedInARow, failing, failingTip, inTrouble, sessionAgents, sessionDot, sessionQuiet, spoken, stuckNote, troubleText } from "./agents.js";
+import { agentAge, agentDot, agentGist, agentQuiet, failedInARow, failing, inTrouble, sessionAgents, sessionDot, sessionQuiet, spoken, stuckNote, troubleText } from "./agents.js";
 import { askBody, decisionOf } from "./answer.js";
 import { forgetButton } from "./control.js";
-import { ago, color, firstLine, headline, heat, hm, stamp } from "./format.js";
+import { ago, firstLine, headline, heat, hm, stamp } from "./format.js";
 import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
 import { badge, bar, beacon, dot, emptyState, goLink, LOCAL_URL, localLink, planGauge, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
 import { openResult } from "./result.js";
 import { imageUrl, post, run } from "./server.js";
 import { baseBranchOf } from "./projects.js";
 import { openSession, resultRow } from "./session.js";
-import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, page, S, sessionName, toReview, ui, unread } from "./state.js";
+import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -266,11 +266,11 @@ function sessionCard(s, rich) {
   /** One line of trouble: red only for a failed agent, amber for one that may be stuck. @param {DotState} st @param {string} what @param {string} [tip] */
   const troubleLine = (st, what, tip) => h("div", { class: `s-bad${st === "failed" ? "" : " s-warn"}`, title: tip }, dot(st), h("span", {}, what));
   if (s.state !== "ended" && !isLive(s)) matters.push(troubleLine("idle", TEXT.goneAsking));
-  /** Calls failing in a row warn; the call itself waits in the tooltip (none on a rich card) and the session's agent rows. @param {Agent | Session} x @param {string} who */
-  const failLine = (x, who) => troubleLine("idle", [who, TEXT.failingCalls(failedInARow(x))].filter(Boolean).join(" · "), rich ? undefined : failingTip(x));
+  /** Calls failing in a row warn; the call itself stays in the session's panel, never on a card. @param {Agent | Session} x @param {string} who */
+  const failLine = (x, who) => troubleLine("idle", [who, TEXT.failingCalls(failedInARow(x))].filter(Boolean).join(" · "));
   // A rich card says each agent's trouble on the agent's own row, once.
   const listed = rich ? [] : as;
-  for (const a of listed.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a)}`));
+  for (const a of listed.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a, true)}`));
   if (failing(s)) matters.push(failLine(s, ""));
   for (const a of listed.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
   const quiet = sessionQuiet(s);
@@ -295,11 +295,11 @@ function sessionCard(s, rich) {
       { class: "s-l1" },
       asking ? dot("needs") : s.state === "working" || working ? sessionDot(s) : dot("done"),
       // The project names the session only while every project is shown; its colour stays.
-      h("span", { class: "sname", title: label(s) }, ui.project === null ? [projectMark(s.project.name, "pname sproj"), h("span", { class: "sep" }, "›")] : tagIcon(color(s.project.name)), h("b", {}, sessionName(s))),
+      h("span", { class: "sname", title: label(s) }, ui.project === null ? [projectMark(s.project.name, "pname sproj"), h("span", { class: "sep" }, "›")] : tagIcon(projectColor(s.project.name)), h("b", {}, sessionName(s))),
       h("span", { class: "s-meta num" }, [ctx !== undefined ? `${Math.round(ctx)}%` : "", ago(since)].filter(Boolean).join(" · ")),
     ),
     shown,
-    shown.length && !rich ? null : quietLine(s, rich),
+    shown.length && !rich ? null : quietLine(s),
     matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
     rich ? agentLines(as) : working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
     rich ? workLine(s, m) : m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
@@ -372,16 +372,15 @@ function workLine(s, m) {
 
 /**
  * What a session is up to, in one quiet line: what it said that is new, that it waits for instructions,
- * or what it does now. A rich card says it short, and leaves a tool call to the session panel.
- * @param {Session} s @param {boolean} rich
+ * or what it does now, in the session's words: a tool call stays in the session panel.
+ * @param {Session} s
  */
-function quietLine(s, rich) {
+function quietLine(s) {
   if (endedUnseen(s)) return h("div", { class: "quiet-line unread", title: s.lastMessage ? firstLine(s.lastMessage.text) : "" }, h("span", { class: "badge k-new" }, TEXT.endedAsking), s.lastMessage ? firstLine(s.lastMessage.text) : "");
   if (s.state === "waiting" && s.lastMessage && unread(s)) return h("div", { class: "quiet-line unread", title: firstLine(s.lastMessage.text) }, readBadge(s), firstLine(s.lastMessage.text));
-  if (s.state === "waiting" && rich) return h("div", { class: "quiet-line" }, TEXT.waitingForYou(s.lastMessage ? ago(s.lastMessage.at) : ""));
-  if (s.state === "waiting") return h("div", { class: "quiet-line" }, readBadge(s), TEXT.awaiting(s.lastMessage ? ago(s.lastMessage.at) : ""));
-  const now = rich ? spoken(s) : s.activity;
-  if (now) return h("div", { class: "quiet-line", title: now }, TEXT.sessionLine.now, " ", h("code", {}, now));
+  if (s.state === "waiting") return h("div", { class: "quiet-line" }, TEXT.waitingForYou(s.lastMessage ? ago(s.lastMessage.at) : ""));
+  const now = spoken(s);
+  if (now) return h("div", { class: "quiet-line", title: now }, TEXT.sessionLine.now, " ", now);
   return null;
 }
 /** "New message" until the developer opens the session, "Seen" after. @param {Session} s */
