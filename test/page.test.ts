@@ -13,6 +13,8 @@ import { PNG, serve, tempHome } from "./helpers.ts";
 
 const chrome = findChrome();
 /** Nothing on the page moving any more, but for the marks of work in progress, which turn for as long as the work goes on. */
+/** The session card whose text holds `text`, as an expression for page.eval. */
+const cardOf = (text: string) => `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes(${JSON.stringify(text)}))`;
 const STILL = "document.getAnimations().every((a) => a.effect?.getComputedTiming().iterations === Infinity)";
 if (!chrome && process.env.CI) throw new Error("no Chrome found: install one or set AGENT_DESK_CHROME");
 
@@ -82,7 +84,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.upsertSession({ id: "all-done", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "all agents done" });
     store.upsertAgent("all-done", "only", { goal: "One finished job", state: "done" });
     const page = await open();
-    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('all agents done'))`;
+    const card = cardOf("all agents done");
     await page.waitFor(card);
     assert.equal(await page.eval<boolean>(`!!${card}.querySelector('.s-l1 .live .st-working')`), true, "a working dot for the session");
     assert.match(await page.eval<string>(`${card}.querySelector('.s-l3').textContent`), /^1 done$/);
@@ -110,7 +112,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
   it("leaves a report that asks nothing out of Needs you, marked new on its session's card", async () => {
     store.upsertSession({ id: "report-only", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "nightly report", state: "waiting", lastMessage: { text: "Both builds are green; 8 agents still at work.", at: new Date().toISOString() } });
     const page = await open();
-    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('nightly report'))`;
+    const card = cardOf("nightly report");
     await page.waitFor(card);
     assert.match(await page.eval<string>(`${card}.querySelector('.quiet-line.unread').textContent`), /New message.*Both builds are green/);
     assert.equal(await page.eval<boolean>("document.querySelector('.col-needs').textContent.includes('Both builds are green')"), false);
@@ -140,7 +142,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     new Store(store.paths.home, () => new Date(Date.now() - 20 * 60_000)).upsertAgent("stuck", "unstamped", { goal: "Unstamped agent" });
     store.upsertSession({ id: "on-job", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "waiting on its build", state: "working", activityAt: ago(9), waitsForJob: true, activity: "TaskOutput" });
     const page = await open();
-    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('stuck agents'))`;
+    const card = cardOf("stuck agents");
     await page.waitFor(card);
     const lines = await page.eval<{ text: string; color: string; tip: string; code: number }[]>(
       `[...${card}.querySelectorAll('.s-bad')].map((l) => ({ text: l.textContent, color: getComputedStyle(l).color, tip: l.title, code: l.querySelectorAll('code').length }))`,
@@ -155,7 +157,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(looping?.color, silent?.color, "calls failing in a row warn, as a quiet agent does");
     assert.equal(looping?.code, 0, "the failing call is not printed in the card");
     assert.equal(looping?.tip, "Last failed: Bash: npm test -- --grep checkout", "it waits in the tooltip");
-    const jobCard = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('waiting on its build'))`;
+    const jobCard = cardOf("waiting on its build");
     assert.equal(await page.eval<number>(`${jobCard}.querySelectorAll('.s-bad').length`), 0, "a session waiting on its own job is not quiet");
     assert.equal(await page.eval<string>(`${jobCard}.querySelector('.s-l1 .dot').title`), "Waiting on its job");
     await page.click(".scard", "stuck agents");
@@ -180,7 +182,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     }
     store.ask({ sessionId: "marks", kind: "question", text: "Which state is this?" });
     const page = await open();
-    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('every state'))`;
+    const card = cardOf("every state");
     await page.waitFor(`${card}?.querySelector('.s-bad')`);
     const size = (el: string) => `(() => { const r = ${el}.getBoundingClientRect(); return [r.width, r.height]; })()`;
     assert.deepEqual(await page.eval<number[]>(size(`${card}.querySelector('.s-l1 .dot.st-needs')`)), [14, 14], "the session's mark on its card");
@@ -712,7 +714,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.upsertSession({ id: "come-back", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "come back later" });
     store.updateSession("come-back", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Here is the long report", at: new Date().toISOString() } }));
     const page = await open();
-    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('come back later'))`;
+    const card = cardOf("come back later");
     await page.waitFor(`${card}?.textContent.includes('New message')`);
     await page.click(".scard", "come back later");
     await page.waitFor(`document.querySelector('#session .dhead')?.textContent.includes('Mark unread')`);
@@ -744,7 +746,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.upsertSession({ id: "ended-asking", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "gone mid question" });
     store.updateSession("ended-asking", (s) => ({ ...s, state: "ended", endedAsking: true, lastMessage: { text: "Should I delete it?", at: new Date().toISOString() } }));
     const page = await open();
-    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('gone mid question'))`;
+    const card = cardOf("gone mid question");
     await page.waitFor(`${card}?.textContent.includes('It ended while asking')`);
     await page.click(".scard", "gone mid question");
     await page.waitFor(`document.getElementById('session').open`);
@@ -794,7 +796,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.upsertSession({ id: "long-draft", provider: "Test", project: { name: "invoices-api", dir: "/home/demo/Projects/invoices-api" }, title: "a session whose title is far too long for a phone", takesMessagesWhileWorking: true });
     const page = await open(390, 844);
     await page.click(".tabbar button", "Sessions");
-    const proj = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('far too long')).querySelector('.sproj')`;
+    const proj = `${cardOf("far too long")}.querySelector('.sproj')`;
     await page.waitFor(proj);
     assert.equal(await page.eval<boolean>(`${proj}.scrollWidth <= ${proj}.clientWidth`), true, "the project's name is not cut");
     await page.click(".scard", "far too long");
@@ -1287,7 +1289,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       return page;
     }
     const box = (page: Page, sel: string) => page.eval<{ top: number; bottom: number; left: number; right: number; height: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; })()`);
-    const checkout = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('checkout redesign'))`;
+    const checkout = cardOf("checkout redesign");
     // The rich cards' agent marks: their sizes, goals that start where the session's name does, marks centred on the goal's line.
     const agentMarks = (page: Page) =>
       page.eval<{ sizes: number[]; left: boolean; centred: boolean }>(`(() => {
@@ -1343,7 +1345,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       // A preview opens in its own tab: a click beside its link does not open the session.
       await page.eval(`${checkout}.querySelector('.s-live').click()`);
       assert.deepEqual(await openDialogs(page), []);
-      const vat = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('VAT rounding'))`;
+      const vat = cardOf("VAT rounding");
       assert.match(await page.eval<string>(`${vat}.querySelector('.s-work .chip').textContent`), /^Context 86% · \/compact$/, "the command its context calls for stands for its context");
       assert.match(await page.eval<string>("document.querySelector('.col-sessions .col-head').textContent"), /Sessions3.*2 working · 4 agents at work/);
       assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.rearlier .rrow .rt')].map((t) => t.textContent)"), ["Migration 0041 applied locally", "Checkout e2e: failed, disk full", "Three pay button variants", "Checkout: before and after"], "the results already seen, newest first");
@@ -1366,7 +1368,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         const page = await browser.newPage(1440, 900);
         pages.push(page);
         await page.goto(quietBase + "/");
-        const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('busy session'))`;
+        const card = cardOf("busy session");
         await page.waitFor(`${card}?.querySelector('.s-agents')`);
         assert.deepEqual(
           await page.eval<string[][]>(`[...${card}.querySelectorAll('.s-agent')].map((r) => [...r.querySelectorAll('b, small')].map((x) => x.textContent))`),
@@ -1378,7 +1380,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         const said = await page.eval<string>(`${card}.textContent + [...${card}.querySelectorAll('[title]')].map((e) => e.title).join(' ')`);
         assert.doesNotMatch(said, /Bash|sed -n|pgrep|python3|StructuredOutput/, "no tool call on the card, not even in a tooltip");
         assert.doesNotMatch(await page.eval<string>(`${card}.querySelector('.s-work').textContent`), /main|Opus/, "the project's own branch and the model are left to the panel");
-        const pagos = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('payment webhooks'))`;
+        const pagos = cardOf("payment webhooks");
         assert.match(await page.eval<string>(`${pagos}.querySelector('.quiet-line').textContent`), /^Waiting for you · 3 min$/, "a session read and waiting says so in a few words");
       } finally {
         quiet.upsertSession({ id: "noisy", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, state: "ended" });
@@ -2702,7 +2704,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       store.upsertSession({ id: "to-forget", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "ended and forgotten", state: "ended", endedAt: at, endedAsking: true, lastMessage: { text: "Shall I go on?", at } });
       const result = store.addResult({ sessionId: "to-forget", title: "Left behind by the ended session", url: "http://localhost:5173/left" });
       const page = await open();
-      const card = "[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('ended and forgotten'))";
+      const card = cardOf("ended and forgotten");
       await page.waitFor(card);
       assert.equal(await page.eval<number>("[...document.querySelectorAll('.scard')].filter((c) => c.querySelector('[data-key=forget]')).length"), 1, "only the session that ended offers it");
       await page.click(".scard [data-key=forget]");
