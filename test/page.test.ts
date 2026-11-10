@@ -1378,8 +1378,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       const vat = cardOf("VAT rounding");
       assert.match(await page.eval<string>(`${vat}.querySelector('.s-work .chip').textContent`), /^Context 86% · \/compact$/, "the command its context calls for stands for its context");
       assert.match(await page.eval<string>("document.querySelector('.col-sessions .col-head').textContent"), /Sessions3.*2 working · 4 agents at work/);
-      assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.rearlier .rrow .rt')].map((t) => t.textContent)"), ["Migration 0041 applied locally", "Checkout e2e: failed, disk full", "Three pay button variants", "Checkout: before and after"], "the results already seen, newest first");
-      assert.match(await page.eval<string>("document.querySelector('.col-review .col-head').textContent"), /nothing new · seen earlier/);
+      assert.equal(await page.eval<string>("document.querySelector('.col-review .col-body').textContent"), "Nothing new to review.Earlier results", "To review keeps only what is new: the results already seen are in History");
       await page.click(".last-answer");
       await page.waitFor("document.body.dataset.view === 'history'");
     });
@@ -1469,37 +1468,16 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.equal(await page.eval<boolean>("[...document.querySelectorAll('.scard .s-work')].some((w) => w.textContent.includes('limit'))"), false, "no card repeats the plan windows");
       assert.match(await page.eval<string>("document.querySelector('.col-sessions .col-head .head-aside').textContent"), /^5 h limit 42% · resets \d\d:\d\d$/, "they stand once over the cards, as on the quiet desk");
       await page.click(".tabbar button", "To review");
-      assert.equal(await page.eval<boolean>("!document.querySelector('.rearlier') && !!document.querySelector('.col-review .empty')"), true, "To review as before: nothing new, and the way to earlier results");
+      assert.equal(await page.eval<string>("document.querySelector('.col-review .col-body').textContent"), "Nothing new to review.Earlier results", "To review as on the quiet desk: nothing new, and the way to earlier results");
       await page.resize(1440, 900);
       await page.waitFor("document.querySelector('.board.quiet')");
     });
 
-    // Last of these: a dismissal is for good.
-    it("lets a result already seen be dismissed from To review on every device, and keeps it in History", async () => {
+    it("opens the results already seen in History from To review's calm empty state", async () => {
       const page = await openQuiet();
-      const row = (title: string) => `[...document.querySelectorAll('.rearlier-wrap')].find((w) => w.textContent.includes(${JSON.stringify(title)}))`;
-      const migration = row("Migration 0041 applied locally");
-      await page.waitFor(migration);
-      assert.equal(
-        await page.eval<string>(`getComputedStyle(${migration}.querySelector('.rdismiss')).opacity`),
-        await page.eval<string>("matchMedia('(hover: hover)').matches ? '0' : '1'"),
-        "the × waits for a pointer, and is always there without one",
-      );
-      const [x, y] = await page.eval<[number, number]>(`(() => { const r = ${migration}.querySelector('.rdismiss').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
-      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-      for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
-      await page.waitFor(`!${migration} && !!${row("Three pay button variants")}`);
-      assert.deepEqual(await openDialogs(page), [], "the × does not open the result");
-      assert.ok(quiet.listResults().find((r) => r.title === "Migration 0041 applied locally")?.dismissedAt, "kept in the store, not in this browser");
-      const other = await openQuiet();
-      await other.waitFor(`!!${row("Three pay button variants")}`);
-      assert.equal(await other.eval<boolean>(`!${migration}`), true, "gone from the list on another device too");
-      // The page opened last is the one in front, where animation frames run.
-      for (const r of quiet.listResults()) quiet.dismissResult(r.id);
-      await other.waitFor("!document.querySelector('.rearlier') && !!document.querySelector('.col-review .empty')");
-      assert.equal(await other.eval<string>("document.querySelector('.col-review .empty').textContent"), "Nothing new to review.All results", "calm, with the way to every result");
-      await other.click(".col-review .empty button", "All results");
-      await other.waitFor("document.body.dataset.view === 'history' && document.querySelector('#view').textContent.includes('Migration 0041 applied locally')");
+      assert.equal(await page.eval<number>("document.querySelectorAll('.col-review .rtile, .col-review .rrow').length"), 0, "no result already seen in To review");
+      await page.click(".col-review .empty button", "Earlier results");
+      await page.waitFor("document.body.dataset.view === 'history' && document.querySelector('#view').textContent.includes('Migration 0041 applied locally')");
     });
   });
 

@@ -202,8 +202,6 @@ export type Result = {
   decisions: string[];
   checks: Check[];
   seenAt?: string;
-  /** Taken off the desk's list of results already seen; it stays in History. */
-  dismissedAt?: string;
 };
 
 export type Service = {

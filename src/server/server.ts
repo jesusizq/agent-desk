@@ -126,7 +126,6 @@ const ACTIONS: Record<string, Action> = {
   "questions/answer": (store, target, body) => store.answerFromDesk(target, ...reply(body)),
   "questions/dismiss": (store, target) => store.dismiss(target),
   "results/seen": (store, target) => store.markResultSeen(target),
-  "results/dismiss": (store, target) => store.dismissResult(target),
   "sessions/read": (store, target) => store.markSessionRead(target),
   "sessions/unread": (store, target) => store.markSessionUnread(target),
   "sessions/message": (store, target, body) => store.messageFromDesk(target, ...reply(body)),

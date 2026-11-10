@@ -36,10 +36,10 @@ if (task === "increment") {
     const asked = store.ask({ sessionId: "s1", kind: "question", text: `Decided ${process.pid}-${i}?` });
     store.closeOpen("s1", { answer: `yes ${process.pid}-${i}`, which: (q) => q.id === asked.id });
   }
-} else if (task === "seen-result" || task === "dismiss-result") {
+} else if (task === "seen-result") {
   const [result] = store.listResults();
   if (!result) throw new Error("no result to mark");
-  for (let i = 0; i < Number(count); i++) (task === "seen-result" ? store.markResultSeen(result.id) : store.dismissResult(result.id));
+  for (let i = 0; i < Number(count); i++) store.markResultSeen(result.id);
 } else if (task === "unanswered") {
   const runs: { reopened: number; alreadyOpen: number }[] = [];
   for (let i = 0; i < Number(count); i++) {

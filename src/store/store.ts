@@ -731,15 +731,6 @@ export class Store {
     return this.updateResult(resultId, (r) => (r.seenAt ? r : { ...r, seenAt: this.stamp() }));
   }
 
-  /** The developer takes a result off the desk's list of results already seen; it stays in History, seen. */
-  dismissResult(resultId: string): Result {
-    return this.updateResult(resultId, (r) => {
-      if (r.dismissedAt) return r;
-      const at = this.stamp();
-      return { ...r, seenAt: r.seenAt ?? at, dismissedAt: at };
-    });
-  }
-
   /** Changes a result under its lock; one `change` returns unchanged is not written. */
   private updateResult(resultId: string, change: (current: Result) => Result): Result {
     const file = this.paths.result(resultId);

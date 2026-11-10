@@ -90,7 +90,7 @@ function sessionDetails(s, m) {
 }
 
 /** @param {Result} r @param {() => void} [opened] after the result's window opens */
-export function resultRow(r, opened) {
+function resultRow(r, opened) {
   const first = r.images[0];
   const thumb = first ? h("img", { src: imageUrl(first.id), alt: "" }) : h("span", { class: "ph" }, dot(r.status === "failed" ? "failed" : "done"));
   return h(

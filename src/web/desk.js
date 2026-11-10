@@ -11,7 +11,7 @@ import { badge, bar, beacon, dot, emptyState, goLink, LOCAL_URL, localLink, plan
 import { openResult } from "./result.js";
 import { imageUrl, post, run } from "./server.js";
 import { baseBranchOf } from "./projects.js";
-import { openSession, resultRow } from "./session.js";
+import { openSession } from "./session.js";
 import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
@@ -126,7 +126,7 @@ function failureRow(r) {
     meta: [label(S(r.sessionId)), r.summary ? firstLine(r.summary) : ""].filter(Boolean).join(" · "),
     when: h("span", { class: "age quiet", title: stamp(r.at) }, ago(r.at)),
     open: () => openResult(r),
-    end: dismissButton(TEXT.dismissResult, `/api/results/${r.id}/seen`),
+    end: dismissButton(r),
   });
 }
 
@@ -198,34 +198,22 @@ function reviewTile(r) {
       // Where it comes from, as on every other card, unless one project is already picked.
       h("span", { class: "rm" }, ui.project === null && s ? projectMark(s.project.name) : null, h("span", { class: "num" }, stamp(r.at))),
     ),
-    dismissButton(TEXT.dismissResult, `/api/results/${r.id}/seen`),
+    dismissButton(r),
   );
 }
 
-/** The × that takes a result off its list, beside what opens it (style.css shows it on hover, always on touch). @param {string} label @param {string} route */
-function dismissButton(label, route) {
-  return h("button", { class: "rdismiss icon-btn", "aria-label": label, title: label, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(post(route))) }, icon("x"));
+/** The × that marks a result seen without opening it, beside what opens it (style.css shows it on hover, always on touch). @param {Result} r */
+function dismissButton(r) {
+  const label = TEXT.dismissResult;
+  return h("button", { class: "rdismiss icon-btn", "aria-label": label, title: label, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(post(`/api/results/${r.id}/seen`))) }, icon("x"));
 }
 
-/** A result already seen, kept in view by a quiet desk until it is dismissed from there. @param {Result} r */
-function earlierRow(r) {
-  return h("div", { class: "rearlier-wrap", "data-key": `e-${r.id}` }, resultRow(r), dismissButton(TEXT.dismissEarlier, `/api/results/${r.id}/dismiss`));
-}
-
-// How many results already seen a quiet desk keeps in view while there is nothing new.
-const EARLIER_RESULTS = 8;
-
-/**
- * Finished work to look at; failures wait in the inbox instead. On a quiet desk with nothing new, the
- * latest results already seen, quietly. @param {boolean} quiet
- */
-function reviewColumn(quiet) {
+/** Finished work not looked at yet; failures wait in the inbox instead, and what was seen is in History. */
+function reviewColumn() {
   const list = toReview();
   if (list.length) return column("review", list.length, h("div", { class: "rtiles", "data-list": true }, list.map(reviewTile)), { quiet: true });
-  const all = h("button", { class: "linkish", onclick: showEarlierResults }, quiet ? TEXT.quiet.allResults : TEXT.seeHistory);
-  const earlier = quiet ? data.results.filter((r) => inProject(r.sessionId) && !isNew(r) && !r.dismissedAt).sort((a, b) => b.at.localeCompare(a.at)).slice(0, EARLIER_RESULTS) : [];
-  if (earlier.length) return column("review", null, [h("div", { class: "rearlier", "data-list": true }, earlier.map(earlierRow)), all], { aside: h("span", { class: "faint" }, TEXT.quiet.earlierAside) });
-  return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: all }), { quiet: true });
+  const earlier = h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory);
+  return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: earlier }), { quiet: true });
 }
 
 /** @param {Session} s */
@@ -421,7 +409,7 @@ export function board() {
     inboxColumn(box, resolved, quiet),
     splitter(),
     sessionsColumn(quiet || ONE_COLUMN.matches, quiet),
-    reviewColumn(quiet),
+    reviewColumn(),
   );
 }
 // The board's shape and its cards follow the window: crossing into one column, or out of it, redraws them.

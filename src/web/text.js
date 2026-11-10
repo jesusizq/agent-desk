@@ -102,13 +102,10 @@ export const TEXT = {
     lastAnswerTitle: "Past decisions, in History",
     /** @param {number} working @param {number} agents */
     sessionsAside: (working, agents) => [working && `${working} working`, agents && `${plural(agents, "agent", "agents")} at work`].filter(Boolean).join(" · "),
-    earlierAside: "nothing new · seen earlier",
-    allResults: "All results",
   },
   emptyResults: "Nothing new to review.",
   seeHistory: "Earlier results",
   dismissResult: "Seen, move it to the history",
-  dismissEarlier: "Remove from this list; it stays in History",
   emptyRunning: "No sessions running.",
   now: NOW,
   go: "Go",
