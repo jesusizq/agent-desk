@@ -302,12 +302,13 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
-  it("asks for the PIN again when the unlock ends, with what was being written kept", async () => {
+  it("asks for the PIN again when the unlock ends, and drops what was being written", async () => {
     store.upsertSession({ id: "pin-ended", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "pin ended", takesMessagesWhileWorking: true });
     const page = await open();
     await page.click(".scard", "pin ended");
     await page.click("#session .chat-footer textarea");
     await page.type("half a thought");
+    await page.waitFor("(localStorage.getItem('agent-desk:drafts') ?? '').includes('half a thought')");
     // What the server answers a device whose 24 hours ended; a reload loads the page's real fetch again.
     await page.eval(`(() => {
       window.beforeReload = true;
@@ -316,17 +317,26 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     })()`);
     await fetchNow(page);
     await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')");
+    assert.equal(await page.eval<string | null>("localStorage.getItem('agent-desk:drafts')"), null, "nothing written outlives the unlock");
     await page.click(".scard", "pin ended");
     await page.waitFor("document.querySelector('#session .chat-footer textarea')");
-    assert.equal(await page.eval<string>("document.querySelector('#session .chat-footer textarea').value"), "half a thought");
+    assert.equal(await page.eval<string>("document.querySelector('#session .chat-footer textarea').value"), "");
+  });
+
+  it("keeps what was being written when the app closes while the desk is unlocked", async () => {
+    store.upsertSession({ id: "app-closed", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "app closed", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "app closed");
+    await page.click("#session .chat-footer textarea");
+    await page.type("half a thought");
     // As iOS closing the app: nothing warned the page, the draft is already on the device.
     await page.goto(base + "/");
     await page.waitFor("document.querySelector('.scard')");
-    await page.click(".scard", "pin ended");
+    await page.click(".scard", "app closed");
     await page.waitFor("document.querySelector('#session .chat-footer textarea')?.value === 'half a thought'");
     await page.click("#session .chat-footer .primary");
     await page.waitFor("localStorage.getItem('agent-desk:drafts') === null");
-    assert.deepEqual(store.takeInbox("pin-ended").map((e) => e.answer), ["half a thought"], "sent, and no longer kept");
+    assert.deepEqual(store.takeInbox("app-closed").map((e) => e.answer), ["half a thought"], "sent, and no longer kept");
   });
 
   it("reloads when the unlock the desk named ends, so a device offline then shows nothing it saved", async () => {
@@ -338,9 +348,11 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       const ends = String(Date.now() + 800);
       window.fetch = (url, init) => String(url) === "/api/state" ? real(url).then(async (r) => new Response(await r.text(), { headers: { "Content-Type": "application/json", "X-Agent-Desk-Unlock-Ends": ends } })) : real(url, init);
     })()`);
+    await page.eval(`localStorage.setItem("agent-desk:drafts", JSON.stringify({ drafts: [["message-demo-pagos", "unsent idea"]], images: [] }))`);
     await fetchNow(page);
     assert.equal(await page.eval<boolean>("window.beforeReload"), true, "not before the end");
     await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')", 5000);
+    assert.equal(await page.eval<string | null>("localStorage.getItem('agent-desk:drafts')"), null, "its drafts went with the unlock");
   });
 
   it("drops a saved draft whose question closed or whose session is gone", async () => {

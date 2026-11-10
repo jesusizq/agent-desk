@@ -1,6 +1,6 @@
 // @ts-check
 // Talking to the desk server: the state fetched, writes with the secret, and the drafts kept on this device.
-import { h } from "./dom.js";
+import { DRAFTS_KEY, h } from "./dom.js";
 import { TEXT } from "./text.js";
 import { stamp } from "./format.js";
 import { toast } from "./pieces.js";
@@ -11,12 +11,14 @@ import { data, ID, ON_THIS_MACHINE, page, S, secret, setData, ui } from "./state
 
 const LOCKED_HEADER = "X-Agent-Desk-Locked";
 const UNLOCK_ENDS_HEADER = "X-Agent-Desk-Unlock-Ends";
-const DRAFTS_KEY = "agent-desk:drafts";
 /** Longer than the service worker's wait (sw.js), so its saved copy arrives first when there is one. */
 const NO_ANSWER_MS = 8000;
 
+/** Set once a device behind the PIN learns its unlock ended (endUnlock). */
+let unlockEnded = false;
 /** What is being written stays on this device: a phone may close the app, and the desk may reload it. */
 export function saveDrafts() {
+  if (unlockEnded) return; // the reload to the PIN page must not write them back
   const drafts = [...ui.drafts].filter(([, text]) => text);
   const images = [...ui.draftImages].filter(([, ids]) => ids.length);
   // What could not be sent is kept too, until it is sent again or taken back into its box.
@@ -61,6 +63,13 @@ function dropStaleDrafts() {
 /** The unlock ended: the reload brings the PIN page, and the same view after it. @param {Response} res */
 const needsPin = (res) => res.status === 401 && res.headers.has(LOCKED_HEADER);
 
+/** Nothing written on a device behind the PIN outlives its unlock: drafts and unsent messages go with the saved desk. */
+function endUnlock() {
+  unlockEnded = true;
+  localStorage.removeItem(DRAFTS_KEY);
+  location.reload();
+}
+
 let unlockEnds = 0;
 let unlockTimer = 0;
 /**
@@ -73,7 +82,7 @@ function reloadAtUnlockEnd(res) {
   if (!(ends > Date.now()) || ends === unlockEnds) return;
   unlockEnds = ends;
   clearTimeout(unlockTimer);
-  unlockTimer = setTimeout(() => location.reload(), ends - Date.now() + 1);
+  unlockTimer = setTimeout(endUnlock, ends - Date.now() + 1);
 }
 
 /** A write to the desk; no connection is said as such, not as fetch's own "Load failed". @param {string} route @param {RequestInit} init */
@@ -81,7 +90,7 @@ async function write(route, init) {
   const res = await fetch(route, init).catch(() => {
     throw new Error(offlineReason());
   });
-  if (needsPin(res)) location.reload();
+  if (needsPin(res)) endUnlock();
   return res;
 }
 
@@ -135,7 +144,7 @@ export async function refresh() {
   askedAt = Date.now();
   try {
     const res = await fetch("/api/state", { headers: etag ? { "If-None-Match": etag } : {}, signal: AbortSignal.timeout(NO_ANSWER_MS) });
-    if (needsPin(res)) return location.reload();
+    if (needsPin(res)) return endUnlock();
     reloadAtUnlockEnd(res);
     ui.refused = res.status === 421;
     savedAt = res.headers.get(SAVED_AT);

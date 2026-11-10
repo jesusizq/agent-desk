@@ -1,7 +1,10 @@
 // @ts-check
 // The PIN page a device sees when it reaches the desk through the tailnet and has not unlocked it.
-import { byId, fill, h } from "./dom.js";
+import { byId, DRAFTS_KEY, fill, h } from "./dom.js";
 import { TEXT } from "./text.js";
+
+// Shown only to a device whose unlock is over: what it was writing went with it.
+localStorage.removeItem(DRAFTS_KEY);
 
 const form = /** @type {HTMLFormElement} */ (byId("unlock"));
 const input = h("input", { type: "password", inputmode: "numeric", autocomplete: "current-password", "aria-label": TEXT.unlock.label, placeholder: TEXT.unlock.placeholder, required: true });
