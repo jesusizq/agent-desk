@@ -2228,6 +2228,26 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("asks before leaving only while an image or an answer is on its way", async () => {
+    store.upsertSession({ id: "leaving", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "leaving mid-upload", takesMessagesWhileWorking: true });
+    const page = await browser.newPage(1400, 900);
+    pages.push(page);
+    // The image never reaches the store: it stays on its way.
+    await page.send("Page.addScriptToEvaluateOnNewDocument", { source: "const real = window.fetch; window.fetch = (url, init) => (String(url).includes('/api/images') ? new Promise(() => {}) : real(url, init));" });
+    await page.goto(base + "/");
+    await page.waitFor("document.querySelector('.scard')");
+    const asks = "(() => { const e = new Event('beforeunload', { cancelable: true }); dispatchEvent(e); return e.defaultPrevented; })()";
+    assert.equal(await page.eval<boolean>(asks), false, "nothing on its way: leaving is free");
+    await page.click(".scard", "leaving mid-upload");
+    await page.eval(`(() => {
+      const data = new DataTransfer();
+      data.items.add(new File([new Uint8Array(8)], "shot.png", { type: "image/png" }));
+      document.querySelector("#session .chat-footer textarea").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    })()`);
+    await page.waitFor("document.querySelector('#session .attached')?.textContent.includes('Attaching')");
+    assert.equal(await page.eval<boolean>(asks), true, "an image on its way: the browser asks first");
+  });
+
   describe("a window's first focus", () => {
     const focus = (page: Page) => page.eval<{ active: string; ring: boolean }>("({ active: document.activeElement?.tagName + ' ' + (document.activeElement?.textContent ?? ''), ring: document.activeElement?.matches(':focus-visible') ?? false })");
 

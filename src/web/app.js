@@ -17,7 +17,7 @@ import { openResult } from "./result.js";
 import { follow } from "./live.js";
 import { refresh } from "./server.js";
 import { openSession, renderPanel } from "./session.js";
-import { data, itemKey, openItems, page, S, ui } from "./state.js";
+import { data, inFlight, itemKey, openItems, page, S, ui } from "./state.js";
 
 const TICK_MS = 30_000;
 
@@ -142,6 +142,12 @@ document.addEventListener("keydown", (e) => {
       location.href = href;
     }
   }
+});
+// The browser asks before leaving only while something is on its way: a closed tab would lose it.
+addEventListener("beforeunload", (e) => {
+  if (!inFlight()) return;
+  e.preventDefault();
+  e.returnValue = true; // Safari before 17 asks only when this is set
 });
 // iOS Safari applies :active (the desk's pressed look) only on pages that listen to touchstart.
 document.addEventListener("touchstart", () => {}, { passive: true });

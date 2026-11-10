@@ -151,6 +151,9 @@ export const toReview = () => data.results.filter((r) => inProject(r.sessionId) 
 /** What a session asks that is still open, in the order asked. @param {string} sid */
 export const asksOf = (sid) => data.questions.filter((q) => q.status === "open" && q.sessionId === sid);
 
+/** An answer or message is on its way to the desk, or an image to the store: leaving now would lose it. */
+export const inFlight = () => ui.sending.size > 0 || [...ui.uploading.values()].some((n) => n > 0);
+
 /** Answered from the desk a moment ago, or its answer on its way: where it shows, it says so before it goes. @param {Question} q */
 export const answeredNow = (q) => ui.sending.has(`answer-${q.id}`) || (ui.resolved.get(q.id) ?? 0) > Date.now();
 
