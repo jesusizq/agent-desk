@@ -733,6 +733,35 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .msg.working-now > .adoing { font: 0.75rem var(--mono); color: var(--muted); }
 .msg.working-now .alist { margin-top: 8px; }
 
+/* A session's agents on one time axis: each row its goal and doing, a bar from its start to now or its end, and
+   its time. The rows share the list's columns (subgrid), so every bar sits on the same axis. */
+.atl-sec { container-type: inline-size; }
+.atimeline { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; column-gap: 14px; }
+.atimeline > .arow { grid-column: 1 / -1; grid-template-columns: subgrid; column-gap: 14px; }
+.atimeline > .aaxis { padding-block: 2px 4px; }
+.atrack { position: relative; height: 14px; border-radius: 7px; background: var(--surface-2); overflow: hidden; }
+.aaxis .atrack { height: 16px; background: none; overflow: visible; }
+.atick { position: absolute; top: 0; transform: translateX(-50%); font-size: 0.6875rem; line-height: 16px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.agrid { position: absolute; top: 0; bottom: 0; width: 1px; background: color-mix(in srgb, var(--border) 70%, transparent); }
+.abar { position: absolute; top: 0; bottom: 0; min-width: 6px; border-radius: 7px; background: color-mix(in srgb, var(--c) 70%, transparent); }
+.abar.open { border-radius: 7px 2px 2px 7px; }
+.abar.st-done { background: color-mix(in srgb, var(--c) 40%, transparent); }
+.abar:is(.st-waiting, .st-blocked, .st-idle) { background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--c) 50%, transparent) 0 4px, transparent 4px 8px);
+  border: 1px solid color-mix(in srgb, var(--c) 60%, transparent); }
+/* A bar shorter than its progress grows back from its end to hold it. */
+.abar:has(.aprog) { min-width: max-content; }
+.aprog { display: block; padding: 0 6px; text-align: right; font: 650 0.6562rem/14px var(--sans); color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Narrow: the goal and its doing across the row, the bar under them beside its time; the axis over the bars. */
+@container (max-width: 560px) {
+  .atimeline { grid-template-columns: minmax(0, 1fr) auto; }
+  .atimeline > .arow { row-gap: 5px; }
+  .atimeline .awhat { grid-column: 1 / -1; }
+  .atimeline > .arow > .atrack { grid-row: 2; grid-column: 1; }
+  .atimeline > .arow > .num { grid-row: 2; grid-column: 2; }
+  .atimeline > .aaxis > .awhat { display: none; }
+  .atimeline > .aaxis > :is(.atrack, .num) { grid-row: 1; }
+}
+
 /* Session panel: one line of chips, the part one of them unfolds, then the chat with its answer box on the bottom edge. */
 .session-body { display: flex; flex-direction: column; gap: 12px; padding-bottom: 0; overflow-x: hidden; overscroll-behavior: contain; }
 .session-body > * { flex-shrink: 0; }

@@ -236,6 +236,14 @@ export const TEXT = {
   now_: (what) => `now: ${what}`,
   /** @param {string} t */
   tookFor: (t) => `took ${t}`,
+  timeline: {
+    /** @param {string} t */
+    now: (t) => `now ${t}`,
+    /** @param {string} t */
+    ended: (t) => `ended ${t}`,
+    /** @param {string} from @param {string} to */
+    bar: (from, to) => `${from} → ${to}`,
+  },
   state: { needs: "Needs you", working: "Working", waiting: "Waiting on its job", blocked: "Blocked", idle: "Idle", done: "Done", failed: "Failed" },
   sessionWorking: "The session is working",
   failedAgent: "failed",

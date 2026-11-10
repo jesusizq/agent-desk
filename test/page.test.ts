@@ -193,6 +193,68 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("lays a session's agents on one time axis, with the progress their activity states and none it does not", async () => {
+    const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    store.upsertSession({ id: "timeline", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "agents on a timeline", state: "working" });
+    const agents = [
+      ["audit", "Running axe on 14 pages (9/14)", 30],
+      ["tests", "npm test -- invoices 212/340", 50],
+      ["pages", "Checked 9 of 14 pages", 10],
+      ["edit", "Editing src/checkout/OrderSummary.tsx", 40],
+      ["deps", "Upgrading the API to v2/3 and the 2026/11/10 release", 20],
+    ] as const;
+    for (const [name, activity, min] of agents) store.upsertAgent("timeline", name, { goal: `Goal ${name}`, activity, startedAt: ago(min) });
+    const page = await open();
+    await page.click(".scard", "agents on a timeline");
+    await page.click("#session .pchips button.chip", "agents");
+    await page.waitFor("document.querySelectorAll('#session .atimeline .abar').length === 5");
+    const progress = await page.eval<Record<string, string | null>>(
+      "Object.fromEntries([...document.querySelectorAll('#session .atimeline .atrack[data-key]')].map((t) => [t.dataset.key, t.querySelector('.aprog')?.textContent ?? null]))",
+    );
+    assert.deepEqual(progress, { "bar-tests": "212/340", "bar-edit": null, "bar-audit": "9/14", "bar-deps": null, "bar-pages": "9/14" });
+    // Every bar on the same axis: tracks one width and place, an open bar ending at now, the earliest starting first.
+    const tracks = await page.eval<{ key: string; left: number; width: number; start: number; end: number }[]>(`[...document.querySelectorAll('#session .atimeline .atrack')].map((t) => {
+      const r = t.getBoundingClientRect(); const b = t.querySelector('.abar')?.getBoundingClientRect();
+      return { key: t.dataset.key ?? 'axis', left: Math.round(r.left), width: Math.round(r.width), start: b ? Math.round(b.left) : 0, end: b ? Math.round(b.right) : 0 };
+    })`);
+    assert.equal(new Set(tracks.map((t) => `${t.left} ${t.width}`)).size, 1, "the axis and every bar share one track");
+    const bars = tracks.filter((t) => t.key !== "axis");
+    const right = (tracks[0]?.left ?? 0) + (tracks[0]?.width ?? 0);
+    assert.ok(bars.every((t) => Math.abs(t.end - right) <= 1), "an agent at work runs to now, the axis' end");
+    assert.equal(bars.toSorted((a, b) => a.start - b.start)[0]?.key, "bar-tests", "the agent started first starts furthest left");
+    // A live update keeps the bar's element and changes only what changed.
+    await page.eval("window.keptBar = document.querySelector('#session .atrack[data-key=\"bar-audit\"] .abar')");
+    store.upsertAgent("timeline", "audit", { activity: "Running axe on 14 pages (10/14)" });
+    await page.waitFor("document.querySelector('#session .atrack[data-key=\"bar-audit\"] .aprog')?.textContent === '10/14'");
+    assert.equal(await page.eval<boolean>("window.keptBar === document.querySelector('#session .atrack[data-key=\"bar-audit\"] .abar')"), true, "the same bar, updated in place");
+    await page.press("Escape");
+  });
+
+  it("on a phone, keeps a session's agents and their bars inside the screen", async () => {
+    const page = await open(390, 844);
+    await page.click(".tabbar button", "Sessions");
+    await page.click(".scard", "checkout redesign");
+    await page.click("#session .pchips button.chip", "agents");
+    await page.waitFor("document.querySelectorAll('#session .atimeline .abar').length");
+    const [scroll, client, widest, bars] = await page.eval<[number, number, number, number]>(`(() => {
+      const body = document.querySelector('#session .session-body');
+      const edge = body.getBoundingClientRect().right;
+      const rows = [...document.querySelectorAll('#session .atimeline > .arow')];
+      return [body.scrollWidth, body.clientWidth, Math.max(...rows.map((r) => r.getBoundingClientRect().right - edge)), document.querySelectorAll('#session .atimeline .abar').length];
+    })()`);
+    assert.equal(scroll, client, "nothing scrolls sideways");
+    assert.ok(widest <= 0, `every row ends inside the panel: ${widest}`);
+    assert.equal(bars, 5);
+    const { track, gap } = await page.eval<{ track: number; gap: number }>(`(() => {
+      const row = [...document.querySelectorAll('#session .atimeline > .arow[data-key^="agent-"]')][0];
+      const t = row.querySelector('.atrack').getBoundingClientRect();
+      return { track: Math.round(t.width), gap: Math.round(t.top - row.querySelector('.awhat').getBoundingClientRect().bottom) };
+    })()`);
+    assert.ok(track >= 200, `a bar's track keeps room to read on a phone: ${track}px`);
+    assert.ok(gap >= 0, "the bar sits under its agent's goal, not beside it");
+    await page.press("Escape");
+  });
+
   it("brings an unanswered question up once more after 15 minutes", async () => {
     const page = await browser.newPage(1400, 900);
     pages.push(page);

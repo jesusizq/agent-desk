@@ -67,25 +67,104 @@ export function sessionQuiet(s) {
 export const sessionAgents = (sid) => data.agents.filter((a) => a.sessionId === sid).sort((a, b) => ATTENTION.indexOf(a.state) - ATTENTION.indexOf(b.state));
 
 /**
- * One row per agent: its goal, the sentence saying what it must deliver, and what it does now (or
- * how it ended). Branch, commit and tokens wait in the tooltip. @param {Session} s
+ * One row per agent on a common time axis: its goal, the sentence saying what it must deliver, what it
+ * does now (or how it ended) and a bar from its start to now or its end. Branch, commit and tokens
+ * wait in the tooltip. @param {Session} s
  */
 function agentList(s) {
   const rows = sessionAgents(s.id);
-  return rows.length ? agentRows(rows) : h("div", { class: "faint" }, TEXT.noAgents);
+  return rows.length ? agentRows(rows, timeAxis(rows)) : h("div", { class: "faint" }, TEXT.noAgents);
 }
 
-/** One row per agent: its goal, what it was asked, what it does now, and for how long. @param {Agent[]} rows */
-export function agentRows(rows) {
+/**
+ * How far an agent's step has got, when its activity says so in a form that means nothing else:
+ * "(9/14)", "212/340" or "9 of 14"; never a path, a date or a version. @param {string | undefined} text
+ */
+export function progressOf(text) {
+  const m = /(?<![\w./:-])(\d{1,6})(?:\/| of )(\d{1,6})(?![\w./:-])/.exec(text ?? "");
+  const done = Number(m?.[1]);
+  const total = Number(m?.[2]);
+  return m && total > 0 && done <= total ? `${done}/${total}` : null;
+}
+
+/** @typedef {{ from: number, to: number, ticks: number[], open: boolean }} Axis */
+// Tick steps in minutes: the smallest that leaves at most five ticks on the axis.
+const STEPS = [5, 10, 15, 30, 60, 120, 240, 480, 720, 1440];
+/** The span the agents ran in: from the first start to now, or to the last end once all ended. @param {Agent[]} rows @returns {Axis} */
+function timeAxis(rows) {
+  const open = rows.some((a) => !a.endedAt);
+  const from = Math.min(...rows.map((a) => Date.parse(a.startedAt)));
+  const to = Math.max(from + 60_000, open ? Date.now() : Math.max(...rows.map((a) => Date.parse(a.endedAt ?? a.startedAt))));
+  const step = (STEPS.find((m) => (to - from) / (m * 60_000) <= 5) ?? 1440) * 60_000;
+  // On the local clock's round times, kept off the axis' ends, where a label would not fit.
+  const zone = new Date(from).getTimezoneOffset() * 60_000;
+  const ticks = [];
+  for (let t = Math.ceil((from - zone) / step) * step + zone; t < to; t += step) if (t - from > (to - from) * 0.06 && to - t > (to - from) * 0.06) ticks.push(t);
+  return { from, to, ticks, open };
+}
+/** A time's place on the axis, as a CSS percentage. @param {Axis} x @param {number} t */
+const along = (x, t) => `${(((t - x.from) / (x.to - x.from)) * 100).toFixed(2)}%`;
+/** @param {number} t */
+const clock = (t) => hm(new Date(t).toISOString());
+/** The axis' clock times over the bars, and where it ends: now, or when the last agent ended. @param {Axis} x */
+function axisRow(x) {
+  return h(
+    "div",
+    { class: "arow aaxis", "data-key": "axis", "aria-hidden": "true" },
+    h("span", { class: "awhat" }),
+    h(
+      "span",
+      { class: "atrack" },
+      x.ticks.map((t) => {
+        const tick = h("span", { class: "atick" }, clock(t));
+        tick.style.left = along(x, t);
+        return tick;
+      }),
+    ),
+    h("span", { class: "num faint" }, x.open ? TEXT.timeline.now(clock(x.to)) : TEXT.timeline.ended(clock(x.to))),
+  );
+}
+/** An agent's bar from its start to now or its end, with how far it has got when its activity says. @param {Agent} a @param {Axis} x */
+function agentBar(a, x) {
+  const start = Date.parse(a.startedAt);
+  const end = a.endedAt ? Date.parse(a.endedAt) : x.to;
+  // Only from the activity shown: a blocked agent shows whom it waits for instead.
+  const progress = a.endedAt || waitsLine(a) ? null : progressOf(a.activity);
+  const bar = h(
+    "span",
+    { class: `abar st-${a.state}${a.endedAt ? "" : " open"}`, title: TEXT.timeline.bar(hm(a.startedAt), a.endedAt ? hm(a.endedAt) : TEXT.now) },
+    progress ? h("span", { class: "aprog" }, progress) : null,
+  );
+  // Placed from its end, so a bar too short for its progress grows back in time, never past now.
+  bar.style.right = `${(((x.to - end) / (x.to - x.from)) * 100).toFixed(2)}%`;
+  bar.style.width = `${(((end - start) / (x.to - x.from)) * 100).toFixed(2)}%`;
+  return h(
+    "span",
+    { class: "atrack", "data-key": `bar-${a.name}` },
+    x.ticks.map((t) => {
+      const line = h("span", { class: "agrid" });
+      line.style.left = along(x, t);
+      return line;
+    }),
+    bar,
+  );
+}
+
+/**
+ * One row per agent: its goal, what it was asked, what it does now, and for how long; given an axis,
+ * its bar on it too. @param {Agent[]} rows @param {Axis} [axis]
+ */
+export function agentRows(rows, axis) {
   /** @param {Agent} a */
   const tip = (a) => [a.branch && `${a.branch}${a.commit ? ` @ ${a.commit}` : ""}`, a.tokens !== undefined && TEXT.tokens(a.tokens)].filter(Boolean).join(" · ");
   return h(
     "div",
-    { class: "alist" },
+    { class: `alist${axis ? " atimeline" : ""}` },
+    axis ? axisRow(axis) : null,
     rows.map((a) =>
       h(
         "div",
-        { class: `arow${a.state === "failed" ? " failed" : ""}`, title: tip(a) },
+        { class: `arow${a.state === "failed" ? " failed" : ""}`, title: tip(a), "data-key": `agent-${a.name}` },
         h(
           "span",
           { class: "awhat" },
@@ -96,6 +175,7 @@ export function agentRows(rows) {
             ? h("span", { class: "astuck" }, [agentQuiet(a) ? TEXT.quietFor(agentQuiet(a)) : "", failing(a) ? TEXT.failingCalls(recentFailures(a.failedAt)) : ""].filter(Boolean).join(" · "))
             : null,
         ),
+        axis ? agentBar(a, axis) : null,
         h("span", { class: "num faint", title: TEXT.state[a.state] }, a.endedAt ? TEXT.tookFor(ago(a.startedAt, a.endedAt)) : ago(a.startedAt)),
       ),
     ),
@@ -164,8 +244,8 @@ function flowGraph(s) {
   return flow;
 }
 
-/** Its agents: the flow when they depend on each other, then one row each. @param {Session} s */
+/** Its agents: the flow when they depend on each other, then one row each on a time axis. @param {Session} s */
 export function agentsPart(s) {
   const flow = flowGraph(s);
-  return [flow ? h("div", { class: "rsec flow-sec" }, h("h4", {}, TEXT.flow), h("div", { class: "flow-wrap" }, flow)) : null, h("div", { class: "rsec" }, agentList(s))];
+  return [flow ? h("div", { class: "rsec flow-sec" }, h("h4", {}, TEXT.flow), h("div", { class: "flow-wrap" }, flow)) : null, h("div", { class: "rsec atl-sec" }, agentList(s))];
 }
