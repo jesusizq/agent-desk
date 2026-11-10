@@ -1,6 +1,7 @@
 // Process ancestry, read from /proc on Linux. Used to tie a session to its terminal and the CLI to its session.
 import * as fs from "node:fs";
 import { isCode } from "../store/fsx.ts";
+import type { Session } from "./protocol.ts";
 
 export type ProcInfo = { pid: number; ppid: number; name: string; start: string };
 
@@ -58,6 +59,11 @@ export function endProcess(pid: number, start: string): void {
   const info = procInfo(pid);
   if (!info || info.start !== start) throw new Error(`process ${pid} is no longer this session's; nothing was sent`);
   process.kill(pid, "SIGTERM");
+}
+
+/** The session ended, or its own process is gone: nothing runs it any more. One that reported no process is taken at its word. */
+export function sessionFinished(s: Pick<Session, "state" | "process">): boolean {
+  return s.state === "ended" || (s.process !== undefined && !isAlive(s.process.pid, s.process.start));
 }
 
 /** True when pid runs and, if a start time is known, is still the same process (pids get reused). */

@@ -7,7 +7,7 @@ import { parseArgs, type ParseArgsConfig } from "node:util";
 import { compact, InputError, int, localUrl, nonEmpty, oneOf } from "../core/check.ts";
 import { id, slug } from "../core/ids.ts";
 import { AGENT_STATES, type Agent } from "../core/model.ts";
-import { ancestors, isAlive } from "../core/proc.ts";
+import { ancestors, sessionFinished } from "../core/proc.ts";
 import { storeHome } from "../store/paths.ts";
 import { type Decision, type DecisionQuery, Store } from "../store/store.ts";
 
@@ -246,7 +246,7 @@ function callingSession(store: Store, flag: string | undefined): string | undefi
   const mine = new Set(ancestors(process.pid).map((p) => p.pid));
   const found = store
     .listSessions()
-    .filter((s) => s.state !== "ended" && s.process && mine.has(s.process.pid) && isAlive(s.process.pid, s.process.start));
+    .filter((s) => s.process !== undefined && mine.has(s.process.pid) && !sessionFinished(s));
   if (found.length > 1) throw new InputError(`several sessions match this process (${found.map((s) => s.id).join(", ")}); pass --session ID`);
   return found[0]?.id;
 }

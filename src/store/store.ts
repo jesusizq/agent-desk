@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { compact, fields, InputError, int, isoTime, text } from "../core/check.ts";
 import { id, newId } from "../core/ids.ts";
 import { addSamples, type PlanHistory } from "../core/limits.ts";
-import { isAlive, procInfo } from "../core/proc.ts";
+import { isAlive, procInfo, sessionFinished } from "../core/proc.ts";
 import {
   type Agent,
   type Answer,
@@ -189,7 +189,7 @@ export class Store {
   forgetSession(sessionId: string): { session: Session; dismissed: number; seen: number } {
     let at = "";
     const session = this.updateSession(sessionId, (s) => {
-      if (!finished(s)) throw new InputError(`session ${sessionId} is still running; end it first, then forget it`);
+      if (!sessionFinished(s)) throw new InputError(`session ${sessionId} is still running; end it first, then forget it`);
       at = this.stamp();
       const { endedAsking: _endedAsking, ...rest } = s;
       return { ...rest, state: "ended", endedAt: s.endedAt ?? at, readAt: at };
@@ -255,7 +255,7 @@ export class Store {
     const sessions = new Map(this.listSessions().map((s) => [s.id, s]));
     const held = this.openQuestions().filter((q) => {
       const s = sessions.get(q.sessionId);
-      const live = s !== undefined && !finished(s);
+      const live = s !== undefined && !sessionFinished(s);
       return q.writing === true && live && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
     });
     return new Set(held.map((q) => q.id));
@@ -507,7 +507,7 @@ export class Store {
   acceptsMessages(sessionId: string, problems?: string[]): boolean {
     if (this.isListening(sessionId, problems)) return true;
     const s = this.getSession(sessionId);
-    return s?.state === "working" && s.takesMessagesWhileWorking === true && (s.process === undefined || isAlive(s.process.pid, s.process.start));
+    return s?.state === "working" && s.takesMessagesWhileWorking === true && !sessionFinished(s);
   }
 
   // ── Agents ──────────────────────────────────────────────────────────────
@@ -874,7 +874,7 @@ export class Store {
     }
     const open = new Set(this.openQuestions().map((q) => q.sessionId));
     for (const s of this.listSessions()) {
-      if (!finished(s) || open.has(s.id) || (s.endedAt ?? s.updatedAt) >= before) continue;
+      if (!sessionFinished(s) || open.has(s.id) || (s.endedAt ?? s.updatedAt) >= before) continue;
       for (const service of this.listServices().filter((v) => v.sessionId === s.id)) this.moveToArchive(this.paths.service(service.id));
       this.moveToArchive(this.paths.agentDir(s.id));
       this.moveToArchive(this.paths.metrics(s.id));
@@ -1082,11 +1082,6 @@ function within(dir: string, root: string): boolean {
 /** Text compared without case or accents ("Decisión" finds "decision"). */
 function fold(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
-}
-
-/** The session ended, or its process is gone: nothing runs it any more. */
-function finished(s: Session): boolean {
-  return s.state === "ended" || (s.process !== undefined && !isAlive(s.process.pid, s.process.start));
 }
 
 function imageType(data: Buffer): ImageExt | undefined {

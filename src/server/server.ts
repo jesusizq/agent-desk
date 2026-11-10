@@ -9,7 +9,7 @@ import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { type DeskState, type DiskWarning, imageIds, type Session } from "../core/model.ts";
-import { endProcess, isAlive } from "../core/proc.ts";
+import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
@@ -87,7 +87,7 @@ export function deskState(store: Store, now = new Date()): DeskState {
 
 /** Sessions still marked running whose process has disappeared (closed terminal, crash). */
 function goneSessions(sessions: Session[]): string[] {
-  return sessions.filter((s) => s.state !== "ended" && s.process && !isAlive(s.process.pid, s.process.start)).map((s) => s.id);
+  return sessions.filter((s) => s.state !== "ended" && sessionFinished(s)).map((s) => s.id);
 }
 
 function diskWarnings(sessions: Session[], problems: string[]): DiskWarning[] {
@@ -133,7 +133,7 @@ const ACTIONS: Record<string, Action> = {
   "sessions/keys": (store, target, body) => {
     const action = oneOf(Object.keys(TMUX_ACTIONS) as TmuxAction[])(fields(body, "body").action, "action");
     const s = store.getSession(target);
-    if (!s?.tmux || !s.process || s.state === "ended" || !isAlive(s.process.pid, s.process.start)) {
+    if (!s?.tmux || !s.process || sessionFinished(s)) {
       throw new InputError("this session does not run in a live tmux pane; use its terminal");
     }
     sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], action);
@@ -141,7 +141,7 @@ const ACTIONS: Record<string, Action> = {
   },
   "sessions/end": (store, target) => {
     const s = store.getSession(target);
-    if (!s?.process?.start || s.state === "ended" || !isAlive(s.process.pid, s.process.start)) {
+    if (!s?.process?.start || sessionFinished(s)) {
       throw new InputError("this session's process is not running or cannot be identified; nothing was sent");
     }
     endProcess(s.process.pid, s.process.start);
