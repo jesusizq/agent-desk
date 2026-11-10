@@ -92,7 +92,7 @@ export const TEXT = {
   noLink: (terminal) => `Cannot bring a "${terminal}" terminal to the front; find it by hand`,
   noTerminal: "This session did not say which terminal it runs in",
   remoteNoLink: "Opened from another device: answer here, or go to the computer",
-  keysHint: "oldest first · ↑ ↓ · 1–9 · Ctrl+Enter sends · Enter goes to the session",
+  keysHint: "oldest first · ↑ ↓ · 1–9 picks an option, Enter sends it · Ctrl+Enter sends · Enter goes to the session",
   /** @param {boolean} resultsToo */
   allClear: (resultsToo) => (resultsToo ? "All clear: nothing needs you, nothing new to review." : "All clear: nothing needs you."),
   emptyResults: "Nothing new to review.",
@@ -126,6 +126,10 @@ export const TEXT = {
   sendShort: "Send",
   sending: "Sending…",
   sendKeys: "Ctrl+Enter sends.",
+  optionKeys: "1–9 picks, Enter sends.",
+  optionSends: "An option is sent as you choose it, exactly as written.",
+  /** @param {string} option */
+  answerWith: (option) => `Answer: ${option}`,
   sendHint: "It reaches this session exactly as written.",
   notListening: "This session is not listening for answers right now: answer in its terminal.",
   notListeningShort: "Answer in its terminal",

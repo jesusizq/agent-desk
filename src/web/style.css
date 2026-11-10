@@ -576,9 +576,21 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 .scard > .chip { align-self: flex-start; font-size: 0.75rem; }
 .scard .where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-body { overflow-x: hidden; }
-/* What the session said around the question: under a line, folded to a few lines when long */
-:is(.next, .panel-question) .qctx.md { display: flex; color: var(--text); padding: 10px 0 0; border-top: 1px solid var(--border); }
-:is(.next, .panel-question) .qctx.md.folded { max-height: 9em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
+/* What the session said around the question, whole, under a line and before the options: read first, then choose.
+   Only a huge one folds, to its first 60 lines (CONTEXT_FOLD_LINES in answer.js), fading out at its end. */
+:is(.next, .panel-question, .arr-body) .qctx.md { display: flex; -webkit-line-clamp: unset; color: var(--text); padding: 10px 0 0; border-top: 1px solid var(--border); }
+:is(.next, .panel-question, .arr-body) .qctx.md.folded { max-height: calc(60 * 1.55em); overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 6em), transparent); mask-image: linear-gradient(#000 calc(100% - 6em), transparent); }
+/* Over a conversation or in a bubble, the whole message scrolls in its own box, so the options and the box stay in view. */
+:is(.panel-question, .arr-body) .qctx.md { max-height: min(32vh, 18em); overflow-y: auto; overscroll-behavior: contain; }
+/* An option that answers at once reads as a button that acts: an arrow that sends, stronger under the pointer. */
+.answer .opts.sends button { display: flex; align-items: center; gap: 0; }
+.answer .opts .opt-text { flex: 1; min-width: 0; text-align: left; }
+.answer .opts .opt-go { display: inline-flex; margin-left: 10px; color: var(--faint); transition: color var(--dur-1) var(--ease-out), translate var(--dur-1) var(--ease-out); }
+.answer .opts .opt-go svg.i { width: 14px; height: 14px; }
+.answer .opts.sends button:not([disabled]):hover .opt-go, .answer .opts.sends button:focus-visible .opt-go, .answer .opts.sends button[aria-pressed="true"] .opt-go { color: var(--accent); }
+.answer .opts.sends button:not([disabled]):hover { border-color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { .answer .opts.sends button:not([disabled]):hover .opt-go { translate: 2px 0; } }
 .qmore { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
 .qmore > .qctx { align-self: stretch; }
 .next .qctx.md > :is(p, ul, ol, .md-h) { max-width: 78ch; }

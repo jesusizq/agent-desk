@@ -14,8 +14,16 @@ import { ATTACHED_IMAGES_MAX, data, page, ui } from "./state.js";
 /** @typedef {import("./state.js").Item} Item */
 /** @typedef {import("./dom.js").Child} Child */
 
+/** Each box's way to pick its options by digit, as its own keys do. @type {WeakMap<Element, (n: number) => boolean>} */
+const pickers = new WeakMap();
 /**
- * The options, then `middle` (what the session said around the question), then the box. While the
+ * Picks option `n` in an answer box, focused, as the digit typed in it would: never sends (Enter does).
+ * False when the box has no such option or holds something written. @param {Element} box @param {number} n
+ */
+export const pickOption = (box, n) => pickers.get(box)?.(n) ?? false;
+
+/**
+ * `middle` (what the session said around the question), then the options, then the box. While the
  * session does not listen, the same box, inert, says to answer in its terminal: nothing jumps when it starts or stops.
  * @param {Question} q @param {Child} [middle]
  */
@@ -82,8 +90,11 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
     }
     if (files.length > ATTACHED_IMAGES_MAX - attached.length) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
   };
-  /** @param {Event} e @param {string} [text] what to send: the box's text unless a decision says otherwise */
-  const send = (e, text = decide ? denial(decide, box.value) : box.value) => {
+  /**
+   * @param {Event} e @param {string} [text] what to send: the box's text unless a decision says otherwise
+   * @param {boolean} [focusNext] answered, the next question's box takes the focus (by keys or a mouse, never under a finger: it would raise the keyboard)
+   */
+  const send = (e, text = decide ? denial(decide, box.value) : box.value, focusNext = e instanceof KeyboardEvent) => {
     // Read now, not as last drawn: a second click before the redraw must not send twice.
     if (off || (!text.trim() && attached.length === 0) || ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0) return;
     // An answered card leaves, and the keyboard with it; a message's box stays, as in a chat app.
@@ -95,7 +106,7 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
       saveDrafts();
       empty();
       landed(key, sid);
-      if (!answer || !(e instanceof KeyboardEvent)) return;
+      if (!answer || !focusNext) return;
       if (from === "arrival") ui.arrivalFocus = true;
       else if (!document.querySelector("dialog[open]")) ui.focusAfter = key.slice("answer-".length);
     };
@@ -135,6 +146,13 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
   };
   /** A tap, unlike a click or a key, leaves the box alone: focusing it would raise the keyboard over the options. @param {Event} e */
   const byFinger = (e) => (e instanceof PointerEvent && e.pointerType ? e.pointerType !== "mouse" : COARSE.matches);
+  /** A digit picks (or toggles) its option, the box focused, while the box is empty or holds only options as picked. @param {number} n */
+  const pickDigit = (n) => {
+    const option = off ? undefined : options[n - 1];
+    if (option === undefined || picked(box.value) === null) return false;
+    pick(option, true);
+    return true;
+  };
   // What is on its way stays as sent: an edit made meanwhile would be lost with the draft.
   /** The box on the page: this new one, or the one being typed in that `patch` kept. @type {HTMLTextAreaElement} */
   let box = h("textarea", {
@@ -157,13 +175,16 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
         e.preventDefault();
         // A permission's box holds a reason to deny: empty, the keys do nothing rather than deny.
         if (!decide || box.value.trim()) send(e);
+        return;
       }
-      // While the box is empty or holds only options as picked, a digit picks (or toggles) another.
-      const option = /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && !off ? options[Number(e.key) - 1] : undefined;
-      if (option !== undefined && picked(box.value) !== null) {
+      const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+      // Options picked with the keys (or ticked) are sent with Enter; anything written takes a new line as usual.
+      if (e.key === "Enter" && plain && !e.shiftKey && !e.isComposing && (picked(box.value)?.length ?? 0) > 0) {
         e.preventDefault();
-        pick(option, true);
+        send(e);
+        return;
       }
+      if (/^[1-9]$/.test(e.key) && plain && pickDigit(Number(e.key))) e.preventDefault();
     },
     onpaste: images
       ? (e) => {
@@ -175,8 +196,11 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
       : null,
   });
   box.value = leftTheBox(key) ? "" : (ui.drafts.get(key) ?? "");
+  // The desk's own digit keys pick in the large card's box as the box's keys do (app.js).
+  pickers.set(box, pickDigit);
   onKept(box, (live) => {
     box = live;
+    pickers.set(live, pickDigit);
     // Written only when it differs (a message sent empties it): setting a value resets the keyboard too.
     const draft = leftTheBox(key) ? "" : (ui.drafts.get(key) ?? "");
     if (live.value !== draft) {
@@ -185,13 +209,28 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
     }
   });
   const chosen = picked(box.value) ?? [];
-  const opts = options.map((o, i) => h("button", { "aria-pressed": String(chosen.includes(o)), disabled: off !== null, onclick: (e) => pick(o, !byFinger(e)) }, several ? h("span", { class: "tick", "aria-hidden": "true" }) : null, i < 9 ? h("kbd", {}, String(i + 1)) : null, o));
+  const busy = ui.sending.has(key);
+  // One choice is sent as soon as it is clicked, verbatim, as Send sends it; several are ticked, then sent.
+  const opts = options.map((o, i) =>
+    h(
+      "button",
+      {
+        "aria-pressed": String(chosen.includes(o)),
+        "aria-label": several ? null : TEXT.answerWith(o),
+        disabled: off !== null || (!several && (busy || uploading)),
+        onclick: several ? (e) => pick(o, !byFinger(e)) : (e) => (pick(o, false), send(e, o, !byFinger(e))),
+      },
+      several ? h("span", { class: "tick", "aria-hidden": "true" }) : null,
+      i < 9 ? h("kbd", {}, String(i + 1)) : null,
+      h("span", { class: "opt-text" }, o),
+      several ? null : h("span", { class: "opt-go", "aria-hidden": "true" }, icon("send")),
+    ),
+  );
   /** @param {Event} e */
   const pickFiles = (e) => {
     const picker = e.currentTarget instanceof Element ? e.currentTarget.parentElement?.querySelector("input") : null;
     picker?.click();
   };
-  const busy = ui.sending.has(key);
   const decision = decide
     ? h(
         "div",
@@ -203,10 +242,11 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
   return h(
     "div",
     { class: `answer${off ? " off" : ""}${decide ? " decides" : ""}` },
-    decide ? [middle ? h("div", { class: "answer-middle" }, middle) : null, decision] : null,
+    // Read first, then choose: what the session said comes before what answers it.
+    middle ? h("div", { class: "answer-middle" }, middle) : null,
+    decision,
     opts.length && several ? h("div", { class: "opts-note faint" }, TEXT.pickSeveral) : null,
-    opts.length ? h("div", { class: `opts${several ? " several" : ""}`, role: several ? "group" : null, "aria-label": several ? TEXT.pickSeveral : null }, opts) : null,
-    middle && !decide ? h("div", { class: "answer-middle" }, middle) : null,
+    opts.length ? h("div", { class: `opts${several ? " several" : " sends"}`, role: several ? "group" : null, "aria-label": several ? TEXT.pickSeveral : null }, opts) : null,
     attached.length || uploading
       ? h(
           "div",
@@ -253,7 +293,15 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
           h("span", { class: "send-lbl", "aria-hidden": "true" }, h("span", {}, TEXT.sendShort), h("span", {}, TEXT.sending)),
         ),
       ),
-      h("span", { class: "faint send-hint" }, off ?? [h("span", { class: "keys-only" }, `${decide ? TEXT.permission.keys : TEXT.sendKeys} `), hint, images ? ` ${TEXT.pasteImages}` : ""]),
+      h(
+        "span",
+        { class: "faint send-hint" },
+        off ?? [
+          h("span", { class: "keys-only" }, `${decide ? TEXT.permission.keys : options.length ? TEXT.optionKeys : TEXT.sendKeys} `),
+          options.length && !several ? TEXT.optionSends : hint,
+          images ? ` ${TEXT.pasteImages}` : "",
+        ],
+      ),
     ),
   );
 }
@@ -269,6 +317,8 @@ function questionText(text) {
   if (text.split("\n").filter((l) => l.trim()).length <= 1) return head(text);
   return [head(headline(text)), h("div", { class: "qctx md qfull" }, mdBlocks(text))];
 }
+// A context longer than this many lines (style.css shows as many folded) folds at its end.
+const CONTEXT_FOLD_LINES = 60;
 // Past this many characters a question reads as a paragraph, not a title: it steps down in size and weight.
 const LONG_QUESTION = 160;
 
@@ -296,10 +346,14 @@ function earlierConversation(q) {
   return [toggle, h("div", { class: "conversation", "data-scroll": `conv-${q.id}`, "data-scroll-end": true, "data-grow": true }, before.length ? conversationView(before) : h("div", { class: "faint" }, TEXT.conversation.none))];
 }
 
-/** What the session said around a question, folded when long. @param {Question} q */
-function contextFold(q) {
+/**
+ * What the session said around a question, whole: read before choosing. Only a huge one folds, at its end;
+ * over a conversation or in a bubble (`scrolls`) it scrolls in a box of its own instead.
+ * @param {Question} q @param {boolean} scrolls
+ */
+function contextFold(q, scrolls) {
   if (!q.context) return null;
-  const long = q.context.length > 320 || q.context.split("\n").length > 5;
+  const long = !scrolls && (q.context.split("\n").length > CONTEXT_FOLD_LINES || q.context.length > CONTEXT_FOLD_LINES * 100);
   const unfolded = ui.contextOpen.has(q.id);
   return [
     h("div", { class: `qctx md${long && !unfolded ? " folded" : ""}`, "data-scroll": `ctx-${q.id}` }, mdBlocks(q.context)),
@@ -308,8 +362,8 @@ function contextFold(q) {
 }
 
 /**
- * What an item asks and what it takes to answer it: the question, its options, then what the session
- * said around it. Questions asked together come as numbered parts, each answered on its own, under a
+ * What an item asks and what it takes to answer it: the question, what the session said around it and its
+ * earlier messages on demand, then the options and the box. Questions asked together come as numbered parts, each answered on its own, under a
  * line saying the session waits for all of them. In the session panel the question shows whole in a
  * box of its own height, the conversation above holding the rest. @param {Item} item @param {{ panel?: boolean }} [where]
  */
@@ -318,7 +372,7 @@ export function askBody(item, { panel = false } = {}) {
   const text = (q) => (q.kind === "permission" ? h("pre", { class: "qcode", "data-scroll": `code-${q.id}` }, q.text) : panel ? h("div", { class: "pq-text", "data-scroll": `pq-${q.id}` }, questionText(q.text)) : questionText(q.text));
   /** @param {Question} q @param {Child} [earlier] */
   const ask = (q, earlier = null) => {
-    const more = [contextFold(q), earlier].flat().filter(Boolean);
+    const more = [contextFold(q, panel), earlier].flat().filter(Boolean);
     return [text(q), q.status === "open" ? answerForm(q, more.length ? h("div", { class: "qmore" }, more) : null) : resolvedLine(q)];
   };
   const [first] = item.questions;

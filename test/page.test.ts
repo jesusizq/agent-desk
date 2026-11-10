@@ -680,7 +680,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.equal(await page.eval<boolean>(`${box} === kept`), true, "the box empties, it is not replaced");
     });
 
-    it("on the inbox's large card, whose options still fill it", async () => {
+    it("on the inbox's large card, whose options answer at once", async () => {
       store.upsertSession({ id: "answering", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "answering a question", state: "waiting" });
       const stop = store.listen("answering");
       const asked = store.ask({ sessionId: "answering", kind: "question", text: "Which colour for the button?", options: ["Green", "Blue"] });
@@ -701,9 +701,10 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         assert.equal(await page.eval<string>("kept.value"), "my own answer");
         store.dismiss(other.id);
 
+        // An option clicked is the answer, sent at once, whatever the box held.
         await page.click(".next .opts button", "Blue");
-        assert.equal(await page.eval<string>("kept.value"), "Blue");
-        assert.equal(await page.eval<string>(`[...document.querySelectorAll('.next .opts button')].find((b) => b.textContent.includes("Blue")).getAttribute("aria-pressed")`), "true");
+        await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Blue')");
+        assert.deepEqual(store.takeInbox("answering").map((e) => e.answer), ["Blue"]);
       } finally {
         store.dismiss(asked.id);
         stop();
@@ -890,16 +891,16 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.press("Escape");
     });
 
-    it("a tapped option fills the box without raising the keyboard; a tap on the box does", async () => {
+    it("a tapped option is sent at once without raising the keyboard; a tap on the box does", async () => {
       const done = asking("picking", "picking on a phone");
       try {
         const page = await phone();
         await openPanel(page, "picking on a phone");
         await page.tap("#session .opts button", "Blue");
         const box = "document.querySelector('#session .chat-footer textarea')";
-        await page.waitFor(`${box}.value === "Blue"`);
-        assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), false, "the box is not focused, so no keyboard covers the options");
-        assert.equal(await page.eval<string>(`[...document.querySelectorAll('#session .opts button')].find((b) => b.textContent.includes("Blue")).getAttribute("aria-pressed")`), "true");
+        await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('Blue') && m.querySelector('.delivered'))");
+        assert.deepEqual(store.takeInbox("picking").map((e) => e.answer), ["Blue"], "sent as tapped, once");
+        assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), false, "the box is not focused, so no keyboard rose");
         await page.tap("#session .chat-footer textarea");
         await page.waitFor(`document.activeElement === ${box}`);
         await page.press("Escape");
@@ -967,7 +968,6 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         })()`);
         assert.deepEqual(fit, { chips: "none", kind: "none", onKeyboard: 8, roomLeft: true });
         await page.tap("#session .opts button", "Green");
-        await page.tap("#session .chat-footer .send");
         await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('Green') && m.querySelector('.delivered'))");
         store.updateSession("compact-other", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Done elsewhere.", at: new Date().toISOString() } }));
         await page.waitFor("document.querySelector('.toast')?.textContent.includes('another session')");
@@ -1149,7 +1149,6 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.waitFor("document.querySelector('.next textarea') && document.getAnimations().length === 0");
         await page.eval("window.left = 0; new MutationObserver((ms) => { for (const m of ms) if (m.attributeName === 'data-leaving') left++; }).observe(document.getElementById('view'), { attributes: true, subtree: true })");
         await page.click(".next .opts button", "Yes");
-        await page.click(".next .send-col .primary");
         await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Answered')");
         assert.match(await page.eval<string>("document.querySelector('.next.resolved .resolved-line').textContent"), /Answered\s*Yes/);
         await page.waitFor("!document.querySelector('.next.resolved') && !document.querySelector('[data-leaving]')", 5000);
@@ -1932,14 +1931,12 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         try {
           const page = await (phone ? open(390, 700) : open(1400, 640));
           const acts = {
-            answer: "[...card.querySelectorAll('.opts button')].find((b) => b.textContent.includes('Yes')).click(); card.querySelector('.send-col .primary').click()",
+            answer: "[...card.querySelectorAll('.opts button')].find((b) => b.textContent.includes('Yes')).click()",
             dismiss: "[...card.querySelectorAll('.actions button')].find((b) => b.textContent.includes('Dismiss')).click()",
           };
           for (const [text, act] of [["Answered while scrolled?", acts.answer], ["Dismissed while scrolled?", acts.dismiss]] as const) {
             await page.click(".qrow", text);
             await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes(${JSON.stringify(text)}) && !document.getAnimations().length`);
-            await page.eval("[...document.querySelectorAll('.next .qmore button')].find((b) => b.textContent.includes('Show the whole message')).click()");
-            await page.waitFor("!document.getAnimations().length");
             // Every frame from the click until the card is gone: the scroll, the card's top against the scroll
             // area's, the top of the box it held (where its content showed) and of the last row below it.
             type Frame = { scroll: number; card: number | null; box: number | null; row: number | null; resolved: boolean; leaving: boolean };
@@ -2083,7 +2080,6 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.click("#arrival .arr-expand");
         await page.waitFor("document.querySelector('#arrival .arr-body textarea')");
         await page.click("#arrival .opts button", "B");
-        await page.click("#arrival .send");
         await page.waitFor("document.querySelector('#arrival .resolved-line')?.textContent.includes('Answered')");
         assert.deepEqual(store.takeInbox("arrive-out").map((e) => e.answer), ["B"], "delivered as picked, to the session that asked");
         await page.waitFor(`!${bubble}.matches(':popover-open')`);
@@ -2408,5 +2404,100 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
   it("knows every window of the page by one list", async () => {
     const page = await open();
     assert.deepEqual(await page.eval<string[]>("import('/dom.js').then((m) => [...m.WINDOWS])"), await page.eval<string[]>("[...document.querySelectorAll('dialog')].map((d) => d.id)"));
+  });
+
+  describe("a question's card", () => {
+    it("reads the whole message first, then the options, then the box, wherever it shows", async () => {
+      store.upsertSession({ id: "reading", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "read then choose", state: "waiting" });
+      const context = Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of what the session said.`).join("\n");
+      const q = store.ask({ sessionId: "reading", kind: "question", text: "Which way after reading?", context, options: ["This way", "That way"] });
+      const huge = store.ask({ sessionId: "reading", kind: "question", text: "Which way after a huge message?", context: Array.from({ length: 90 }, (_, i) => `Huge line ${i + 1}.`).join("\n"), options: ["Up", "Down"] });
+      try {
+        const page = await open();
+        await page.click(".qrow", "Which way after reading?");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('Which way after reading?') && document.getAnimations().length === 0");
+        const order = (scope: string) =>
+          page.eval<string[]>(`[...document.querySelectorAll('${scope} :is(.qtext, .qctx, .opts, textarea)')].map((el) => el.matches('.qtext') ? 'title' : el.matches('.qctx') ? 'context' : el.matches('.opts') ? 'options' : 'box')`);
+        assert.deepEqual(await order(".next"), ["title", "context", "options", "box"]);
+        assert.equal(await page.eval<boolean>("document.querySelector('.next .qctx').classList.contains('folded')"), false, "30 lines read whole");
+        assert.ok(await page.eval<boolean>("(() => { const c = document.querySelector('.next .qctx'); return c.scrollHeight <= c.clientHeight + 1 && c.textContent.includes('Line 30 of'); })()"));
+        // In its session's panel, the same order.
+        await page.click(".scard", "read then choose");
+        await page.waitFor(arrived("session"));
+        assert.deepEqual(await order("#session .panel-question"), ["title", "context", "options", "box"]);
+        await page.press("Escape");
+        await page.waitFor("!document.getElementById('session').open");
+        // Only a huge message folds, from its end: its start reads as written.
+        await page.click(".qrow", "Which way after a huge message?");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('after a huge message') && document.getAnimations().length === 0");
+        assert.equal(await page.eval<boolean>("document.querySelector('.next .qctx').classList.contains('folded')"), true);
+        assert.match(await page.eval<string>("document.querySelector('.next .qctx').firstElementChild.textContent"), /^Huge line 1\./);
+        assert.equal(await page.eval<number>("document.querySelector('.next .qctx').scrollTop"), 0);
+        await page.click(".next .linkish", "Show the whole message");
+        await page.waitFor("!document.querySelector('.next .qctx').classList.contains('folded')");
+      } finally {
+        store.dismiss(q.id);
+        store.dismiss(huge.id);
+      }
+    });
+
+    it("sends a single choice with one click, as Send does, and the next card takes the keys", async () => {
+      store.upsertSession({ id: "one-click", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "one click answers", state: "waiting" });
+      store.ask({ sessionId: "one-click", kind: "question", text: "Answered with one click?", options: ["Yes, at once", "No"] });
+      const stops = [...new Set(store.openQuestions().map((x) => x.sessionId))].map((id) => store.listen(id));
+      try {
+        const page = await open();
+        await page.click(".qrow", "Answered with one click?");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('Answered with one click?') && document.querySelector('.next .opts button:not([disabled])') && document.getAnimations().length === 0");
+        assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.next .opts button')].map((b) => b.getAttribute('aria-label'))"), ["Answer: Yes, at once", "Answer: No"]);
+        await page.click(".next .opts button", "Yes, at once");
+        await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Yes, at once')");
+        assert.deepEqual(store.takeInbox("one-click").map((e) => e.answer), ["Yes, at once"], "sent once, verbatim");
+        await page.waitFor("!document.querySelector('.next.resolved') && document.activeElement?.matches('.next:not([data-leaving]) textarea')", 5000);
+      } finally {
+        for (const stop of stops) stop();
+      }
+    });
+
+    it("picks an option with a digit without sending it, and Enter sends it", async () => {
+      store.upsertSession({ id: "digits", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "digits pick", state: "waiting" });
+      const q = store.ask({ sessionId: "digits", kind: "question", text: "Picked with a digit?", options: ["First", "Second"] });
+      const stop = store.listen("digits");
+      try {
+        const page = await open();
+        await page.click(".qrow", "Picked with a digit?");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('Picked with a digit?') && document.querySelector('.next textarea:not([readonly])') && document.getAnimations().length === 0");
+        await page.eval("document.activeElement.blur()");
+        for (const type of ["rawKeyDown", "char", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "2", code: "Digit2", text: type === "char" ? "2" : undefined, windowsVirtualKeyCode: 50 });
+        await page.waitFor("document.querySelector('.next textarea').value === 'Second' && document.activeElement === document.querySelector('.next textarea')");
+        assert.equal(await page.eval<string>("[...document.querySelectorAll('.next .opts button')].find((b) => b.textContent.includes('Second')).getAttribute('aria-pressed')"), "true");
+        await new Promise((r) => setTimeout(r, 300));
+        assert.equal(store.getQuestion(q.id)?.status, "open", "a digit alone never sends");
+        await page.press("Enter");
+        await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Second')");
+        assert.deepEqual(store.takeInbox("digits").map((e) => e.answer), ["Second"]);
+      } finally {
+        stop();
+      }
+    });
+
+    it("on a phone, a tapped option sends at once without raising the keyboard", async () => {
+      store.upsertSession({ id: "tap-sends", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a tap answers", state: "waiting" });
+      store.ask({ sessionId: "tap-sends", kind: "question", text: "Answered with a tap?", options: ["Tapped", "Not tapped"] });
+      const stops = [...new Set(store.openQuestions().map((x) => x.sessionId))].map((id) => store.listen(id));
+      try {
+        const page = await openPhone();
+        await page.click(".qrow", "Answered with a tap?");
+        await page.waitFor("document.querySelector('.next')?.textContent.includes('Answered with a tap?') && document.querySelector('.next .opts button:not([disabled])') && document.getAnimations().length === 0");
+        await page.eval("document.querySelector('.next').scrollIntoView()");
+        await page.tap(".next .opts button", "Tapped");
+        await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Tapped')");
+        assert.deepEqual(store.takeInbox("tap-sends").map((e) => e.answer), ["Tapped"]);
+        await new Promise((r) => setTimeout(r, 1500));
+        assert.equal(await page.eval<string>("document.activeElement?.tagName"), "BODY", "no box took the focus: no keyboard");
+      } finally {
+        for (const stop of stops) stop();
+      }
+    });
   });
 });

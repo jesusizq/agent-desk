@@ -5,6 +5,7 @@ import { byId, dialog, patch, WINDOWS } from "./dom.js";
 import { animateLists, fadeIn, stopLists } from "./motion.js";
 import { TEXT } from "./text.js";
 import { renderAlerts } from "./alerts.js";
+import { pickOption } from "./answer.js";
 import { renderArrival } from "./arrivals.js";
 import { watchAway } from "./away.js";
 import { board, skeleton } from "./desk.js";
@@ -123,12 +124,9 @@ document.addEventListener("keydown", (e) => {
   const list = openItems();
   const i = list.findIndex((it) => it.key === ui.sel);
   if (/^[1-9]$/.test(e.key)) {
-    // 1–9 pick an option of the large card's first open question; the box keeps focus so Ctrl+Enter sends it.
-    const option = document.querySelector(".next .opts")?.children[Number(e.key) - 1];
-    if (option instanceof HTMLButtonElement) {
-      e.preventDefault();
-      option.click();
-    }
+    // 1–9 pick an option of the large card's first open question, never send it: its box takes the focus, and Enter sends.
+    const box = document.querySelector(".next .answer:has(> .opts) > textarea");
+    if (box && pickOption(box, Number(e.key))) e.preventDefault();
     return;
   }
   const step = /** @type {Record<string, number>} */ ({ ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 })[e.key];

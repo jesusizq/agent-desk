@@ -113,7 +113,10 @@ them while a live listener exists for it (it waits), or while it works if its re
 the adapter's permission hook waits for it; its entry in the inbox is taken only by that hook. Its
 two options are the answer that allows it and the one that denies it, in that order: the page sends
 one of them, or, for a denial with a reason, the reason itself, which the hook takes as a denial (a
-reason that reads as the allowing answer is sent as the plain denial).
+reason that reads as the allowing answer is sent as the plain denial). Any other question's option is
+sent the moment it is clicked, verbatim, through the same route as typed text; a question that takes
+several options sends the ticked ones, joined by `, `, with Send. A digit key only picks an option;
+Enter sends it.
 
 If the developer types in the terminal while the session waits, before the waiter has taken an
 answer, the adapter withdraws it from the inbox and records the typed text as the answer; typed while

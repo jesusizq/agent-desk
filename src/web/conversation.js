@@ -26,7 +26,7 @@ export function markSending(key, sending) {
     const button = answer?.querySelector(".send");
     if (sending) button?.setAttribute("aria-busy", "true");
     else button?.removeAttribute("aria-busy");
-    for (const b of answer?.querySelectorAll(".decide button") ?? []) if (b instanceof HTMLButtonElement) b.disabled = sending || off;
+    for (const b of answer?.querySelectorAll(".decide button, .opts.sends button") ?? []) if (b instanceof HTMLButtonElement) b.disabled = sending || off;
   }
 }
 
