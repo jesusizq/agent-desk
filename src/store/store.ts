@@ -952,6 +952,29 @@ export class Store {
     };
   }
 
+  /**
+   * The folders whose files make up what the page shows (the snapshot, the plan's history, who
+   * listens), for the server to watch; one that does not exist yet is listed all the same.
+   */
+  stateDirs(): string[] {
+    const p = this.paths;
+    return [
+      p.home,
+      p.sessionsDir,
+      p.questionsDir,
+      p.questionDir("open"),
+      p.questionDir("closed"),
+      p.resultsDir,
+      p.servicesDir,
+      p.metricsDir,
+      p.projectsDir,
+      p.agentsDir,
+      ...this.subdirs(p.agentsDir),
+      p.inboxDir,
+      ...this.subdirs(p.inboxDir),
+    ];
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   private requireSession(sessionId: string): void {

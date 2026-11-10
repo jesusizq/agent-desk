@@ -13,6 +13,7 @@ import { endProcess, isAlive } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
+import { type FeedOptions, StateFeed } from "./feed.ts";
 import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
 import { type Access, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, send, sendJson, writeAllowed } from "./security.ts";
 
@@ -30,6 +31,7 @@ const STATIC: Record<string, string> = {
   "/header.js": "text/javascript; charset=utf-8",
   "/history.js": "text/javascript; charset=utf-8",
   "/layout.js": "text/javascript; charset=utf-8",
+  "/live.js": "text/javascript; charset=utf-8",
   "/notice.js": "text/javascript; charset=utf-8",
   "/pieces.js": "text/javascript; charset=utf-8",
   "/projects.js": "text/javascript; charset=utf-8",
@@ -142,12 +144,13 @@ const ACTIONS: Record<string, Action> = {
   },
 };
 
-export function createDeskServer(store: Store, port: number, remote: Access["remote"] = remoteFromEnv(process.env)): Server {
+export function createDeskServer(store: Store, port: number, remote: Access["remote"] = remoteFromEnv(process.env), feedOptions: Partial<FeedOptions> = {}): Server {
   const secret = store.secret();
   const access: Access = remote ? { port, remote } : { port };
   const unlock = new RemoteUnlock(store.paths.pin, secret);
+  const feed = new StateFeed(() => stateVersion(store).etag, () => store.stateDirs(), feedOptions);
   return createServer((req, res) => {
-    handle(store, access, secret, unlock, req, res).catch((error: unknown) => {
+    handle(store, access, secret, unlock, feed, req, res).catch((error: unknown) => {
       process.stderr.write(`agent-desk: ${req.method} ${req.url}: ${(error as Error).stack ?? String(error)}\n`);
       if (!res.headersSent) sendJson(res, 500, { error: (error as Error).message });
       else res.destroy();
@@ -155,7 +158,7 @@ export function createDeskServer(store: Store, port: number, remote: Access["rem
   });
 }
 
-async function handle(store: Store, access: Access, secret: string, unlock: RemoteUnlock, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(store: Store, access: Access, secret: string, unlock: RemoteUnlock, feed: StateFeed, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const reach = reachOf(req, access);
   if ("refused" in reach) {
     // Opened directly, a sentence for the person; the page's own requests read the status.
@@ -172,6 +175,8 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     const type = STATIC[route];
     if (type) return send(res, 200, fs.readFileSync(path.join(WEB_DIR, route.slice(1))), type);
     if (route === "/api/state") return state(store, req, res);
+    // A remote device's stream ends with its unlock, as its next request would.
+    if (route === "/api/events") return req.method === "GET" ? feed.stream(res, remote ? unlock.unlockedUntil(req) : undefined) : sendJson(res, 405, { error: "method not allowed" });
     if (route === "/api/push/key") return sendJson(res, 200, { key: new Push(store.paths.push).publicKey() });
     const conversation = /^\/api\/sessions\/([^/]+)\/messages$/.exec(route);
     if (conversation?.[1]) {
@@ -187,6 +192,8 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   // A device already unlocked may still show an old PIN page (a phone restoring a tab): nothing to do.
   if (route === "/api/unlock" && remote) return sendJson(res, 200, { unlocked: true });
   if (!writeAllowed(req, access, reach.from, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
+  // What the desk itself writes is told to the other pages at once, without waiting for the watch.
+  res.on("finish", () => feed.poke());
   if (route === "/api/seen") return sendJson(res, 200, store.markAllSeen());
   if (route === "/api/images") return attachImage(store, req, res);
   if (route === "/api/push/subscribe" || route === "/api/push/unsubscribe") {
@@ -249,17 +256,21 @@ function page(res: ServerResponse, secret: string): void {
   send(res, 200, html, "text/html; charset=utf-8");
 }
 
-function state(store: Store, req: IncomingMessage, res: ServerResponse): void {
+/** What the page shows but the clock, and its version: the ETag ignores the clock, so an unchanged store costs the page a 304. */
+function stateVersion(store: Store): { stable: Omit<DeskState, "now">; etag: string } {
   const { now: _now, ...stable } = deskState(store);
+  return { stable, etag: `"${createHash("sha256").update(JSON.stringify(stable)).digest("base64url").slice(0, 22)}"` };
+}
+
+function state(store: Store, req: IncomingMessage, res: ServerResponse): void {
+  const { stable, etag } = stateVersion(store);
   const body = JSON.stringify({ ...stable, now: new Date().toISOString() });
-  // The ETag ignores the clock, so an unchanged store costs the page a 304.
-  const etag = `"${createHash("sha256").update(JSON.stringify(stable)).digest("base64url").slice(0, 22)}"`;
   if (req.headers["if-none-match"] === etag) {
     res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });
     res.end();
     return;
   }
-  // Polled every 1.5 s, also from a phone over the tailnet: compressed when the browser takes it.
+  // Fetched at every change, also from a phone over the tailnet: compressed when the browser takes it.
   const gzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));
   send(res, 200, gzip ? gzipSync(body) : body, "application/json; charset=utf-8", { ETag: etag, "Cache-Control": "no-cache", Vary: "Accept-Encoding", ...(gzip ? { "Content-Encoding": "gzip" } : {}) });
 }

@@ -10,7 +10,7 @@ const MIN_SPAN = 15 * MINUTE;
 const MIN_RISE = 2;
 /** A provider's reset time moves by seconds between reports; only a later window moves it by more. */
 const SAME_RESET = 10 * MINUTE;
-/** Rounded, so the state the page polls changes only when the forecast does. */
+/** Rounded, so the state's version (its ETag) changes only when the forecast does. */
 const ROUND_TO = 5 * MINUTE;
 
 const sameWindow = (a?: string, b?: string) => (a === undefined || b === undefined ? a === b : Math.abs(Date.parse(a) - Date.parse(b)) <= SAME_RESET);
