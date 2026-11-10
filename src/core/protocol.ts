@@ -120,6 +120,11 @@ export type Agent = {
   type?: string;
   /** The provider's own id for this agent, used by its adapter to match later events. */
   ref?: string;
+  /**
+   * The provider's id of the call that launched it, when its adapter follows launches: it settles a
+   * launch that never started, and keeps the launch apart from the agent its adapter paired with it.
+   */
+  launch?: string;
   /** Short title of the task (the description it was launched with). */
   goal?: string;
   /** One sentence from the orchestrating session: what this agent must deliver. */

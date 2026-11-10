@@ -77,7 +77,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
         // A background task's notification wakes the session like a prompt: it works again, but
         // nothing was said by the developer and nothing they were asked is answered.
         store.updateSession(sid, (s) => ({ ...s, state: "working", activityAt: new Date().toISOString() }));
-        settleAgents(input, ctx);
+        settleAgents(input, ctx, problems);
         return { code: 0 };
       }
       // Without a title from Claude Code, the first thing asked of the session names it. A prompt
@@ -99,7 +99,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (!wasWorking) store.withdrawInbox(sid, prompt);
       store.closeOpen(sid, { answer: prompt, problems });
       syncPermissionMarker(store, problems);
-      settleAgents(input, ctx);
+      settleAgents(input, ctx, problems);
       return { code: 0 };
     }
 
@@ -124,6 +124,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (f.tool_name === ASK_TOOL) closeDialog(sid, f.tool_response, store, problems);
       syncPermissionMarker(store, problems);
       if (input.event !== "PermissionDenied") recordActivity(input, ctx, problems);
+      if (input.event !== "PermissionDenied" && (f.tool_name === "Agent" || f.tool_name === "Task")) launchReturned(input, ctx);
       return { code: 0 };
 
     case "Notification": {
@@ -248,7 +249,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     }),
   );
   recordTurnTexts(input, store, message);
-  settleAgents(input, ctx);
+  settleAgents(input, ctx, problems);
   if (message) store.addMessage({ sessionId: sid, from: "session", text: message });
   const tasks = Array.isArray(input.raw.background_tasks) ? input.raw.background_tasks : [];
   const shells = tasks.filter((t) => typeof t === "object" && t !== null && (t as Fields).type === "shell").length;
@@ -354,15 +355,19 @@ export function endsInterrupted(transcript: string): boolean {
 
 /**
  * At each turn's start and end, agents no hook will stop are recorded as stopped:
+ * - a launch whose Agent call returned without its sub-agent starting (refused, failed, interrupted;
+ *   no hook reports most of those): settled from the call's result in the session's transcript
+ *   (settleLaunch);
  * - an interrupted sub-agent gets no SubagentStop: one still working whose transcript ends
  *   interrupted;
  * - an agent the session reported with `agent-desk agent` that no sub-agent took (its name is not
  *   the label of any), once no sub-agent the hooks follow may still run. Should its sub-agent start
  *   later after all, it takes the sub-agent's state again with its label (settleName).
  */
-function settleAgents(input: Common, ctx: HookContext): void {
+function settleAgents(input: Common, ctx: HookContext, problems: string[]): void {
   const { store } = ctx;
   const sid = input.sessionId;
+  settleLaunches(input, ctx, problems);
   for (const agent of store.listAgents(sid)) {
     if (agent.state !== "working" || !agent.ref || agent.ref.startsWith(PENDING)) continue;
     const meta = subagentMeta(input, agent.ref);
@@ -487,7 +492,8 @@ function describeTool(tool: unknown, input: unknown, projectDir?: string): strin
 // notes on the sub-agent (label and Agent call) only after that hook. An agent is named after the
 // description given to the Agent tool; SubagentStart pairs with the oldest unpaired launch of its type,
 // and the agent's first tool call or its stop corrects the pairing and the name from the notes
-// (settleLabel).
+// (settleLabel). Once the Agent call returns, its result names its sub-agent and settles the pairing
+// for good, or settles a launch that never started (settleLaunch).
 
 const PENDING = "tool:";
 
@@ -499,10 +505,14 @@ function launchAgent(input: Common, ctx: HookContext): void {
   ctx.store.addAgent(input.sessionId, slug(description), compact({
     type,
     ref: `${PENDING}${toolUseId}`,
+    launch: toolUseId || undefined,
     goal: description,
     state: "working" as const,
   }));
 }
+
+/** The Agent call that launched the record's agent; a record from an older adapter names it only while unpaired. */
+const launchOf = (a: Agent) => a.launch ?? (a.ref?.startsWith(PENDING) ? a.ref.slice(PENDING.length) || undefined : undefined);
 
 /** A launch no sub-agent start has been paired with yet, and that has not been settled. */
 const awaitsStart = (a: Agent) => a.state === "working" && a.ref?.startsWith(PENDING) === true;
@@ -516,10 +526,173 @@ function claimLaunch(store: Store, sessionId: string, type: string, agentId: str
     const waiting = store.listAgents(sessionId).filter((a) => awaitsStart(a) && (a.type === type || type === ""));
     if (waiting.length === 0) return false;
     for (const launch of waiting) {
-      if (store.updateAgent(sessionId, launch.name, { ref: agentId, state: "working" }, (a) => awaitsStart(a) && a.ref === launch.ref)) return true;
+      if (store.updateAgent(sessionId, launch.name, claimed(launch, agentId), (a) => awaitsStart(a) && a.ref === launch.ref)) return true;
     }
   }
   throw new Error(`sub-agent ${agentId} of session ${sessionId}: the launches it could pair with were taken or renamed meanwhile, three times; run the hook again`);
+}
+
+/** A launch record now following sub-agent `agentId`; one from an older adapter keeps its launch's id from its ref. */
+const claimed = (launch: Agent, agentId: string): AgentFields => compact({ ref: agentId, state: "working" as const, launch: launchOf(launch) });
+
+/**
+ * Two launch records trade the sub-agents paired with them: id, state and activity. A record left
+ * with none awaits its own launch's start again.
+ */
+function trade(store: Store, sessionId: string, a: Agent, b: Agent): void {
+  const given = (from: Agent, to: Agent) =>
+    compact({ ref: from.ref?.startsWith(PENDING) && to.launch !== undefined ? `${PENDING}${to.launch}` : from.ref, state: from.state, activity: from.activity });
+  store.updateAgent(sessionId, b.name, given(a, b));
+  store.updateAgent(sessionId, a.name, given(b, a));
+}
+
+/** What an Agent call returned: its sub-agent and how it ran, or the error it failed with. */
+export type LaunchOutcome = { agentId?: string; status?: string; error?: string; interrupted?: boolean };
+
+const AGENT_ID = /^[\w-]{1,200}$/;
+
+/** The Agent call of a launch returned (PostToolUse, PostToolUseFailure): its outcome settles the launch. */
+function launchReturned(input: Common, ctx: HookContext): void {
+  const launchId = text(input.raw.tool_use_id ?? "", "hook input.tool_use_id", 200);
+  if (launchId === "") return;
+  if (input.event === "PostToolUseFailure") {
+    const error = firstLine(text(input.raw.error ?? "", "hook input.error", 1_000_000));
+    const interrupted = optional(input.raw.is_interrupt, "hook input.is_interrupt", bool) === true || interruption(error);
+    settleLaunch(ctx.store, input.sessionId, launchId, { error, interrupted });
+    return;
+  }
+  settleLaunch(ctx.store, input.sessionId, launchId, agentResult(fields(input.raw.tool_response ?? {}, "hook input.tool_response"), "hook input.tool_response"));
+}
+
+/** The sub-agent and status an Agent call's result names (`agentId`; `status`: "completed", "async_launched"). */
+function agentResult(response: Fields, where: string): LaunchOutcome {
+  const agentId = optional(response.agentId, `${where}.agentId`, (v, w) => text(v, w, 200));
+  if (agentId !== undefined && !AGENT_ID.test(agentId)) throw new InputError(`${where}.agentId: expected letters, digits, _ or -, got ${JSON.stringify(agentId)}`);
+  return compact({ agentId, status: optional(response.status, `${where}.status`, (v, w) => text(v, w, 100)) });
+}
+
+const interruption = (said: string) => said.startsWith("[Request interrupted by user");
+
+/**
+ * Settles the launch of Agent call `launchId` from what the call returned:
+ * - it names its sub-agent: that sub-agent is paired with this launch (pairLaunch); a foreground call
+ *   that completed leaves it done, a background one (`async_launched`) working, as its start may
+ *   still come;
+ * - it failed, was refused or was interrupted before its sub-agent started: failed, or done when
+ *   interrupted, with the reason as its activity;
+ * - it completed without naming one, and no start was seen: done.
+ */
+export function settleLaunch(store: Store, sessionId: string, launchId: string, outcome: LaunchOutcome): void {
+  const agentId = outcome.agentId;
+  if (agentId !== undefined) {
+    const paired = pairLaunch(store, sessionId, launchId, agentId);
+    if (paired && outcome.status === "completed") store.updateAgent(sessionId, paired.name, { state: "done" }, (a) => a.ref === agentId && a.state === "working");
+    return;
+  }
+  const launch = store.listAgents(sessionId).find((a) => launchOf(a) === launchId);
+  if (!launch || !awaitsStart(launch)) return;
+  const change: AgentFields | undefined =
+    outcome.error !== undefined
+      ? outcome.interrupted
+        ? { state: "done", activity: "Interrupted before it started" }
+        : { state: "failed", activity: bounded(`Did not start: ${outcome.error || "its Agent call failed"}`, 200) }
+      : outcome.status === "completed"
+        ? { state: "done", activity: "Finished; its start was not seen" }
+        : undefined;
+  if (change) store.updateAgent(sessionId, launch.name, change, (a) => awaitsStart(a) && a.ref === launch.ref);
+}
+
+/**
+ * Makes the record of launch `launchId` the one that follows sub-agent `agentId`: it trades with the
+ * launch record a start paired that sub-agent with, or claims it; a sub-agent it held by mistake goes
+ * to another launch of its type still awaiting a start. Returns the launch record.
+ */
+function pairLaunch(store: Store, sessionId: string, launchId: string, agentId: string): Agent | undefined {
+  const agents = store.listAgents(sessionId);
+  const launch = agents.find((a) => launchOf(a) === launchId);
+  if (!launch || launch.ref === agentId) return launch;
+  const holder = agents.find((a) => a.ref === agentId);
+  if (holder) {
+    // A record made for a start no launch awaited (no `launch`) is no launch to trade with.
+    if (holder.launch === undefined) return launch;
+    trade(store, sessionId, holder, launch);
+  } else {
+    if (!launch.ref?.startsWith(PENDING)) {
+      const other = agents.find((a) => a.name !== launch.name && awaitsStart(a) && a.type === launch.type);
+      if (!other) return launch;
+      trade(store, sessionId, launch, other);
+    }
+    store.updateAgent(sessionId, launch.name, claimed(launch, agentId), (a) => a.ref?.startsWith(PENDING) === true);
+  }
+  return store.listAgents(sessionId).find((a) => launchOf(a) === launchId);
+}
+
+/**
+ * At a turn's start or end, launches are settled from their Agent calls' results, when the
+ * transcript has them: one still awaiting its start, and one a start may have paired by mistake.
+ */
+function settleLaunches(input: Common, ctx: HookContext, problems: string[]): void {
+  const agents = ctx.store.listAgents(input.sessionId);
+  if (!agents.some(awaitsStart)) return;
+  const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
+  if (!transcript?.endsWith(".jsonl")) return;
+  const launches = new Map(agents.flatMap((a) => {
+      const id = launchOf(a);
+      return id !== undefined && (awaitsStart(a) || !a.ref?.startsWith(PENDING)) ? [[id, a] as const] : [];
+    }));
+  const outcomes = [...launchOutcomes(transcript, new Set(launches.keys()), problems)];
+  // Pairings already right are left alone; the rest go pairings first, as one may hand a launch back
+  // the start it awaits before that launch's own outcome is read.
+  const due = outcomes.filter(([launchId, o]) => o.agentId === undefined || launches.get(launchId)?.ref !== o.agentId);
+  due.sort(([, a], [, b]) => Number(b.agentId !== undefined) - Number(a.agentId !== undefined));
+  for (const [launchId, outcome] of due) settleLaunch(ctx.store, input.sessionId, launchId, outcome);
+}
+
+/**
+ * The results of these Agent calls in the session's transcript, read from its end: Claude Code
+ * records each tool result as a `user` entry with a `tool_result` block, and the Agent tool's own
+ * result (`toolUseResult`: `agentId`, `status`) beside it.
+ */
+export function launchOutcomes(transcript: string, launchIds: Set<string>, problems: string[]): Map<string, LaunchOutcome> {
+  const found = new Map<string, LaunchOutcome>();
+  for (const line of readTail(transcript, TRANSCRIPT_TAIL).split("\n")) {
+    if (!line.includes("tool_result")) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // the first line of the tail is cut, and the last may be half written
+    }
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Fields;
+    if (e.type !== "user" || e.isSidechain === true || typeof e.message !== "object" || e.message === null) continue;
+    const content = (e.message as Fields).content;
+    const results = (Array.isArray(content) ? content : []).filter((b): b is Fields => typeof b === "object" && b !== null && (b as Fields).type === "tool_result");
+    for (const block of results) {
+      const launchId = block.tool_use_id;
+      if (typeof launchId !== "string" || !launchIds.has(launchId)) continue;
+      const said = firstLine(resultText(block.content));
+      if (block.is_error === true || interruption(said)) {
+        found.set(launchId, { error: said, interrupted: interruption(said) });
+        continue;
+      }
+      // The entry's `toolUseResult` is this call's only when the entry carries this result alone.
+      const own = results.length === 1 && typeof e.toolUseResult === "object" && e.toolUseResult !== null ? (e.toolUseResult as Fields) : {};
+      try {
+        found.set(launchId, agentResult(own, `${transcript}: the result of ${launchId}`));
+      } catch (error) {
+        problems.push((error as Error).message);
+      }
+    }
+  }
+  return found;
+}
+
+/** A tool result's text: a string, or its text blocks. */
+function resultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((b) => (typeof b === "object" && b !== null && typeof (b as Fields).text === "string" ? String((b as Fields).text) : "")).join("\n");
 }
 
 function startAgent(input: Common, ctx: HookContext, problems: string[]): void {
@@ -567,9 +740,7 @@ function settlePairing(input: Common, ctx: HookContext, agentId: string, label: 
   const held = agents.find((a) => a.ref === agentId);
   if (!held?.goal || held.goal === label) return;
   const owner = agents.find((a) => a.goal === label && a.type === held.type && a.ref !== agentId);
-  if (!owner) return;
-  ctx.store.updateAgent(input.sessionId, owner.name, compact({ ref: agentId, state: held.state, activity: held.activity }));
-  ctx.store.updateAgent(input.sessionId, held.name, compact({ ref: owner.ref, state: owner.state, activity: owner.activity }));
+  if (owner) trade(ctx.store, input.sessionId, held, owner);
 }
 
 /**

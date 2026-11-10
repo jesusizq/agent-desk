@@ -16,6 +16,7 @@ answers given on the page back to the session that asked.
 | `PermissionRequest` | a permission item with the tool and its command or path, and options Allow and Deny; the hook then waits (up to 590 s) for a choice on the desk and returns it as Claude Code's decision ("Allow" allows; any other text denies and is given to Claude as the reason). If the prompt is settled in the terminal first, it returns no decision |
 | `PermissionRequest` (`AskUserQuestion`) | one question per question of the dialog, with its options (their descriptions in the context), instead of a permission item; a question the model also asked with `agent-desk ask` under the same text is replaced. Once every one is answered on the desk, the hook returns them as the call's `answers` (`updatedInput`) and the terminal dialog closes. Answered in the terminal instead, the `PostToolUse` of the call closes them with the answers it returned |
 | `PostToolUse`, `PostToolUseFailure`, `PermissionDenied` | settle the session's permission items, and record what the session or the sub-agent that made the call is doing ("Edit: src/app.ts") and when, and when its latest calls failed. `PostToolUse` starts the adapter while `.permission-open` exists in the store and otherwise at most once every 3 s across all sessions (`.activity` stamp), so ordinary tool calls cost no process; a failed call always starts it, so failures are all counted |
+| `PostToolUse`, `PostToolUseFailure` (`Agent`, `Task`) | the call's result settles its launch: the sub-agent it names (`tool_response.agentId`) is the one paired with that launch; a failed call (`error`) leaves a launch no sub-agent started failed, with the error as its activity (done, "Interrupted before it started", when interrupted). A background launch (`status: async_launched`) stays working until its sub-agent stops |
 | `PostToolUse` (`deliver`) | while `.inbox-pending` exists in the store, hands the session the messages written to it on the desk while it works, as context it reads before its next step; a sub-agent's tool call leaves them |
 | `Notification` (`elicitation_dialog`, `agent_needs_input`) | a question with the notification's text |
 | `PreToolUse` (`Agent`, `Task`), `SubagentStart`, `SubagentStop` | one agent per launch, whose goal is the description given to the Agent tool (for agents launched otherwise, such as a workflow's, the label Claude Code notes in `<session>/subagents/…/agent-<id>.meta.json`), done when it stops, or when a turn starts or ends and its transcript ends interrupted (an interrupted agent gets no `SubagentStop`). The record the session made with `agent-desk agent "<label>"` before the hooks knew the label becomes that agent's, so each agent has one record; one that no sub-agent takes is ended when a turn starts or ends while none of the session's sub-agents runs |
@@ -63,12 +64,20 @@ button in the session panel.
   the sub-agent (`<session>/subagents/…/agent-<id>.meta.json`, with the launch's `description`) only
   after that hook. The adapter pairs each start with the oldest unpaired launch of the same type
   (claimed under that record's lock, so starts running at once take different launches), and
-  corrects the pairing from the notes at the agent's first recorded tool call or at its stop. Until
-  then, launches of one type started together may show each other's names (verified 2026-10-29 with
-  three agents launched in one message), and an agent launched otherwise (a workflow's) is named
-  after its type (`workflow-subagent-3`); with the notes it takes its label's name.
-- Those notes are Claude Code's internal files, not a documented interface: if they move or change
-  shape, the correction stops and agents launched outside the Agent tool lose their goal.
+  corrects the pairing from the notes at the agent's first recorded tool call or at its stop, and
+  from the call's result once it returns. Until then, launches of one type started together may
+  show each other's names (verified 2026-10-29 with three agents launched in one message), and an
+  agent launched otherwise (a workflow's) is named after its type (`workflow-subagent-3`); with the
+  notes it takes its label's name.
+- Claude Code fires neither `PostToolUse` nor `PostToolUseFailure` for an Agent call refused at its
+  permission prompt, denied by auto mode or cancelled while it runs (as its hooks documentation
+  states; not verified here), and `PostToolUse` starts the adapter at most every 3 s. Launches left
+  waiting for a start are settled when a turn starts or ends, from the call's result in the last
+  1 MB of the session's transcript (a `tool_result` entry, with the Agent tool's `toolUseResult`
+  beside it); a launch whose result is not there yet stays working until a later turn finds it.
+- Those notes and the transcript's entries are Claude Code's internal files, not a documented
+  interface: if they move or change shape, the corrections stop and agents launched outside the
+  Agent tool lose their goal.
 - Claude Code shows the AskUserQuestion dialog in the terminal while the `PermissionRequest` hook
   waits (verified 2026-10-29), so it can be answered in either place. For permission prompts this is
   not documented and not verified here.

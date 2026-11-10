@@ -43,6 +43,17 @@ function hookProcesses(home: string, transcript: string) {
   };
   return { run, hook, all };
 }
+/** A session transcript holding the results of Agent calls, as Claude Code writes them. */
+function transcriptWith(results: { id: string; text: string; error?: boolean; result?: object }[]): string {
+  const file = path.join(tempHome(), "cc-1.jsonl");
+  const lines = results.map((r) =>
+    JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: r.id, content: [{ type: "text", text: r.text }], ...(r.error ? { is_error: true } : {}) }] }, ...(r.result ? { toolUseResult: r.result } : {}) }),
+  );
+  fs.writeFileSync(file, `${lines.join("\n")}\n`);
+  return file;
+}
+const launch = (tool_use_id: string, description: string, extra: Record<string, unknown> = {}) =>
+  event("PreToolUse", { tool_name: "Agent", tool_use_id, tool_input: { description, subagent_type: "general-purpose", prompt: description, ...extra } });
 const event = (hook_event_name: string, extra: Record<string, unknown> = {}) =>
   readHookInput(JSON.stringify({ session_id: "cc-1", cwd: "/work/shop/sub", hook_event_name, permission_mode: "auto", ...extra }));
 
@@ -493,6 +504,72 @@ describe("Claude Code hooks", () => {
     const agents = new Store(home).listAgents("cc-c");
     assert.equal(agents.length, ids.length, "no start made a record of its own");
     assert.deepEqual(agents.map((a) => a.ref).sort(), ids, "every start took a different launch");
+  });
+
+  it("settles a launch whose Agent call failed before its sub-agent started, so it no longer holds back the others", () => {
+    const store = testStore();
+    handleHook(event("SessionStart", { source: "startup" }), ctx(store));
+    store.upsertAgent("cc-1", "audit-everything", { summary: "Reported under a name no launch has" });
+    handleHook(launch("toolu_1", "Check one"), ctx(store));
+    handleHook(launch("toolu_2", "Check two"), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a-1", agent_type: "general-purpose" }), ctx(store));
+    const error = "Error: Concurrent subagent limit reached. You can run 20 subagents at once. Do not retry.";
+    handleHook(event("PostToolUseFailure", { tool_name: "Agent", tool_use_id: "toolu_2", tool_input: { description: "Check two" }, error, is_interrupt: false }), ctx(store));
+    const two = store.getAgent("cc-1", "check-two");
+    assert.deepEqual([two?.state, two?.activity], ["failed", `Did not start: ${error}`]);
+    handleHook(event("SubagentStop", { agent_id: "a-1", agent_type: "general-purpose", last_assistant_message: "Checked." }), ctx(store));
+    handleHook(event("Stop", { last_assistant_message: "Done." }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.state]), [["audit-everything", "done"], ["check-one", "done"], ["check-two", "failed"]]);
+  });
+
+  it("keeps a background launch working when its call returns before its sub-agent starts", () => {
+    const store = testStore();
+    const result = { isAsync: true, status: "async_launched", agentId: "bg-1", description: "Long audit" };
+    const transcript = transcriptWith([{ id: "toolu_bg", text: "Async agent launched successfully.\nagentId: bg-1", result }]);
+    handleHook(launch("toolu_bg", "Long audit", { run_in_background: true }), ctx(store));
+    handleHook(event("PostToolUse", { tool_name: "Agent", tool_use_id: "toolu_bg", tool_input: { description: "Long audit", run_in_background: true }, tool_response: result }), ctx(store));
+    handleHook(event("Stop", { last_assistant_message: "Launched it.", transcript_path: transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state]), [["long-audit", "bg-1", "working"]]);
+    handleHook(event("SubagentStart", { agent_id: "bg-1", agent_type: "general-purpose" }), ctx(store));
+    handleHook(event("SubagentStop", { agent_id: "bg-1", agent_type: "general-purpose", last_assistant_message: "Audited." }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state]), [["long-audit", "bg-1", "done"]]);
+  });
+
+  it("settles at a turn's start the launches no hook reported on: refused, interrupted, or paired by mistake", () => {
+    const store = testStore();
+    handleHook(launch("toolu_l", "Lint"), ctx(store));
+    handleHook(launch("toolu_r", "Review"), ctx(store));
+    // Review's sub-agent starts while Lint's call is failing, and takes Lint's launch, the oldest.
+    handleHook(event("SubagentStart", { agent_id: "rv-1", agent_type: "general-purpose" }), ctx(store));
+    assert.equal(store.getAgent("cc-1", "lint")?.ref, "rv-1");
+    handleHook(event("SubagentStop", { agent_id: "rv-1", agent_type: "general-purpose", last_assistant_message: "Reviewed." }), ctx(store));
+    handleHook(launch("toolu_no", "Refused one"), ctx(store));
+    handleHook(launch("toolu_esc", "Interrupted one"), ctx(store));
+    const transcript = transcriptWith([
+      { id: "toolu_no", error: true, text: "The user doesn't want to proceed with this tool use. The tool use was rejected." },
+      { id: "toolu_esc", error: true, text: "[Request interrupted by user for tool use]" },
+      { id: "toolu_l", error: true, text: "Error: Concurrent subagent limit reached." },
+      { id: "toolu_r", text: "Reviewed.", result: { status: "completed", agentId: "rv-1", agentType: "general-purpose" } },
+    ]);
+    handleHook(event("UserPromptSubmit", { prompt: "why did two not run?", transcript_path: transcript }), ctx(store));
+    assert.deepEqual(
+      store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.activity]),
+      [
+        ["lint", "tool:toolu_l", "failed", "Did not start: Error: Concurrent subagent limit reached."],
+        ["review", "rv-1", "done", "Reviewed."],
+        ["refused-one", "tool:toolu_no", "failed", "Did not start: The user doesn't want to proceed with this tool use. The tool use was rejected."],
+        ["interrupted-one", "tool:toolu_esc", "done", "Interrupted before it started"],
+      ],
+    );
+  });
+
+  it("leaves a launch alone while its call has not returned, and settles one that completed unseen", () => {
+    const store = testStore();
+    handleHook(launch("toolu_run", "Still running"), ctx(store));
+    handleHook(launch("toolu_unseen", "Never seen"), ctx(store));
+    const transcript = transcriptWith([{ id: "toolu_unseen", text: "Done.", result: { status: "completed" } }]);
+    handleHook(event("Stop", { last_assistant_message: "Done.", transcript_path: transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.state, a.activity]), [["still-running", "working", undefined], ["never-seen", "done", "Finished; its start was not seen"]]);
   });
 
   it("treats an agent started again with the same id as the same agent", () => {

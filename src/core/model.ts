@@ -150,6 +150,7 @@ export function readAgent(value: unknown, where = "agent"): Agent {
     name: id(f.name, `${where}.name`),
     type: optional(f.type, `${where}.type`, label),
     ref: optional(f.ref, `${where}.ref`, label),
+    launch: optional(f.launch, `${where}.launch`, label),
     goal: optional(f.goal, `${where}.goal`, line),
     summary: optional(f.summary, `${where}.summary`, line),
     state: oneOf(AGENT_STATES)(f.state, `${where}.state`),
