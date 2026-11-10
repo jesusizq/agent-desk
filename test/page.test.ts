@@ -12,6 +12,8 @@ import { Browser, findChrome, type Page } from "./browser.ts";
 import { PNG, serve, tempHome } from "./helpers.ts";
 
 const chrome = findChrome();
+/** Nothing on the page moving any more, but for the marks of work in progress, which turn for as long as the work goes on. */
+const STILL = "document.getAnimations().every((a) => a.effect?.getComputedTiming().iterations === Infinity)";
 if (!chrome && process.env.CI) throw new Error("no Chrome found: install one or set AGENT_DESK_CHROME");
 
 describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROME)" }, () => {
@@ -151,6 +153,46 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("draws each state in a shape of its own, solid only where it needs the developer, 14px on a card and 16px in a row", async () => {
+    const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    store.upsertSession({ id: "marks", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "every state", state: "working" });
+    for (const [name, state] of [["w", "working"], ["j", "waiting"], ["b", "blocked"], ["i", "idle"], ["f", "failed"], ["d", "done"]] as const) {
+      store.upsertAgent("marks", name, { goal: `Agent ${state}`, state, activity: `${state} now`, startedAt: ago(20), after: name === "b" ? ["w"] : [] });
+    }
+    store.ask({ sessionId: "marks", kind: "question", text: "Which state is this?" });
+    const page = await open();
+    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('every state'))`;
+    await page.waitFor(`${card}?.querySelector('.s-bad')`);
+    const size = (el: string) => `(() => { const r = ${el}.getBoundingClientRect(); return [r.width, r.height]; })()`;
+    assert.deepEqual(await page.eval<number[]>(size(`${card}.querySelector('.s-l1 .dot.st-needs')`)), [14, 14], "the session's mark on its card");
+    assert.deepEqual(await page.eval<string[]>(`[...${card}.querySelectorAll('.s-bad .dot')].map((d) => d.className)`), ["dot st-failed", "dot st-blocked"]);
+    for (const line of await page.eval<number[][]>(`[...${card}.querySelectorAll('.s-bad')].map((l) => { const r = l.querySelector('.dot').getBoundingClientRect(); return [r.width, l.querySelector('span:not(.dot)').getBoundingClientRect().left]; })`)) {
+      assert.equal(line[0], 14, "a trouble line's mark is the card's size");
+      assert.ok(Math.abs((line[1] ?? 0) - (await page.eval<number>(`${card}.querySelector('.sname').getBoundingClientRect().left`))) <= 1, "its text starts under the session's name");
+    }
+    // The legend holds all seven: one shape each, filled solid, on a tint or as an outline.
+    const legend = await page.eval<{ cls: string; w: number; mask: string; fill: string }[]>(`[...document.querySelectorAll('.legend .dot')].map((d) => ({
+      cls: d.className, w: d.getBoundingClientRect().width, mask: getComputedStyle(d, '::before').maskImage, fill: getComputedStyle(d).backgroundColor }))`);
+    assert.deepEqual(legend.map((d) => d.cls.replace("dot st-", "")), ["needs", "working", "waiting", "blocked", "idle", "failed", "done"]);
+    assert.ok(legend.every((d) => d.w === 14), "one size in the legend");
+    assert.equal(new Set(legend.map((d) => d.mask)).size, 7, "no two states share a shape");
+    const tinted = legend.filter((d) => !/rgba\(0, 0, 0, 0\)|transparent/.test(d.fill)).map((d) => d.cls.replace("dot st-", ""));
+    assert.deepEqual(tinted, ["working", "waiting", "blocked", "done"], "work in progress sits on a soft disc; needs you and failed are solid, idle an outline");
+    await page.click(".scard", "every state");
+    await page.click("#session .pchips button.chip", "agents");
+    await page.waitFor("document.querySelectorAll('#session .ppart .arow .dot').length === 6");
+    assert.deepEqual(
+      await page.eval<string[]>("[...document.querySelectorAll('#session .ppart .arow .dot')].map((d) => `${d.className.replace('dot st-', '')} ${d.getBoundingClientRect().width}`)"),
+      ["failed 16", "blocked 16", "idle 16", "working 16", "waiting 16", "done 16"],
+    );
+    const turning = "getComputedStyle(document.querySelector('#session .arow .live > .st-working'), '::before').animationName";
+    assert.equal(await page.eval<string>(turning), "mark-turn", "an agent at work turns");
+    await page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    assert.equal(await page.eval<string>(turning), "none", "and stays still when the system asks for less motion");
+    assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('.legend .st-working'), '::before').animationName"), "none", "the legend's never turns");
+    await page.press("Escape");
+  });
+
   it("brings an unanswered question up once more after 15 minutes", async () => {
     const page = await browser.newPage(1400, 900);
     pages.push(page);
@@ -214,7 +256,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await browser.send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
     const page = await open();
     await page.click(".qrow", "Shall I free the disk?");
-    await page.waitFor("document.getAnimations().length === 0"); // the card grows out of its row: its code is clicked once in view
+    await page.waitFor(STILL); // the card grows out of its row: its code is clicked once in view
     await page.click(".next pre[data-copy]");
     await page.waitFor("document.querySelector('.toast')?.textContent.startsWith('Copied: ! rm -rf build')");
     assert.equal(await page.eval<string>("navigator.clipboard.readText()"), "! rm -rf build");
@@ -279,7 +321,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.click(".qrow", "Ship the earlier turns?");
       await page.click(".next button", "Earlier in this session");
       const block = "document.querySelector('.next .conversation')";
-      await page.waitFor(`${block} && !document.getAnimations().length`);
+      await page.waitFor(`${block} && ${STILL}`);
       const [top, height, shown] = await page.eval<[number, number, number]>(`[${block}.scrollTop, ${block}.scrollHeight, ${block}.clientHeight]`);
       assert.ok(height > shown, "longer than its box");
       assert.ok(Math.abs(top + shown - height) <= 1, `scrolled to its newest end: ${top} + ${shown} of ${height}`);
@@ -715,7 +757,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.click(".qrow", "Which colour for the button?");
         await page.waitFor("document.querySelector('.next')?.textContent.includes('Which colour for the button?')");
         const box = "document.querySelector('.next textarea')";
-        await page.waitFor("document.getAnimations().length === 0"); // a card still moving in takes the click elsewhere
+        await page.waitFor(STILL); // a card still moving in takes the click elsewhere
         await page.click(".next textarea");
         await page.waitFor(`document.activeElement === ${box}`);
         await page.type("my own answer");
@@ -772,7 +814,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
       await page.click(".qrow", "Is the box still in view?");
       await page.waitFor("document.querySelector('.next')?.textContent.includes('Is the box still in view?')");
-      await page.waitFor("document.getAnimations().length === 0"); // the card grows out of its row: measured once it has
+      await page.waitFor(STILL); // the card grows out of its row: measured once it has
       const onCard = "document.querySelector('.next textarea')";
       // Covers the box's last 20 px, whatever its place on the page.
       await page.eval(`(() => { ${onCard}.focus(); window.scrollTo(0, 0); setKeyboard(innerHeight - ${onCard}.getBoundingClientRect().bottom + 20); })()`);
@@ -899,7 +941,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const openPanel = async (page: Page, title: string) => {
       await page.click(".tabbar button", "Sessions");
       await page.click(".scard", title);
-      await page.waitFor("document.querySelector('#session .chat-footer textarea') && document.getAnimations().length === 0");
+      await page.waitFor(`document.querySelector('#session .chat-footer textarea') && ${STILL}`);
     };
 
     it("one line when empty, round buttons, clear of the home indicator, with the conversation resting on it", async () => {
@@ -956,7 +998,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         const page = await phone();
         await page.click(".qrow", "room for the keyboard");
         const box = "document.querySelector('.next textarea')";
-        await page.waitFor(`${box} && document.getAnimations().length === 0`);
+        await page.waitFor(`${box} && ${STILL}`);
         const where = `[Math.round(scrollY), Math.round(${box}.getBoundingClientRect().top), document.documentElement.scrollHeight]`;
         await page.eval("window.scrollTo(0, document.documentElement.scrollHeight)");
         const before = await page.eval<number[]>(where);
@@ -1035,7 +1077,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         const page = await phone(390, 844, coveringKeyboard(844));
         await page.click(".qrow", "a growing answer");
         const box = "document.querySelector('.next textarea')";
-        await page.waitFor(`${box} && document.querySelector('.next').textContent.includes('a growing answer') && document.getAnimations().length === 0`);
+        await page.waitFor(`${box} && document.querySelector('.next').textContent.includes('a growing answer') && ${STILL}`);
         // The keyboard leaves 20 px under the box: no scroll is needed until it grows.
         await page.eval(`(() => { ${box}.focus(); setKeyboard(innerHeight - ${box}.getBoundingClientRect().bottom - 20); })()`);
         await page.waitFor("document.documentElement.hasAttribute('data-keyboard')");
@@ -1073,7 +1115,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       const page = await open();
       await page.click(".qrow", "Does the card hold still?");
       const card = "document.querySelector('.next')";
-      await page.waitFor(`${card}?.textContent.includes('Does the card hold still?') && document.getAnimations().length === 0`);
+      await page.waitFor(`${card}?.textContent.includes('Does the card hold still?') && ${STILL}`);
       const height = () => page.eval<number>(`${card}.getBoundingClientRect().height`);
       const off = await height();
       assert.equal(await page.eval<string>(`${card}.querySelector('textarea').placeholder`), "Answer in its terminal");
@@ -1172,7 +1214,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       try {
         const page = await open();
         await page.click(".qrow", "Answered from the desk?");
-        await page.waitFor("document.querySelector('.next textarea') && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelector('.next textarea') && ${STILL}`);
         await page.eval("window.left = 0; new MutationObserver((ms) => { for (const m of ms) if (m.attributeName === 'data-leaving') left++; }).observe(document.getElementById('view'), { attributes: true, subtree: true })");
         await page.click(".next .opts button", "Yes");
         await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Answered')");
@@ -1187,18 +1229,19 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
     it("swaps the large card for a picked question: the old card folds away, never a row painted over the new one", async () => {
       const page = await open();
-      await page.waitFor("document.getAnimations().length === 0");
+      await page.waitFor(STILL);
       // Frozen mid-way: the old question's row opens at a row's height below the new card, which nothing covers.
       const midway = (pick: string) =>
         page.eval<Record<string, boolean>>(`(() => {
           const old = document.querySelector('.next').dataset.flip;
+          const ends = (a) => a.effect?.getComputedTiming().iterations !== Infinity;
           ${pick};
-          for (const a of document.getAnimations()) (a.pause(), (a.currentTime = 140));
+          for (const a of document.getAnimations().filter(ends)) (a.pause(), (a.currentTime = 140));
           const next = document.querySelector('.next:not([data-leaving])').getBoundingClientRect();
           const back = document.querySelector('.qrow[data-flip="' + old + '"]');
           const row = back.getBoundingClientRect();
           const hit = document.elementFromPoint(next.left + next.width / 2, next.top + 12);
-          for (const a of document.getAnimations()) a.finish();
+          for (const a of document.getAnimations().filter(ends)) a.finish();
           return { rowSized: row.height <= back.getBoundingClientRect().height + 0.5, below: row.top >= next.bottom - 1, newOnTop: !!hit?.closest('.next:not([data-leaving])') };
         })()`);
       const clean = { rowSized: true, below: true, newOnTop: true };
@@ -1215,7 +1258,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       try {
         const page = await open();
         await page.click(".qrow", "Answered with the keys?");
-        await page.waitFor("document.querySelector('.next textarea:not([readonly])') && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelector('.next textarea:not([readonly])') && ${STILL}`);
         await page.click(".next textarea");
         await page.type("Yes, with the keys");
         for (const type of ["rawKeyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 2 });
@@ -1259,11 +1302,11 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       const finish = (n: number) => store.updateSession(`toasting-${n}`, (s) => ({ ...s, state: "waiting", lastMessage: { text: `Finished ${n}.`, at: new Date().toISOString() } }));
       const page = await open();
       finish(1);
-      await page.waitFor("document.querySelectorAll('.toast').length === 1 && document.getAnimations().length === 0");
+      await page.waitFor(`document.querySelectorAll('.toast').length === 1 && ${STILL}`);
       await page.eval("window.tops = []; (function f() { const t = document.querySelector('.toast'); if (t) tops.push(Math.round(t.getBoundingClientRect().top)); if (tops.length < 120) requestAnimationFrame(f); })()");
       finish(2);
       try {
-        await page.waitFor("document.querySelectorAll('.toast').length === 2 && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelectorAll('.toast').length === 2 && ${STILL}`);
         const tops = await page.eval<number[]>("tops");
         const start = tops[0] ?? 0;
         const end = tops.at(-1) ?? 0;
@@ -1390,9 +1433,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<string>(scheme), "light");
     assert.equal(await page.eval<string>("getComputedStyle(document.querySelector('#alerts-menu')).accentColor"), "rgb(81, 70, 220)", "checkboxes take the desk's accent");
     await page.click("#theme");
-    await page.waitFor("!document.getAnimations().length");
+    await page.waitFor(STILL);
     await page.click("#display-menu button", "Dark");
-    assert.deepEqual(await page.eval<string[]>("document.getAnimations().map((a) => a.transitionProperty)"), [], "no control fades on its own from the old colours");
+    assert.deepEqual(await page.eval<string[]>("document.getAnimations().filter((a) => a instanceof CSSTransition).map((a) => a.transitionProperty)"), [], "no control fades on its own from the old colours");
     assert.equal(await page.eval<string>(scheme), "dark", "scrollbars and checkboxes follow the theme chosen, not the system's");
     await page.eval("localStorage.clear()");
   });
@@ -1518,7 +1561,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.click(".scard", "checkout redesign");
       await page.waitFor(arrived("session"));
       assert.deepEqual(await closing(page, "session"), whole, `the session's window at ${width} px`);
-      await page.waitFor("!document.querySelector('dialog[open]') && !document.getAnimations().length");
+      await page.waitFor(`!document.querySelector('dialog[open]') && ${STILL}`);
       await openResultOf(page, "Checkout: before and after");
       assert.deepEqual(await closing(page, "result"), whole, `the result's window at ${width} px`);
       await page.waitFor("!document.querySelector('dialog[open]')");
@@ -1693,7 +1736,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<number>("document.getElementById('needs-pill').getClientRects().length"), 0, "the Inbox tab counts the questions, not a header pill");
     await page.click("#theme");
     const link = "document.querySelector('#display-menu .menu-credit a')";
-    await page.waitFor(`${link}?.getClientRects().length && document.getAnimations().length === 0`); // measured once the menu has opened
+    await page.waitFor(`${link}?.getClientRects().length && ${STILL}`); // measured once the menu has opened
     assert.equal(await page.eval<string>(`${link}.href`), "https://github.com/jesusizq");
     assert.match(await page.eval<string>(`${link}.textContent`), /© 2026 Jesús Izquierdo/);
     assert.ok((await page.eval<number>(`${link}.getBoundingClientRect().height`)) >= 44, "a finger's target");
@@ -1752,7 +1795,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
     await page.click(".tabbar button", "Sessions");
     await page.click(".scard", "checkout redesign");
-    await page.waitFor("document.querySelector('#session .pchips button.chip') && document.querySelector('#session .session-body').scrollTop > 0 && document.getAnimations().length === 0");
+    await page.waitFor(`document.querySelector('#session .pchips button.chip') && document.querySelector('#session .session-body').scrollTop > 0 && ${STILL}`);
     return page;
   }
 
@@ -1926,7 +1969,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
           for (const type of ["rawKeyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 2 });
         };
         await page.click(".qrow", "Which port should the preview use?");
-        await page.waitFor("document.querySelectorAll('.next .qpart').length === 2 && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelectorAll('.next .qpart').length === 2 && ${STILL}`);
         await page.click(".next .qpart textarea");
         await page.type("5173");
         await ctrlEnter();
@@ -1962,7 +2005,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
           };
           for (const [text, act] of [["Answered while scrolled?", acts.answer], ["Dismissed while scrolled?", acts.dismiss]] as const) {
             await page.click(".qrow", text);
-            await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes(${JSON.stringify(text)}) && !document.getAnimations().length`);
+            await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes(${JSON.stringify(text)}) && ${STILL}`);
             // Every frame from the click until the card is gone: the scroll, the card's top against the scroll
             // area's, the top of the box it held (where its content showed) and of the last row below it.
             type Frame = { scroll: number; card: number | null; box: number | null; row: number | null; resolved: boolean; leaving: boolean };

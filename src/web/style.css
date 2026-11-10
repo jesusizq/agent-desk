@@ -7,6 +7,8 @@
   --shadow-lift: 0 6px 12px -5px rgb(16 24 40 / .2), 0 2px 4px rgb(16 24 40 / .06);
   --proposed: #9150db; --todo: #0e8fcf; --blocked: #8a94a5; --doing: #ee6a1a; --review: #d9407f; --done: #1f9d4f;
   --danger: #d63030; --lane: rgb(15 23 42 / .022);
+  /* The soft disc under a state mark in progress */
+  --tint: 15%;
   /* Motion tokens: one easing and three durations for every transition */
   --ease-out: cubic-bezier(.2, .8, .2, 1); --dur-1: .12s; --dur-2: .18s; --dur-3: .28s;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -22,7 +24,7 @@
   --text: #e4e7ec; --muted: #9fa7b5; --faint: #818a9b; --accent: #8a90fb; --accent-text: #0e1016; --raise: #2b303b;
   --shadow: 0 1px 2px rgb(0 0 0 / .45); --shadow-lg: 0 14px 34px rgb(0 0 0 / .55); --shadow-lift: 0 6px 12px -5px rgb(0 0 0 / .6), 0 2px 4px rgb(0 0 0 / .35);
   --proposed: #b48cf2; --todo: #40b1ec; --blocked: #7c8798; --doing: #fb8740; --review: #ec6ba6; --done: #42c977;
-  --danger: #f04a43; --lane: rgb(255 255 255 / .022);
+  --danger: #f04a43; --lane: rgb(255 255 255 / .022); --tint: 24%;
 }
 
 * { box-sizing: border-box; scrollbar-width: thin; }
@@ -95,7 +97,7 @@ button.chip:hover { border-color: var(--border-strong); }
 /* A warning informs, it needs no answer: an orange mark on a plain chip, not a coloured fill */
 .chip.warn { background: var(--surface); }
 .chip.warn::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--doing); flex: none; }
-.scard > .chip { margin-left: 17px; }
+.scard > .chip { margin-left: 21px; }
 
 /* Board: the inbox on the left; the sessions and what to review on the right. Each part scrolls on its own. */
 /* The right column grows with the window unless its width was set by dragging (--side-w). Every column
@@ -128,19 +130,25 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* Nothing here: calm and centred in its column, the same in every column. */
 .empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; text-align: center; color: var(--muted); font-size: 0.8125rem; }
 .empty p { margin: 0; max-width: 48ch; }
-.empty > .dot { width: 22px; height: 22px; }
+.empty > .dot { width: 28px; height: 28px; }
 .col-needs .empty { padding-block: min(14vh, 120px) 28px; font-size: 0.875rem; }
 
-/* State marks: one shape per state, so they read apart without colour */
-.dot { width: 12px; height: 12px; flex: none; display: inline-block; background: var(--c);
+/* State marks: one shape per state, so they read apart without colour. Only what needs the developer is
+   solid (Needs you, Failed); work in progress sits on a soft disc of its colour; Idle is an empty outline. */
+.dot { width: 14px; height: 14px; flex: none; display: inline-block; position: relative; border-radius: 50%; vertical-align: middle; }
+.dot::before { content: ""; position: absolute; inset: 0; background: var(--c);
   -webkit-mask: var(--mark) center / contain no-repeat; mask: var(--mark) center / contain no-repeat; }
-.st-working { --c: var(--doing); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M8 3a5 5 0 0 1 0 10z' fill='black' stroke='none'/%3E%3C/svg%3E"); }
-.st-waiting { --c: var(--todo); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M8 5v3.5l2 1.5' stroke-linecap='round'/%3E%3C/svg%3E"); }
-.st-needs { --c: var(--accent); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='black'/%3E%3C/svg%3E"); }
-.st-blocked { --c: var(--blocked); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2'%3E%3Ccircle cx='8' cy='8' r='6'/%3E%3Cpath d='M4 4l8 8'/%3E%3C/svg%3E"); }
-.st-idle { --c: var(--blocked); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2'%3E%3Ccircle cx='8' cy='8' r='6' stroke-dasharray='2.6 2.112' stroke-dashoffset='1.3'/%3E%3C/svg%3E"); }
-.st-done { --c: var(--done); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2'%3E%3Cmask id='m'%3E%3Crect width='16' height='16' fill='white' stroke='none'/%3E%3Cpath d='M5 8.3l2 2 4-4.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/mask%3E%3Ccircle cx='8' cy='8' r='7' mask='url(%23m)' fill='black' stroke='none'/%3E%3C/svg%3E"); }
-.st-failed { --c: var(--danger); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2'%3E%3Cmask id='m'%3E%3Crect width='16' height='16' fill='white' stroke='none'/%3E%3Cpath d='M5.5 5.5l5 5M10.5 5.5l-5 5' stroke-linecap='round'/%3E%3C/mask%3E%3Ccircle cx='8' cy='8' r='7' mask='url(%23m)' fill='black' stroke='none'/%3E%3C/svg%3E"); }
+.dot:is(.st-working, .st-waiting, .st-blocked, .st-done) { background: color-mix(in srgb, var(--c) var(--tint), transparent); }
+/* Only a mark standing for something at work now turns; the legend's stays still. */
+@media (prefers-reduced-motion: no-preference) { .live > .dot.st-working::before { animation: mark-turn 1.6s linear infinite; } }
+@keyframes mark-turn { to { rotate: 1turn; } }
+.st-needs { --c: var(--accent); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cmask id='m'%3E%3Crect width='16' height='16' fill='white'/%3E%3Cpath d='M6.1 6.3a1.95 1.95 0 1 1 2.75 1.8c-.5.22-.85.62-.85 1.15v.35' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.7'/%3E%3Ccircle cx='8' cy='11.75' r='1.05'/%3E%3C/mask%3E%3Ccircle cx='8' cy='8' r='8' mask='url(%23m)'/%3E%3C/svg%3E"); }
+.st-working { --c: var(--doing); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round'%3E%3Ccircle cx='8' cy='8' r='4.25' stroke-dasharray='20 6.7'/%3E%3C/svg%3E"); }
+.st-waiting { --c: var(--todo); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.9'%3E%3Cpath d='M8 3.9V8l2.8 1.85'/%3E%3C/svg%3E"); }
+.st-blocked { --c: var(--blocked); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='2'%3E%3Cpath d='M4.7 8h6.6'/%3E%3C/svg%3E"); }
+.st-idle { --c: var(--blocked); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5'%3E%3Ccircle cx='8' cy='8' r='7.15' stroke-dasharray='2.4 2.09'/%3E%3C/svg%3E"); }
+.st-failed { --c: var(--danger); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cmask id='m'%3E%3Crect width='16' height='16' fill='white'/%3E%3Cpath d='M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'/%3E%3C/mask%3E%3Ccircle cx='8' cy='8' r='8' mask='url(%23m)'/%3E%3C/svg%3E"); }
+.st-done { --c: var(--done); --mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.8'%3E%3Cpath d='M4.9 8.3l2.1 2.1 4.1-4.5'/%3E%3C/svg%3E"); }
 
 /* Where a card comes from: the session's name gives way first, then the project's, never the age beside it. */
 .where { display: inline-flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; overflow: hidden; }
@@ -185,16 +193,16 @@ body.resizing { cursor: col-resize; user-select: none; }
 .scard:hover { background: var(--surface-2); }
 .scard.needs { box-shadow: inset 3px 0 0 var(--accent); }
 .s-l1 { display: flex; align-items: center; gap: 7px; min-width: 0; font-weight: 600; }
-.s-l1 > .dot, .s-l1 > .live .dot { width: 10px; height: 10px; }
 .s-meta { margin-left: auto; padding-left: 8px; flex: none; color: var(--faint); font: 400 0.7812rem var(--sans); white-space: nowrap; }
-.s-ask, .s-bad, .s-more, .s-l3, .scard > .quiet-line { padding-left: 17px; font-size: 0.8125rem; min-width: 0; }
+.s-ask, .s-more, .s-l3, .scard > .quiet-line { padding-left: 21px; font-size: 0.8125rem; min-width: 0; }
 .s-ask { color: var(--text); display: flex; align-items: baseline; gap: 6px; }
 .s-ask-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .s-ask-more { flex: none; color: var(--faint); font-size: 0.75rem; }
 .s-label { color: var(--accent); font-weight: 650; }
-.s-bad { color: var(--danger); display: flex; align-items: baseline; gap: 6px; }
-.s-bad .dot { width: 9px; height: 9px; flex: none; transform: translateY(1px); }
-.s-bad > span { flex: 1; min-width: 0; }
+.s-bad { color: var(--danger); display: flex; align-items: flex-start; gap: 7px; font-size: 0.8125rem; min-width: 0; }
+/* Its mark under the card's, centred on the first line, so the text lines up with the session's name. */
+.s-bad .dot { margin-top: calc((1lh - 14px) / 2); }
+.s-bad > span:not(.dot) { flex: 1; min-width: 0; }
 /* A failed command can be a whole script: its first line is enough to recognise it. */
 .s-bad code { display: block; width: fit-content; max-width: 100%; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Quiet may be a long run, not a fault: a warning, not the red of a failure. */
@@ -395,7 +403,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .credits a:hover { color: var(--text); }
 .credits .i { width: 15px; height: 15px; }
 .legend { display: flex; flex-wrap: wrap; gap: 3px 10px; }
-.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
 /* Every kind of row fills the same tracks: a mark centred in its cell, the text, the time, and one cell
    for the row's own button (Go or dismiss), so the times form one column and a button never covers one. */
 .qrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto 3.5rem; align-items: center; gap: 2px 12px; padding: 10px 14px; border-radius: 10px; flex: none;
@@ -443,7 +451,8 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .arow.failed .adoing { color: var(--danger); }
 .arow .aname { overflow: hidden; min-width: 0; }
 .awhat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.awhat .adoing, .awhat .asummary, .awhat .astuck { padding-left: 19px; font-size: 0.7812rem; }
+.arow .dot { width: 16px; height: 16px; }
+.awhat .adoing, .awhat .asummary, .awhat .astuck { padding-left: 23px; font-size: 0.7812rem; }
 .astuck { color: var(--danger); font-weight: 600; }
 .agents-fold > summary { cursor: pointer; color: var(--muted); font-size: 0.7812rem; margin-top: 4px; }
 .agents-fold[open] > summary { margin-bottom: 6px; }
@@ -720,7 +729,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .msg.working-now { max-width: none; align-self: stretch; border-top: 1px solid var(--border); padding-top: 10px; font-size: 0.8125rem; }
 /* Its live mark centred on the line, not sitting on the small text's baseline. */
 .msg.working-now .msg-meta { margin: 0 0 4px; display: flex; align-items: center; gap: 6px; }
-.msg.working-now .msg-meta .dot { width: 10px; height: 10px; }
+.msg.working-now .msg-meta .dot { width: 12px; height: 12px; }
 .msg.working-now > .adoing { font: 0.75rem var(--mono); color: var(--muted); }
 .msg.working-now .alist { margin-top: 8px; }
 
@@ -731,7 +740,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   background: var(--surface); border-bottom: 1px solid var(--border); }
 .pchips .chip { padding: 3px 10px; white-space: nowrap; }
 .pchips .chip .i { width: 13px; height: 13px; }
-.pchips .chip .dot { width: 10px; height: 10px; }
+.pchips .chip .dot { width: 12px; height: 12px; }
 .pchips button.chip[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
 .pchips .chip.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); background: color-mix(in srgb, var(--danger) 6%, var(--surface)); }
 .pchips .chip.quiet { color: var(--faint); }
