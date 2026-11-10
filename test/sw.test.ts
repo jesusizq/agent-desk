@@ -15,8 +15,10 @@ const PAGE = `<!doctype html><title>desk</title><script>navigator.serviceWorker.
 type Shown = { body: string; close: () => void };
 
 /** The worker on a device that, like iOS (WebKit bug 258922), stacks notifications whatever their tag. */
-function workerOnIos(getNotifications?: () => Promise<Shown[]>) {
+function workerOnIos(getNotifications?: () => Promise<Shown[]>, deleteCache?: (name: string) => Promise<boolean>) {
   const screen: Shown[] = [];
+  const deleted: string[] = [];
+  const caches = { delete: deleteCache ?? (async (name: string) => (deleted.push(name), true)) };
   const listeners = new Map<string, (e: unknown) => void>();
   const registration = {
     getNotifications: getNotifications ?? (async () => [...screen]),
@@ -27,13 +29,13 @@ function workerOnIos(getNotifications?: () => Promise<Shown[]>) {
   };
   const self = { addEventListener: (type: string, fn: (e: unknown) => void) => listeners.set(type, fn), registration, navigator: {} };
   const logged: unknown[][] = [];
-  vm.runInNewContext(SW.toString(), { self, console: { error: (...args: unknown[]) => logged.push(args) } });
+  vm.runInNewContext(SW.toString(), { self, caches, console: { error: (...args: unknown[]) => logged.push(args) } });
   const push = async (message: object) => {
     const waits: Promise<unknown>[] = [];
     listeners.get("push")?.({ data: { json: () => message }, waitUntil: (p: Promise<unknown>) => waits.push(p) });
     await Promise.all(waits);
   };
-  return { push, logged, bodies: () => screen.map((n) => n.body) };
+  return { push, logged, deleted, bodies: () => screen.map((n) => n.body) };
 }
 
 describe("service worker notifications", () => {
@@ -45,11 +47,20 @@ describe("service worker notifications", () => {
     assert.deepEqual(bodies(), ["4 need you"]);
   });
 
-  it("replaces the count with the notice that the PIN ended", async () => {
-    const { push, bodies } = workerOnIos();
+  it("replaces the count with the notice that the PIN ended, and deletes the desk the device kept", async () => {
+    const { push, bodies, deleted } = workerOnIos();
     await push({ count: 2 });
+    assert.deepEqual(deleted, [], "a count leaves the saved desk alone");
     await push({ pinEnded: true });
     assert.deepEqual(bodies(), ["Enter the PIN to keep getting notifications"]);
+    assert.equal(deleted.length, 1, "the PIN ended: the saved desk is deleted");
+  });
+
+  it("still shows the notice that the PIN ended when the saved desk cannot be deleted, and says why", async () => {
+    const { push, bodies, logged } = workerOnIos(undefined, () => Promise.reject(new Error("no cache storage")));
+    await push({ pinEnded: true });
+    assert.deepEqual(bodies(), ["Enter the PIN to keep getting notifications"]);
+    assert.match(String(logged[0]), /no cache storage/);
   });
 
   it("still shows the notification when the old ones cannot be listed, since iOS requires one for every push", async () => {
@@ -83,17 +94,25 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
   let browser: Browser;
   let server: http.Server;
   let base: string;
-  let mode: "up" | "hung" | "gateway" | "locked" = "up";
+  let mode: "up" | "hung" | "gateway" | "dropped" | "locked" = "up";
+  /** Set, the desk answers as to a device that entered the PIN: with when its unlock ends. Unset, as to this computer. */
+  let unlockEnds: number | undefined;
   const SAVED_TEXT = "the desk";
 
   before(async () => {
     server = http.createServer((req, res) => {
       if (req.url === "/sw.js") return res.writeHead(200, { "Content-Type": "text/javascript" }).end(SW);
-      if (req.url === "/") {
+      if (req.url === "/" || req.url === "/api/state") {
         if (mode === "hung") return; // never answered: a computer asleep
         if (mode === "gateway") return res.writeHead(502).end("Bad Gateway");
+        if (mode === "dropped") return req.socket.destroy(); // no network at all
+        const unlock = unlockEnds === undefined ? {} : { "X-Agent-Desk-Unlock-Ends": String(unlockEnds) };
+        if (req.url === "/api/state") {
+          if (mode === "locked") return res.writeHead(401, { "Content-Type": "application/json", "X-Agent-Desk-Locked": "1" }).end('{"error":"locked: enter the PIN"}');
+          return res.writeHead(200, { "Content-Type": "application/json", ...unlock }).end('{"desk":true}');
+        }
         if (mode === "locked") return res.writeHead(200, { "Content-Type": "text/html", "X-Agent-Desk-Locked": "1" }).end("<!doctype html><title>pin</title>Enter your PIN");
-        return res.writeHead(200, { "Content-Type": "text/html" }).end(`${PAGE}${SAVED_TEXT}`);
+        return res.writeHead(200, { "Content-Type": "text/html", ...unlock }).end(`${PAGE}${SAVED_TEXT}`);
       }
       return res.writeHead(404).end();
     });
@@ -110,7 +129,9 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
     }
   });
 
-  it("shows the saved desk when the computer hangs or the desk is down, and never saves the PIN page", async () => {
+  /** A tab on the desk, starting with nothing saved, whose requests go through the worker. */
+  async function openDesk() {
+    mode = "up";
     const page = await browser.newPage(800, 600);
     /** Loads the desk again and waits for the new document, not the old one still complete. */
     const load = async () => {
@@ -121,7 +142,17 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
     };
     await page.goto(`${base}/`);
     await page.eval("navigator.serviceWorker.ready");
+    await page.eval("caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))))");
     await load(); // this load goes through the worker, which saves it
+    /** What the worker answers for `route` now: the page's title, the state's text, or "failed". */
+    const fetched = (route: string) => page.eval<string>(`fetch(${JSON.stringify(route)}).then((r) => r.text()).then((t) => /<title>(.*?)<\\/title>/.exec(t)?.[1] ?? t, () => "failed")`);
+    const savedCount = () => page.eval<number>("caches.keys().then((names) => Promise.all(names.map((n) => caches.open(n).then((c) => c.keys())))).then((all) => all.flat().length)");
+    return { page, load, fetched, savedCount };
+  }
+
+  it("shows the saved desk when the computer hangs or the desk is down, and on this computer keeps it", async () => {
+    unlockEnds = undefined;
+    const { page, load } = await openDesk();
     assert.equal(await page.eval<boolean>(`caches.match("/").then(Boolean)`), true, "saved");
 
     mode = "gateway";
@@ -130,10 +161,51 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
 
     mode = "hung";
     assert.equal(await load(), "desk", "no answer at all shows the saved desk once the wait ends");
+  });
+
+  it("deletes a device's saved desk once the desk answers it is locked, and never saves the PIN page", async () => {
+    unlockEnds = Date.now() + 3600_000;
+    const { load, fetched, savedCount } = await openDesk();
+    assert.equal(await fetched("/api/state"), '{"desk":true}');
+    assert.equal(await savedCount(), 2, "the page and the state are saved while the unlock lasts");
+    mode = "gateway";
+    assert.equal(await load(), "desk", "while the unlock lasts the device shows the saved desk");
 
     mode = "locked";
+    assert.match(await fetched("/api/state"), /locked/, "the state answers 401 locked");
+    assert.equal(await savedCount(), 0, "a locked answer to the state deletes every saved copy");
+    mode = "up";
+    await load();
+    mode = "locked";
     assert.equal(await load(), "pin", "a locked device sees the PIN page, not the saved desk");
+    assert.equal(await savedCount(), 0, "the PIN page deletes the saved desk, and is not saved in its place");
+
     mode = "gateway";
-    assert.equal(await load(), "desk", "and the PIN page did not replace the saved desk");
+    assert.notEqual(await load(), "desk", "the desk down, nothing saved is shown");
+    mode = "dropped";
+    assert.equal(await fetched("/"), "failed", "nor with no network at all");
+  });
+
+  it("never shows a device's saved desk once its unlock has ended, even offline, and deletes it", async () => {
+    unlockEnds = Date.now() + 3600_000;
+    const { page, fetched, savedCount } = await openDesk();
+    assert.equal(await fetched("/api/state"), '{"desk":true}');
+    assert.equal(await savedCount(), 2);
+    // The device's clock passes the end while the computer does not answer: the page's copy now says its unlock ended.
+    await page.eval(`caches.keys().then(async ([name]) => {
+      const cache = await caches.open(name);
+      const saved = await cache.match("/");
+      const headers = new Headers(saved.headers);
+      headers.set("X-Agent-Desk-Unlock-Ends", String(Date.now() - 1));
+      await cache.put("/", new Response(await saved.blob(), { headers }));
+    })`);
+    mode = "dropped";
+    assert.equal(await fetched("/"), "failed", "no network: the ended copy is not shown");
+    assert.equal(await savedCount(), 0, "and every saved copy is deleted, the state's too");
+
+    unlockEnds = Date.now() - 1000;
+    mode = "up";
+    assert.equal(await fetched("/"), "desk", "an answer under an unlock already ended by this device's clock is shown");
+    assert.equal(await savedCount(), 0, "but not saved");
   });
 });

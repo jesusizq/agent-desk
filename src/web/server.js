@@ -10,6 +10,7 @@ import { data, ID, ON_THIS_MACHINE, page, S, secret, setData, ui } from "./state
 /** @typedef {import("./state.js").Outgoing} Outgoing */
 
 const LOCKED_HEADER = "X-Agent-Desk-Locked";
+const UNLOCK_ENDS_HEADER = "X-Agent-Desk-Unlock-Ends";
 const DRAFTS_KEY = "agent-desk:drafts";
 /** Longer than the service worker's wait (sw.js), so its saved copy arrives first when there is one. */
 const NO_ANSWER_MS = 8000;
@@ -57,8 +58,23 @@ function dropStaleDrafts() {
   saveDrafts();
 }
 
-/** The unlock ended (12 hours): the reload brings the PIN page, and the same view after it. @param {Response} res */
+/** The unlock ended: the reload brings the PIN page, and the same view after it. @param {Response} res */
 const needsPin = (res) => res.status === 401 && res.headers.has(LOCKED_HEADER);
+
+let unlockEnds = 0;
+let unlockTimer = 0;
+/**
+ * On a device that entered the PIN, the page reloads when the unlock ends: online that brings the PIN
+ * page, offline nothing, since the device deletes its saved desk then (sw.js). @param {Response} res
+ */
+function reloadAtUnlockEnd(res) {
+  const ends = Number(res.headers.get(UNLOCK_ENDS_HEADER));
+  // Already past by this device's clock (ahead of the computer's): left to the desk's locked answer, as a reload now would repeat.
+  if (!(ends > Date.now()) || ends === unlockEnds) return;
+  unlockEnds = ends;
+  clearTimeout(unlockTimer);
+  unlockTimer = setTimeout(() => location.reload(), ends - Date.now() + 1);
+}
 
 /** A write to the desk; no connection is said as such, not as fetch's own "Load failed". @param {string} route @param {RequestInit} init */
 async function write(route, init) {
@@ -120,6 +136,7 @@ export async function refresh() {
   try {
     const res = await fetch("/api/state", { headers: etag ? { "If-None-Match": etag } : {}, signal: AbortSignal.timeout(NO_ANSWER_MS) });
     if (needsPin(res)) return location.reload();
+    reloadAtUnlockEnd(res);
     ui.refused = res.status === 421;
     savedAt = res.headers.get(SAVED_AT);
     if (res.status !== 304) {

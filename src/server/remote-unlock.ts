@@ -75,10 +75,6 @@ export class RemoteUnlock {
     return `${UNLOCK_COOKIE}=${token}; Path=/; Max-Age=${UNLOCK_HOURS * 3600}; HttpOnly; Secure; SameSite=Strict`;
   }
 
-  unlocked(req: IncomingMessage): boolean {
-    return this.unlockedUntil(req) !== undefined;
-  }
-
   /** When the unlock ends, while the request carries an unexpired cookie signed by this install. */
   unlockedUntil(req: IncomingMessage): number | undefined {
     const cookie = (req.headers.cookie ?? "").split(/;\s*/).find((c) => c.startsWith(`${UNLOCK_COOKIE}=`));

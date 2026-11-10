@@ -225,3 +225,11 @@ Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly an
   device and serves them only when the network fails, hangs 5 s, or Tailscale Serve answers 502–504;
   the page shows that copy as offline and read only. It never keeps a locked answer, and leaves the
   event stream to the network.
+- **Saved copy on a device behind the PIN.** Every answer to an unlocked remote device carries
+  `X-Agent-Desk-Unlock-Ends` (the unlock's end, ms since the epoch), and each saved copy keeps it.
+  The worker deletes every copy when the desk answers locked (the PIN page, or 401 with
+  `X-Agent-Desk-Locked`), when the push saying the PIN ended arrives, and when it finds a copy whose
+  end has passed, which it never serves, offline or not. The page reloads at that end, so a device
+  offline then is left with nothing to read. Images on that device carry `max-age` up to the end
+  instead of a year, so the browser's own cache does not outlast the unlock either. This computer's
+  answers carry no end, and its copy is kept.

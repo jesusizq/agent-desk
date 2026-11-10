@@ -398,14 +398,14 @@ describe("PIN in front of remote access", () => {
     const { port } = server;
     const http = await import("node:http");
     const call = (method: string, path: string, headers: Record<string, string> = {}, body?: string) =>
-      new Promise<{ status: number; body: string; cookie?: string; locked?: string }>((resolve, reject) => {
+      new Promise<{ status: number; body: string; cookie?: string; locked?: string; headers: import("node:http").IncomingHttpHeaders }>((resolve, reject) => {
         const req = http.request(
           { host: "127.0.0.1", port, method, path, headers: { Host: remote.host, "Tailscale-User-Login": remote.user, ...headers } },
           (res) => {
             let text = "";
             res.on("data", (d: Buffer) => (text += d));
             const locked = res.headers["x-agent-desk-locked"];
-            res.on("end", () => resolve({ status: res.statusCode ?? 0, body: text, ...(res.headers["set-cookie"]?.[0] ? { cookie: res.headers["set-cookie"][0] } : {}), ...(typeof locked === "string" ? { locked } : {}) }));
+            res.on("end", () => resolve({ status: res.statusCode ?? 0, body: text, headers: res.headers, ...(res.headers["set-cookie"]?.[0] ? { cookie: res.headers["set-cookie"][0] } : {}), ...(typeof locked === "string" ? { locked } : {}) }));
           },
         );
         req.on("error", reject);
@@ -430,6 +430,14 @@ describe("PIN in front of remote access", () => {
       assert.match(ok.cookie ?? "", /HttpOnly; Secure; SameSite=Strict/);
       const cookie = (ok.cookie ?? "").split(";")[0] ?? "";
       assert.equal((await call("GET", "/api/state", { Cookie: cookie })).status, 200);
+      const ends = Number(/=(\d+)\./.exec(cookie)?.[1]);
+      for (const route of ["/", "/api/state", "/app.js"]) {
+        assert.equal((await call("GET", route, { Cookie: cookie })).headers["x-agent-desk-unlock-ends"], String(ends), `${route} says when this device's unlock ends, for the device to drop its saved desk then`);
+      }
+      assert.equal(page.headers["x-agent-desk-unlock-ends"], undefined, "a locked answer has no unlock to end");
+      const imageId = store.addImage(PNG, "a screenshot");
+      const maxAge = Number(/max-age=(\d+)/.exec(String((await call("GET", `/images/${imageId}`, { Cookie: cookie })).headers["cache-control"]))?.[1]);
+      assert.ok(maxAge > 23 * 3600 && maxAge <= 24 * 3600, `the device's browser keeps an image only until the unlock ends, got max-age=${maxAge}`);
       const { createECDH } = await import("node:crypto");
       const pushKeys = { p256dh: createECDH("prime256v1").generateKeys().toString("base64url"), auth: Buffer.alloc(16, 1).toString("base64url") };
       const subscribed = await call("POST", "/api/push/subscribe", { Cookie: cookie, Origin: `https://${remote.host}`, "Content-Type": "application/json", "X-Agent-Desk-Secret": store.secret() }, JSON.stringify({ endpoint: "https://web.push.apple.com/pin", keys: pushKeys }));
@@ -447,6 +455,9 @@ describe("PIN in front of remote access", () => {
       assert.match(lockedOut.body, /too many wrong PINs/);
       const local = await new Promise<number>((resolve) => http.get({ host: "127.0.0.1", port, path: "/api/state" }, (res) => { res.resume(); resolve(res.statusCode ?? 0); }));
       assert.equal(local, 200, "this machine never needs the PIN");
+      const localDesk = await fetch(`http://127.0.0.1:${port}/`);
+      assert.equal(localDesk.headers.get("x-agent-desk-unlock-ends"), null, "this machine has no unlock to end, and keeps its saved desk");
+      assert.equal((await fetch(`http://127.0.0.1:${port}/images/${imageId}`)).headers.get("cache-control"), "private, max-age=31536000, immutable");
     } finally {
       server.close();
     }

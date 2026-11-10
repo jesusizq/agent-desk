@@ -59,8 +59,11 @@ const STATIC: Record<string, string> = {
 const BODY_LIMIT = 64 * 1024;
 /** What the PIN page may load before the device is unlocked. */
 const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/favicon.svg", "/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"]);
-/** Marks what a locked device gets, so the device never keeps the PIN page as the desk (sw.js). */
+/** Marks what a locked device gets: the device never keeps the PIN page as the desk, and drops the desk it kept (sw.js). */
 const LOCKED = { "X-Agent-Desk-Locked": "1" };
+/** On every answer to an unlocked remote device, when its unlock ends (ms): the device drops its saved desk then (sw.js). */
+const UNLOCK_ENDS = "X-Agent-Desk-Unlock-Ends";
+const YEAR_S = 31_536_000;
 const LOW_DISK_RATIO = 0.1;
 const REFUSED_PAGE = "This device is not allowed on this desk: it accepts only its owner's Tailscale account. Sign in to Tailscale with that account and open it again.\n";
 
@@ -170,7 +173,9 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   const remote = reach.from === "remote";
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${access.port}`);
   const route = url.pathname;
-  if (remote && !unlock.unlocked(req)) return locked(route, access, unlock, req, res);
+  const unlockEnds = remote ? unlock.unlockedUntil(req) : undefined;
+  if (remote && unlockEnds === undefined) return locked(route, access, unlock, req, res);
+  if (unlockEnds !== undefined) res.setHeader(UNLOCK_ENDS, String(unlockEnds));
 
   if (req.method === "GET" || req.method === "HEAD") {
     if (route === "/") return page(res, secret);
@@ -178,7 +183,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     if (type) return send(res, 200, fs.readFileSync(path.join(WEB_DIR, route.slice(1))), type);
     if (route === "/api/state") return state(store, req, res);
     // A remote device's stream ends with its unlock, as its next request would.
-    if (route === "/api/events") return req.method === "GET" ? feed.stream(res, remote ? unlock.unlockedUntil(req) : undefined) : sendJson(res, 405, { error: "method not allowed" });
+    if (route === "/api/events") return req.method === "GET" ? feed.stream(res, unlockEnds) : sendJson(res, 405, { error: "method not allowed" });
     if (route === "/api/push/key") return sendJson(res, 200, { key: new Push(store.paths.push).publicKey() });
     const conversation = /^\/api\/sessions\/([^/]+)\/messages$/.exec(route);
     if (conversation?.[1]) {
@@ -186,7 +191,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
       return sendJson(res, 200, store.listMessages(conversation[1]));
     }
     const image = /^\/images\/([^/]+)$/.exec(route);
-    if (image?.[1]) return imageFile(store, image[1], res);
+    if (image?.[1]) return imageFile(store, image[1], res, unlockEnds);
     return sendJson(res, 404, { error: "not found" });
   }
 
@@ -202,7 +207,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     try {
       const body = await readBody(req);
       const push = new Push(store.paths.push);
-      if (route === "/api/push/subscribe") push.subscribe(subscription(body), remote ? (unlock.unlockedUntil(req) ?? 0) : NO_PIN);
+      if (route === "/api/push/subscribe") push.subscribe(subscription(body), unlockEnds ?? NO_PIN);
       else push.unsubscribe(text(fields(body, "body").endpoint, "endpoint", 2048));
       return sendJson(res, 200, { ok: true });
     } catch (error) {
@@ -277,11 +282,13 @@ function state(store: Store, req: IncomingMessage, res: ServerResponse): void {
   send(res, 200, gzip ? gzipSync(body) : body, "application/json; charset=utf-8", { ETag: etag, "Cache-Control": "no-cache", Vary: "Accept-Encoding", ...(gzip ? { "Content-Encoding": "gzip" } : {}) });
 }
 
-function imageFile(store: Store, imageId: string, res: ServerResponse): void {
+/** A remote device's browser keeps the image only until its unlock ends, so that it cannot show it after. */
+function imageFile(store: Store, imageId: string, res: ServerResponse, unlockEnds: number | undefined): void {
   if (!ID_PATTERN.test(imageId)) return sendJson(res, 400, { error: "invalid id" });
   const found = store.imageFile(imageId);
   if (!found) return sendJson(res, 404, { error: "not found" });
-  res.writeHead(200, { ...IMAGE_HEADERS, "Content-Type": IMAGE_TYPES[found.ext], "Cache-Control": "private, max-age=31536000, immutable" });
+  const maxAge = unlockEnds === undefined ? YEAR_S : Math.max(0, Math.min(YEAR_S, Math.floor((unlockEnds - Date.now()) / 1000)));
+  res.writeHead(200, { ...IMAGE_HEADERS, "Content-Type": IMAGE_TYPES[found.ext], "Cache-Control": `private, max-age=${maxAge}, immutable` });
   res.end(fs.readFileSync(found.file));
 }
 

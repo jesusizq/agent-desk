@@ -329,6 +329,20 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.deepEqual(store.takeInbox("pin-ended").map((e) => e.answer), ["half a thought"], "sent, and no longer kept");
   });
 
+  it("reloads when the unlock the desk named ends, so a device offline then shows nothing it saved", async () => {
+    const page = await open();
+    // What the server tells a device that entered the PIN: when its unlock ends, here in a moment.
+    await page.eval(`(() => {
+      window.beforeReload = true;
+      const real = window.fetch;
+      const ends = String(Date.now() + 800);
+      window.fetch = (url, init) => String(url) === "/api/state" ? real(url).then(async (r) => new Response(await r.text(), { headers: { "Content-Type": "application/json", "X-Agent-Desk-Unlock-Ends": ends } })) : real(url, init);
+    })()`);
+    await fetchNow(page);
+    assert.equal(await page.eval<boolean>("window.beforeReload"), true, "not before the end");
+    await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')", 5000);
+  });
+
   it("drops a saved draft whose question closed or whose session is gone", async () => {
     const page = await open();
     await page.eval(`localStorage.setItem("agent-desk:drafts", JSON.stringify({ drafts: [["answer-closed", "too late"], ["message-gone", "nobody"]], images: [] }))`);

@@ -180,9 +180,9 @@ const COMMANDS: Record<string, Command> = {
     const first = await askHidden("New PIN (6 digits or more): ");
     const again = await askHidden("Repeat it: ");
     if (first !== again) throw new InputError("the two PINs differ; nothing changed");
-    const { setPin } = await import("../server/remote-unlock.ts");
+    const { setPin, UNLOCK_HOURS } = await import("../server/remote-unlock.ts");
     setPin(store.paths.pin, first);
-    print("PIN saved. Devices reaching the desk through the tailnet must enter it; each unlock lasts 12 hours.");
+    print(`PIN saved. Devices reaching the desk through the tailnet must enter it; each unlock lasts ${UNLOCK_HOURS} hours, after which the device deletes the copy of the desk it kept.`);
   },
 
   async scan(args, store) {

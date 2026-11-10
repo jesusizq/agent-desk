@@ -192,6 +192,10 @@ this computer adds neither, so the desk cannot tell it apart.
 5. On the phone, open `https://<machine>.<tailnet>.ts.net:8443` and enter the PIN. The unlock lasts
    24 hours on that device. After five wrong PINs, the desk refuses every attempt for 15 minutes.
 
+While the unlock lasts, the phone keeps the last desk it saw and shows it, read only, when the
+computer does not answer. When the unlock ends the phone deletes that copy, even if it is offline
+then: a lost phone holds the desk for 24 hours at most. The computer itself keeps its copy.
+
 From the phone you can answer questions, allow or deny permission prompts, and send keys to tmux
 sessions. "Go to session" is hidden, and local previews (`localhost` URLs) are named, not linked,
 because they run on the computer.
