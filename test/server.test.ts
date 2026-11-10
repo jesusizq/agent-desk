@@ -168,6 +168,17 @@ describe("server", () => {
     assert.ok(store.getSeen());
   });
 
+  it("takes a result off the list of results already seen, only from the page", async () => {
+    const r = store.addResult({ sessionId: "s1", title: "Seen and done" });
+    assert.equal((await post(`/api/results/${r.id}/dismiss`, {}, { Origin: "http://evil.example" })).status, 403);
+    assert.equal((await post(`/api/results/${r.id}/dismiss`, {}, { "X-Agent-Desk-Secret": "wrong" })).status, 403);
+    assert.equal(store.listResults().find((x) => x.id === r.id)?.dismissedAt, undefined);
+    assert.equal((await post(`/api/results/${r.id}/dismiss`, {})).status, 200);
+    const kept = store.listResults().find((x) => x.id === r.id);
+    assert.ok(kept?.dismissedAt && kept.seenAt, "dismissed and seen, and still in the store for History");
+    assert.equal((await post("/api/results/nope/dismiss", {})).status, 400);
+  });
+
   it("sends terminal keys only from the allow-list, and only to a session in a live tmux pane", async () => {
     const bad = await post("/api/sessions/s1/keys", { action: "rm -rf /" });
     assert.equal(bad.status, 400);

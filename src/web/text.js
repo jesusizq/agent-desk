@@ -121,6 +121,7 @@ export const TEXT = {
   emptyResults: "Nothing new to review.",
   seeHistory: "Earlier results",
   dismissResult: "Seen, move it to the history",
+  dismissEarlier: "Remove from this list; it stays in History",
   emptyRunning: "No sessions running.",
   now: NOW,
   go: "Go",

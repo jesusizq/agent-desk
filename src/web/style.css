@@ -1133,7 +1133,11 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .rtile .rm .pname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rtile .rm .num { flex: none; margin-left: auto; }
 .rtile-wrap .rdismiss { top: 4px; right: 4px; }
-.rtile-wrap:hover .rdismiss { opacity: 1; }
+:is(.rtile-wrap, .rearlier-wrap):hover .rdismiss { opacity: 1; }
+.rearlier-wrap { position: relative; min-width: 0; }
+.rearlier-wrap .rdismiss { top: 50%; right: 4px; translate: 0 -50%; }
+/* Room for the ×, so it never covers the row's title. */
+.rearlier-wrap .rrow { padding-right: 40px; }
 .rdismiss { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .15s; }
 .rdismiss:focus-visible { opacity: 1; }
 @media (hover: none) {

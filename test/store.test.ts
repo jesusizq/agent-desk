@@ -127,6 +127,17 @@ describe("concurrency", () => {
     assert.match(store.getSession("s1")?.activity ?? "", /^Edit /, "the other updates are kept too");
   });
 
+  it("keeps both marks when processes dismiss a result and mark it seen at once", async () => {
+    const store = testStore();
+    addSession(store);
+    const r = store.addResult({ sessionId: "s1", title: "Done" });
+    await Promise.all([workers(store.paths.home, "dismiss-result", 20, 3), workers(store.paths.home, "seen-result", 20, 3)]);
+    const kept = store.listResults().find((x) => x.id === r.id);
+    assert.ok(kept?.dismissedAt && kept.seenAt);
+    assert.ok(kept.seenAt <= kept.dismissedAt, "seen no later than dismissed: whichever came first stays");
+    assert.deepEqual(fs.readdirSync(store.paths.resultsDir).filter((f) => f.startsWith(".")), [], "no temp or lock file left behind");
+  });
+
   it("hands each inbox answer to exactly one waiter", async () => {
     const store = testStore();
     addSession(store);
@@ -612,6 +623,19 @@ describe("agents and results", () => {
     assert.ok(store.markResultSeen(r.id).seenAt);
     const seen = store.markAllSeen();
     assert.equal(store.getSeen()?.since, seen.since);
+  });
+
+  it("takes a result off the desk's list once, keeping when it was seen", () => {
+    const store = testStore();
+    addSession(store);
+    const r = store.addResult({ sessionId: "s1", title: "Done" });
+    const seen = store.markResultSeen(r.id);
+    const dismissed = store.dismissResult(r.id);
+    assert.equal(dismissed.seenAt, seen.seenAt);
+    assert.ok(dismissed.dismissedAt);
+    assert.equal(store.dismissResult(r.id).dismissedAt, dismissed.dismissedAt, "a second dismissal changes nothing");
+    assert.ok(store.dismissResult(store.addResult({ sessionId: "s1", title: "Never opened" }).id).seenAt, "a result dismissed unseen counts as seen");
+    assert.throws(() => store.dismissResult("nope"), /no result nope/);
   });
 
   it("keeps one service per session and name", () => {

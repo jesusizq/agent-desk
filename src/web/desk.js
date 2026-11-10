@@ -126,7 +126,7 @@ function failureRow(r) {
     meta: [label(S(r.sessionId)), r.summary ? firstLine(r.summary) : ""].filter(Boolean).join(" · "),
     when: h("span", { class: "age quiet", title: stamp(r.at) }, ago(r.at)),
     open: () => openResult(r),
-    end: h("button", { class: "rdismiss icon-btn", "aria-label": TEXT.dismissResult, title: TEXT.dismissResult, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(post(`/api/results/${r.id}/seen`))) }, icon("x")),
+    end: dismissButton(TEXT.dismissResult, `/api/results/${r.id}/seen`),
   });
 }
 
@@ -198,8 +198,18 @@ function reviewTile(r) {
       // Where it comes from, as on every other card, unless one project is already picked.
       h("span", { class: "rm" }, ui.project === null && s ? projectMark(s.project.name) : null, h("span", { class: "num" }, stamp(r.at))),
     ),
-    h("button", { class: "rdismiss icon-btn", "aria-label": TEXT.dismissResult, title: TEXT.dismissResult, onclick: () => run(post(`/api/results/${r.id}/seen`)) }, icon("x")),
+    dismissButton(TEXT.dismissResult, `/api/results/${r.id}/seen`),
   );
+}
+
+/** The × that takes a result off its list, beside what opens it (style.css shows it on hover, always on touch). @param {string} label @param {string} route */
+function dismissButton(label, route) {
+  return h("button", { class: "rdismiss icon-btn", "aria-label": label, title: label, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(post(route))) }, icon("x"));
+}
+
+/** A result already seen, kept in view by a quiet desk until it is dismissed from there. @param {Result} r */
+function earlierRow(r) {
+  return h("div", { class: "rearlier-wrap", "data-key": `e-${r.id}` }, resultRow(r), dismissButton(TEXT.dismissEarlier, `/api/results/${r.id}/dismiss`));
 }
 
 // How many results already seen a quiet desk keeps in view while there is nothing new.
@@ -213,8 +223,8 @@ function reviewColumn(quiet) {
   const list = toReview();
   if (list.length) return column("review", list.length, h("div", { class: "rtiles", "data-list": true }, list.map(reviewTile)), { quiet: true });
   const all = h("button", { class: "linkish", onclick: showEarlierResults }, quiet ? TEXT.quiet.allResults : TEXT.seeHistory);
-  const earlier = quiet ? data.results.filter((r) => inProject(r.sessionId) && !isNew(r)).sort((a, b) => b.at.localeCompare(a.at)).slice(0, EARLIER_RESULTS) : [];
-  if (earlier.length) return column("review", null, [h("div", { class: "rearlier", "data-list": true }, earlier.map((r) => resultRow(r))), all], { aside: h("span", { class: "faint" }, TEXT.quiet.earlierAside) });
+  const earlier = quiet ? data.results.filter((r) => inProject(r.sessionId) && !isNew(r) && !r.dismissedAt).sort((a, b) => b.at.localeCompare(a.at)).slice(0, EARLIER_RESULTS) : [];
+  if (earlier.length) return column("review", null, [h("div", { class: "rearlier", "data-list": true }, earlier.map(earlierRow)), all], { aside: h("span", { class: "faint" }, TEXT.quiet.earlierAside) });
   return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: all }), { quiet: true });
 }
 

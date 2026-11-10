@@ -651,14 +651,27 @@ export class Store {
   }
 
   markResultSeen(resultId: string): Result {
+    return this.updateResult(resultId, (r) => (r.seenAt ? r : { ...r, seenAt: this.stamp() }));
+  }
+
+  /** The developer takes a result off the desk's list of results already seen; it stays in History, seen. */
+  dismissResult(resultId: string): Result {
+    return this.updateResult(resultId, (r) => {
+      if (r.dismissedAt) return r;
+      const at = this.stamp();
+      return { ...r, seenAt: r.seenAt ?? at, dismissedAt: at };
+    });
+  }
+
+  /** Changes a result under its lock; one `change` returns unchanged is not written. */
+  private updateResult(resultId: string, change: (current: Result) => Result): Result {
     const file = this.paths.result(resultId);
     return withLock(file, () => {
       const raw = readJson(file);
       if (raw === undefined) throw new InputError(`no result ${resultId} in the store`);
       const current = readResult(raw, file);
-      if (current.seenAt) return current;
-      const next = { ...current, seenAt: this.stamp() };
-      writeJson(file, next);
+      const next = change(current);
+      if (next !== current) writeJson(file, next);
       return next;
     });
   }

@@ -195,6 +195,7 @@ export function readResult(value: unknown, where = "result"): Result {
     decisions: list(f.decisions ?? [], `${where}.decisions`, line, 50),
     checks: list(f.checks ?? [], `${where}.checks`, readCheck, 50),
     seenAt: optional(f.seenAt, `${where}.seenAt`, isoTime),
+    dismissedAt: optional(f.dismissedAt, `${where}.dismissedAt`, isoTime),
   });
 }
 

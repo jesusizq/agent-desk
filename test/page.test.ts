@@ -1441,6 +1441,34 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.resize(1440, 900);
       await page.waitFor("document.querySelector('.board.quiet')");
     });
+
+    // Last of these: a dismissal is for good.
+    it("lets a result already seen be dismissed from To review on every device, and keeps it in History", async () => {
+      const page = await openQuiet();
+      const row = (title: string) => `[...document.querySelectorAll('.rearlier-wrap')].find((w) => w.textContent.includes(${JSON.stringify(title)}))`;
+      const migration = row("Migration 0041 applied locally");
+      await page.waitFor(migration);
+      assert.equal(
+        await page.eval<string>(`getComputedStyle(${migration}.querySelector('.rdismiss')).opacity`),
+        await page.eval<string>("matchMedia('(hover: hover)').matches ? '0' : '1'"),
+        "the × waits for a pointer, and is always there without one",
+      );
+      const [x, y] = await page.eval<[number, number]>(`(() => { const r = ${migration}.querySelector('.rdismiss').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+      await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+      for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+      await page.waitFor(`!${migration} && !!${row("Three pay button variants")}`);
+      assert.deepEqual(await openDialogs(page), [], "the × does not open the result");
+      assert.ok(quiet.listResults().find((r) => r.title === "Migration 0041 applied locally")?.dismissedAt, "kept in the store, not in this browser");
+      const other = await openQuiet();
+      await other.waitFor(`!!${row("Three pay button variants")}`);
+      assert.equal(await other.eval<boolean>(`!${migration}`), true, "gone from the list on another device too");
+      // The page opened last is the one in front, where animation frames run.
+      for (const r of quiet.listResults()) quiet.dismissResult(r.id);
+      await other.waitFor("!document.querySelector('.rearlier') && !!document.querySelector('.col-review .empty')");
+      assert.equal(await other.eval<string>("document.querySelector('.col-review .empty').textContent"), "Nothing new to review.All results", "calm, with the way to every result");
+      await other.click(".col-review .empty button", "All results");
+      await other.waitFor("document.body.dataset.view === 'history' && document.querySelector('#view').textContent.includes('Migration 0041 applied locally')");
+    });
   });
 
   describe("redraws change only what changed, and lists move on their own cards", () => {
