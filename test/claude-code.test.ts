@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { deliverWhileWorking, handleHook, type HookContext, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
+import { deliverWhileWorking, handleHook, type HookContext, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import { slug } from "../src/core/ids.ts";
 import type { Store } from "../src/store/store.ts";
@@ -120,7 +120,7 @@ describe("Claude Code hooks", () => {
     const store = testStore();
     handleHook(event("Stop", { last_assistant_message: "Waiting for the build." }), ctx(store));
     handleHook(event("Stop", { last_assistant_message: "Build passed. Deploy?" }), ctx(store));
-    assert.deepEqual(store.openQuestions("cc-1").map((q) => q.text), ["Build passed. Deploy?"]);
+    assert.deepEqual(store.openQuestions("cc-1").map((q) => [q.text, q.context]), [["Deploy?", "Build passed."]]);
   });
 
   it("adds what Claude wrote between its tool calls to the conversation, once", () => {
@@ -830,6 +830,63 @@ describe("Claude Code hooks", () => {
     const split = splitLastParagraph(long);
     assert.ok(split.last.length <= 2000 && /^\d+\. Option/.test(split.last), "cut between lines, never mid-word");
     assert.equal(`${split.before}\n${split.last}`, long, "what does not fit goes to the context, nothing is lost");
+  });
+
+  it("titles a turn that ends asking with its asking sentences, the rest of that paragraph first in the context", async () => {
+    const store = testStore();
+    const message = [
+      "He revisado el Service Worker y los tests de la página pasan.",
+      "",
+      "- `sw.js` ya no guarda la página del PIN.",
+      "- El banner sin conexión conserva el borrador.",
+      "",
+      "**Una decisión pendiente tuya.** Si el PIN de un móvil caduca, la copia de la página que guarda el service worker sigue en el teléfono hasta la próxima visita. ¿Lo dejo así, o borro esa copia cuando caduca el PIN? Yo recomiendo borrarla: es un dato del escritorio que ya no debería verse sin PIN.",
+    ].join("\n");
+    handleHook(event("Stop", { last_assistant_message: message }), ctx(store));
+    const [q] = store.openQuestions("cc-1");
+    assert.equal(q?.text, "¿Lo dejo así, o borro esa copia cuando caduca el PIN?");
+    assert.equal(
+      q?.context,
+      [
+        "**Una decisión pendiente tuya.** Si el PIN de un móvil caduca, la copia de la página que guarda el service worker sigue en el teléfono hasta la próxima visita. Yo recomiendo borrarla: es un dato del escritorio que ya no debería verse sin PIN.",
+        "He revisado el Service Worker y los tests de la página pasan.\n\n- `sw.js` ya no guarda la página del PIN.\n- El banner sin conexión conserva el borrador.",
+      ].join("\n\n"),
+      "what the paragraph says around the question comes first, then the rest of the message",
+    );
+    const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 });
+    await new Promise((r) => setTimeout(r, 50));
+    store.answerFromDesk(q?.id ?? "", "Bórrala.");
+    const out = await waiting;
+    assert.match(out.stderr ?? "", /\nYour question: ¿Lo dejo así, o borro esa copia cuando caduca el PIN\?\nTheir answer, verbatim:\nBórrala\.$/, "the echo names the question, not its paragraph");
+    assert.equal(store.listQuestions().find((x) => x.id === q?.id)?.status, "answered", "the answer closes that question");
+  });
+
+  it("finds the asking sentences of a paragraph through Markdown, code and lists", () => {
+    const cases: [string, string, string][] = [
+      // Several questions in one paragraph, in order; what lies between them goes to the context.
+      ["Done: the seal passed 60 of 60. Shall I push it? It starts a new run of about 40 min. Or should I wait for the rebase?", "Shall I push it? Or should I wait for the rebase?", "Done: the seal passed 60 of 60. It starts a new run of about 40 min."],
+      // A Spanish question opened mid-sentence keeps its condition.
+      ["Lo he probado en Firefox y Chrome. Para un PIN caducado, ¿borro también la copia guardada?", "Para un PIN caducado, ¿borro también la copia guardada?", "Lo he probado en Firefox y Chrome."],
+      // A bold span cut into sentences leaves no lone marks; an abbreviation or a version is not a sentence's end.
+      ["**Decide one thing. Keep v1.2 for the e.g. staging run, or move to v1.3?** I would move.", "Keep v1.2 for the e.g. staging run, or move to v1.3?", "Decide one thing. I would move."],
+      // A question mark inside inline code asks nothing.
+      ["The guard is `a?.b` now. Merge it?", "Merge it?", "The guard is `a?.b` now."],
+      // A list that only reports stays in the context, under the question that follows it.
+      ["Changes:\n- `a?.b` guards the lookup\n- one new test\nShall I commit?", "Shall I commit?", "Changes:\n- `a?.b` guards the lookup\n- one new test"],
+      // Fullwidth marks.
+      ["测试已经通过。要推送吗？", "要推送吗？", "测试已经通过。"],
+    ];
+    for (const [paragraph, question, rest] of cases) assert.deepEqual(splitQuestion(paragraph), { question, rest }, paragraph);
+    const whole = [
+      "¿Lo subo?",
+      "Shall I push it? Or wait?",
+      // A list of decisions is shown as a block, under the line that introduces it.
+      "Three things are left for you to decide:\n1. Shall I push this fix?\n2. Shall I log API errors always?\n   They are logged only in debug mode now.",
+      // Nothing outside code asks.
+      "Run `curl localhost:8080/?q=1` to check.",
+      "```\nwhy?\n```",
+    ];
+    for (const paragraph of whole) assert.deepEqual(splitQuestion(paragraph), { question: paragraph, rest: "" }, paragraph);
   });
 });
 

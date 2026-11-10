@@ -271,9 +271,82 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     return;
   }
   // Only a turn that ends asking something needs the developer; a report waits quietly on the session.
-  if (!/[?¿]/.test(last)) return;
+  if (!/[?¿？]/.test(last)) return;
   replaced();
-  store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: last, context: before || undefined }));
+  // The sentences that ask are the question; what the paragraph says around them reads first under it.
+  const { question, rest } = splitQuestion(last);
+  store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: question, context: [rest, before].filter(Boolean).join("\n\n") || undefined }));
+}
+
+const LIST_ITEM = /^\s*(?:[-*+•]|\d+[.)])\s+/;
+const FENCE = /^\s*(?:```|~~~)/;
+const ENDS = ".!?…。！？";
+/** What may close a sentence after its mark: more marks, emphasis, quotes, brackets. */
+const CLOSERS = `${ENDS})]"'»”’*_`;
+/** "e.g.", "i.e.", "U.S.": a full stop inside an abbreviation does not end the sentence. */
+const ABBREVIATION = /(?:^|[\s(])(?:\p{L}\.){2,}$/u;
+const asks = (sentence: string) => /[?？]$/.test(sentence.replace(/[)\]"'»”’*_]+$/, ""));
+const outsideCode = (line: string) => line.replace(/`[^`]*`/g, "");
+
+/** A line's sentences, cut after their closing mark; a mark inside inline code or a word ("v1.2") cuts nothing. */
+function sentences(line: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  let code = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line.charAt(i);
+    if (c === "`") code = !code;
+    if (code || !ENDS.includes(c) || (c === "." && ABBREVIATION.test(line.slice(0, i + 1)))) continue;
+    let end = i + 1;
+    while (end < line.length && CLOSERS.includes(line.charAt(end))) end++;
+    // Fullwidth marks end a sentence with no space after them, as Chinese and Japanese write.
+    if (end < line.length && !/\s/.test(line.charAt(end)) && !"。！？".includes(c)) continue;
+    out.push(line.slice(start, end).trim());
+    start = end;
+    i = end - 1;
+  }
+  const tail = line.slice(start).trim();
+  return tail ? [...out, tail] : out;
+}
+
+/** A sentence cut out of a bold span keeps no lone `**` at its edge. */
+function balanced(piece: string): string {
+  if ((piece.split("**").length - 1) % 2 === 0) return piece;
+  if (piece.startsWith("**")) return piece.slice(2).trimStart();
+  return piece.endsWith("**") ? piece.slice(0, -2).trimEnd() : piece;
+}
+
+/**
+ * The asking sentences of a turn's last paragraph, in order, and the rest of it, lines kept. The
+ * paragraph stays whole when it is a list whose items ask (a list of decisions, shown as a block),
+ * when every sentence asks, or when nothing outside code ends in a question mark.
+ */
+export function splitQuestion(paragraph: string): { question: string; rest: string } {
+  const whole = { question: paragraph, rest: "" };
+  const asked: string[] = [];
+  const kept: string[] = [];
+  let fenced = false;
+  let inItem = false;
+  for (const line of paragraph.split("\n")) {
+    if (FENCE.test(line)) fenced = !fenced;
+    if (fenced || FENCE.test(line) || line.trim() === "") {
+      kept.push(line);
+      continue;
+    }
+    // An item's own lines are indented under it.
+    inItem = LIST_ITEM.test(line) || (inItem && /^\s/.test(line));
+    if (inItem) {
+      if (/[?？¿]/.test(outsideCode(line))) return whole;
+      kept.push(line);
+      continue;
+    }
+    const parts = sentences(line).map(balanced);
+    asked.push(...parts.filter(asks));
+    const said = parts.filter((p) => !asks(p)).join(" ");
+    if (said) kept.push(said);
+  }
+  const rest = kept.join("\n").trim();
+  return asked.length === 0 || rest === "" ? whole : { question: asked.join(" "), rest };
 }
 
 const MESSAGE_MAX = 8000;

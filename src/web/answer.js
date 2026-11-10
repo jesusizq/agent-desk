@@ -339,8 +339,9 @@ function earlierConversation(q) {
   const list = ui.conversations.get(q.sessionId);
   // Drawn once fetched: an empty block first would say "nothing earlier" and then grow.
   if (!open || !list) return toggle;
-  // A turn that ends asking: the question is its message's last part, already on the card with the rest as context.
-  const own = (/** @type {ConversationEntry} */ m) => m.from === "session" && m.text.trim().endsWith(q.text.replace(/^…/, "").trim());
+  // A turn that ends asking: its message holds the question's sentences, already on the card with the rest as context.
+  const asked = q.text.replace(/^…/, "").split(/(?<=[?？][)\]"'»”’*_]*)\s+/).map((part) => part.trim());
+  const own = (/** @type {ConversationEntry} */ m) => m.from === "session" && asked.every((part) => m.text.includes(part));
   const before = list.filter((m) => m.at <= q.askedAt && !own(m)).slice(-8);
   // It opens on the turn right before the question, so reading goes on into it.
   return [toggle, h("div", { class: "conversation", "data-scroll": `conv-${q.id}`, "data-scroll-end": true, "data-grow": true }, before.length ? conversationView(before) : h("div", { class: "faint" }, TEXT.conversation.none))];

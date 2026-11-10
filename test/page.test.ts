@@ -411,6 +411,27 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     }
   });
 
+  it("titles a turn that ends asking with its question, what the paragraph says around it right under it, and leaves that turn out of the earlier ones", async () => {
+    store.upsertSession({ id: "pin-copy", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "pin copy", state: "waiting" });
+    store.addMessage({ sessionId: "pin-copy", from: "session", text: "Turn 1: the offline banner is in." });
+    // As the Claude Code adapter records a turn that ends asking in plain text.
+    store.addMessage({ sessionId: "pin-copy", from: "session", text: "Los tests pasan.\n\nSi el PIN caduca, la copia guardada sigue en el móvil. ¿Lo dejo así, o la borro? Yo recomiendo borrarla." });
+    const asked = store.ask({ sessionId: "pin-copy", kind: "waiting", text: "¿Lo dejo así, o la borro?", context: "Si el PIN caduca, la copia guardada sigue en el móvil. Yo recomiendo borrarla.\n\nLos tests pasan." });
+    try {
+      const page = await open();
+      await page.click(".qrow", "¿Lo dejo así, o la borro?");
+      assert.equal(await page.eval<string>("document.querySelector('.next .qtext').textContent"), "¿Lo dejo así, o la borro?");
+      assert.ok((await page.eval<string>("document.querySelector('.next .qctx').textContent")).startsWith("Si el PIN caduca"), "the rest of its paragraph comes first");
+      await page.click(".next button", "Earlier in this session");
+      await page.waitFor("document.querySelector('.next .conversation')");
+      const earlier = await page.eval<string>("document.querySelector('.next .conversation').textContent");
+      assert.ok(earlier.includes("Turn 1: the offline banner is in."));
+      assert.ok(!earlier.includes("Yo recomiendo borrarla"), "the asking turn is on the card already");
+    } finally {
+      store.dismiss(asked.id);
+    }
+  });
+
   it("shows in an open session what it writes and what is typed to it while it works, without reopening", async () => {
     store.upsertSession({ id: "live-steps", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "live steps", state: "working" });
     store.addMessage({ sessionId: "live-steps", from: "developer", text: "migrate the schema", via: "terminal" });
