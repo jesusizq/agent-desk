@@ -560,8 +560,12 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.match((await notified(base + "/", "Asked on the computer?")).join(), /New question/);
       assert.deepEqual(await notified(remote, "Asked on the phone?"), []);
     } finally {
+      // Its pages close before the proxy: cut under an open page, the event stream reads as a load error.
+      const opened = pages.splice(0);
+      await Promise.all(opened.map((page) => page.close()));
       proxy.closeAllConnections();
       await new Promise((r) => proxy.close(r));
+      for (const page of opened) assert.deepEqual(page.errors, [], "the page reports no errors");
     }
   });
 
