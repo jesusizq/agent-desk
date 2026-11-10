@@ -978,34 +978,51 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
   const now = options.now ?? Date.now;
   const armBy = now() + options.armWithinMs;
   let armed = false;
+  let mine: string | undefined;
+  return whileListening(sessionId, store, options, () => {
+    mine ??= store.listeners(sessionId).find((l) => l.pid === process.pid)?.since ?? new Date(now()).toISOString();
+    const session = store.getSession(sessionId);
+    if (!session || session.state === "ended") return { code: 0 };
+    if (session.state === "waiting") armed = true;
+    else if (armed || now() > armBy) return { code: 0 };
+    if (!armed) return undefined;
+    const answers = store.takeInbox(sessionId, forTheTurn(store));
+    if (answers.length > 0) {
+      const message = answers.map((a) => deliveryText(a, imageFiles(store, a.images))).join("\n\n");
+      try {
+        store.updateSession(sessionId, (s) => ({ ...s, state: "working" }));
+      } catch (error) {
+        // The answers are already taken: they must reach the session even if the state cannot be saved.
+        return { code: 2, stderr: `${message}\n\n(agent-desk could not mark the session as working: ${(error as Error).message})` };
+      }
+      return { code: 2, stderr: message };
+    }
+    return store.listeners(sessionId).some((l) => l.pid !== process.pid && l.since > (mine ?? "")) ? { code: 0 } : undefined;
+  });
+}
+
+/**
+ * Listens for the session's answers while `step` finds none: each poll it returns the hook's output,
+ * or undefined to wait on. Past the deadline, or aborted, the wait ends deciding nothing.
+ */
+async function whileListening(sessionId: string, store: Store, options: WaitOptions, step: () => HookOutput | undefined): Promise<HookOutput> {
+  const now = options.now ?? Date.now;
   const release = store.listen(sessionId);
-  const mine = store.listeners(sessionId).find((l) => l.pid === process.pid)?.since ?? new Date(now()).toISOString();
   try {
     while (now() < options.deadline && !options.signal?.aborted) {
-      const session = store.getSession(sessionId);
-      if (!session || session.state === "ended") return { code: 0 };
-      if (session.state === "waiting") armed = true;
-      else if (armed || now() > armBy) return { code: 0 };
-      if (armed) {
-        const answers = store.takeInbox(sessionId, forTheTurn(store));
-        if (answers.length > 0) {
-          const message = answers.map((a) => deliveryText(a, imageFiles(store, a.images))).join("\n\n");
-          try {
-            store.updateSession(sessionId, (s) => ({ ...s, state: "working" }));
-          } catch (error) {
-            // The answers are already taken: they must reach the session even if the state cannot be saved.
-            return { code: 2, stderr: `${message}\n\n(agent-desk could not mark the session as working: ${(error as Error).message})` };
-          }
-          return { code: 2, stderr: message };
-        }
-        if (store.listeners(sessionId).some((l) => l.pid !== process.pid && l.since > mine)) return { code: 0 };
-      }
+      const out = step();
+      if (out) return out;
       await new Promise((r) => setTimeout(r, options.pollMs));
     }
     return { code: 0 };
   } finally {
     release();
   }
+}
+
+/** What a PermissionRequest hook hands Claude Code: the decision taken on the desk. */
+function permissionDecision(decision: object): HookOutput {
+  return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision } }) };
 }
 
 /** Answers for the session's turn: permission and dialog answers belong to the hook waiting for them. */
@@ -1065,27 +1082,16 @@ function closeDialog(sessionId: string, toolResponse: unknown, store: Store, pro
  * settled elsewhere or the wait ends.
  */
 export async function waitForDialog(sessionId: string, dialog: Dialog, store: Store, options: WaitOptions): Promise<HookOutput> {
-  const now = options.now ?? Date.now;
   const answers: Record<string, string> = {};
-  const release = store.listen(sessionId);
-  try {
-    while (now() < options.deadline && !options.signal?.aborted) {
-      for (const q of dialog.questions) {
-        if (q.text in answers) continue;
-        const [entry] = store.takeInbox(sessionId, (qid) => qid === q.id);
-        if (entry) answers[q.text] = entry.answer;
-        else if (store.getQuestion(q.id)?.status !== "open") return { code: 0 };
-      }
-      if (dialog.questions.every((q) => q.text in answers)) {
-        const decision = { behavior: "allow", updatedInput: { ...dialog.input, answers } };
-        return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision } }) };
-      }
-      await new Promise((r) => setTimeout(r, options.pollMs));
+  return whileListening(sessionId, store, options, () => {
+    for (const q of dialog.questions) {
+      if (q.text in answers) continue;
+      const [entry] = store.takeInbox(sessionId, (qid) => qid === q.id);
+      if (entry) answers[q.text] = entry.answer;
+      else if (store.getQuestion(q.id)?.status !== "open") return { code: 0 };
     }
-    return { code: 0 };
-  } finally {
-    release();
-  }
+    return dialog.questions.every((q) => q.text in answers) ? permissionDecision({ behavior: "allow", updatedInput: { ...dialog.input, answers } }) : undefined;
+  });
 }
 
 export const ALLOW = "Allow";
@@ -1098,25 +1104,17 @@ export const DENY = "Deny";
  * decides) when the prompt is settled elsewhere or the wait ends.
  */
 export async function waitForPermission(sessionId: string, questionId: string, store: Store, options: WaitOptions): Promise<HookOutput> {
-  const now = options.now ?? Date.now;
-  const release = store.listen(sessionId);
-  try {
-    while (now() < options.deadline && !options.signal?.aborted) {
-      const [answer] = store.takeInbox(sessionId, (qid) => qid === questionId);
-      if (answer) {
-        const decision =
-          answer.answer === ALLOW
-            ? { behavior: "allow" }
-            : { behavior: "deny", message: answer.answer === DENY ? "The developer denied this on agent-desk." : `Denied on agent-desk: ${answer.answer}` };
-        return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision } }) };
-      }
-      if (store.getQuestion(questionId)?.status !== "open") return { code: 0 };
-      await new Promise((r) => setTimeout(r, options.pollMs));
+  return whileListening(sessionId, store, options, () => {
+    const [answer] = store.takeInbox(sessionId, (qid) => qid === questionId);
+    if (answer) {
+      return permissionDecision(
+        answer.answer === ALLOW
+          ? { behavior: "allow" }
+          : { behavior: "deny", message: answer.answer === DENY ? "The developer denied this on agent-desk." : `Denied on agent-desk: ${answer.answer}` },
+      );
     }
-    return { code: 0 };
-  } finally {
-    release();
-  }
+    return store.getQuestion(questionId)?.status !== "open" ? { code: 0 } : undefined;
+  });
 }
 
 /**
