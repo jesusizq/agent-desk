@@ -204,7 +204,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .s-bad .dot { margin-top: calc((1lh - 14px) / 2); }
 .s-bad > span:not(.dot) { flex: 1; min-width: 0; }
 /* Quiet or failing calls may be a long run or a fix in progress, not a fault: a warning, not the red of a failure. */
-.s-warn, .astuck { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
+.s-warn, .astuck, .s-agent-t small.astuck { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
 .s-ask code, .scard .quiet-line code { font-size: 0.7188rem; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
 .s-more, .s-l3 { color: var(--faint); font-size: 0.75rem; }
 .scard .badge.k-new { background: none; padding: 0; color: var(--accent); font-weight: 650; }

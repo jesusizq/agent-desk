@@ -1314,7 +1314,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.ok(review.left >= split.right && review.top < line.bottom, "To review keeps the right column whole");
       assert.equal(await page.eval<number>("document.querySelectorAll('.scard.rich').length"), 3, "every card is the rich one");
       assert.equal(await page.eval<number>("new Set([...document.querySelectorAll('.scard')].map((c) => Math.round(c.getBoundingClientRect().top))).size < 3"), true, "cards side by side");
-      assert.match(await page.eval<string>(`${checkout}.querySelector('.quiet-line').textContent`), /^Now: Edit: src\/checkout\/OrderSummary\.tsx$/);
+      assert.equal(await page.eval<boolean>(`!${checkout}.querySelector('.quiet-line')`), true, "its tool call stays in the session panel");
       assert.deepEqual(
         await page.eval<string[][]>(`[...${checkout}.querySelectorAll('.s-agent')].map((r) => [r.querySelector('b').textContent, r.querySelector('small').textContent])`),
         [
@@ -1322,16 +1322,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
           ["Rebase the cart on the new summary", "waits for Order summary beside the cart"],
           ["Order summary beside the cart", "Editing src/checkout/OrderSummary.tsx"],
           ["Accessibility audit", "Running axe on 14 pages (9/14)"],
-          ["Three pay button variants", "3 variants in Storybook"],
         ],
-        "each agent with what it does, or why it stopped, trouble first",
+        "each agent at work or in trouble with what it was said to do, or why it stopped, trouble first",
       );
-      assert.deepEqual(await page.eval<string[]>(`[...${checkout}.querySelectorAll('.s-agent-at')].map((t) => t.textContent.replace(/\\d+/g, "N"))`), ["took N h N min", "N min", "N min", "N min", "took N h N min"]);
+      assert.deepEqual(await page.eval<string[]>(`[...${checkout}.querySelectorAll('.s-agent-at')].map((t) => t.textContent.replace(/\\d+/g, "N"))`), ["took N h N min", "N min", "N min", "N min"]);
+      assert.equal(await page.eval<string>(`${checkout}.querySelector('.s-agents > .s-more').textContent`), "1 done", "finished agents are counted, not listed");
       assert.equal(await page.eval<number>(`${checkout}.querySelectorAll('.s-bad').length`), 0, "a failed or blocked agent says why on its own row, not twice");
       assert.equal(await page.eval<boolean>(`${checkout}.querySelector('.s-agent').classList.contains('failed')`), true);
       assert.deepEqual(await agentMarks(page), { sizes: [14], left: true, centred: true }, "each agent's mark at the card's size, its goal under the session's name");
       const work = await page.eval<string>(`${checkout}.querySelector('.s-work').textContent`);
-      assert.match(work, /Context 71%.*vite dev :5173.*storybook :6006.*Opus 5\.5 · high · feat\/checkout-mobile/);
+      assert.match(work, /Context 71%.*vite dev :5173.*storybook :6006.*feat\/checkout-mobile$/);
+      assert.doesNotMatch(work, /Opus/, "the model is in the session panel");
       assert.equal(await page.eval<boolean>("[...document.querySelectorAll('.scard .s-work')].some((w) => w.textContent.includes('limit'))"), false, "no card repeats the plan windows");
       assert.match(
         await page.eval<string>("[...document.querySelectorAll('.col-sessions .col-head .s-gauge')].map((g) => (g.querySelector('.mini') ? '[bar] ' : '') + g.textContent).join(' | ')"),
@@ -1349,6 +1350,40 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.match(await page.eval<string>("document.querySelector('.col-review .col-head').textContent"), /nothing new · seen earlier/);
       await page.click(".last-answer");
       await page.waitFor("document.body.dataset.view === 'history'");
+    });
+
+    it("leaves off a rich card what does not help at a glance: finished agents, tool calls, the project's own branch", async () => {
+      const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+      quiet.upsertSession({ id: "noisy", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "busy session", state: "working", activity: "Bash: python3 - <<'EOF' import pathlib", activityIsCall: true, activityAt: ago(0) });
+      quiet.mergeMetrics({ sessionId: "noisy", model: "Opus 5.5", effort: "high", branch: "main", contextPercent: 40 });
+      for (let i = 0; i < 6; i++) quiet.upsertAgent("noisy", `done-${i}`, { goal: `Finished task ${i}`, state: "done", activity: "Bash: pgrep -af node", activityIsCall: true });
+      quiet.upsertAgent("noisy", "looping", { goal: "Looping agent", activity: "Bash: npm test", activityIsCall: true, activityAt: ago(0), failedAt: [ago(3), ago(2), ago(1)], failedWhat: "Bash: npm test", startedAt: ago(31) });
+      quiet.upsertAgent("noisy", "reader", { goal: "Reads the tests", activity: "Bash: sed -n 100,200p test/page.test.ts", activityIsCall: true, activityAt: ago(0), startedAt: ago(30) });
+      quiet.upsertAgent("noisy", "suite", { goal: "Runs the suite", activity: "Bash: npm test -- invoices (212/340)", activityIsCall: true, activityAt: ago(0), startedAt: ago(29) });
+      for (const n of [1, 2, 3]) quiet.upsertAgent("noisy", `busy-${n}`, { goal: `Busy agent ${n}`, activity: "StructuredOutput", activityIsCall: true, activityAt: ago(0), startedAt: ago(29 - n) });
+      quiet.markSessionRead("demo-pagos");
+      try {
+        const page = await browser.newPage(1440, 900);
+        pages.push(page);
+        await page.goto(quietBase + "/");
+        const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('busy session'))`;
+        await page.waitFor(`${card}?.querySelector('.s-agents')`);
+        assert.deepEqual(
+          await page.eval<string[][]>(`[...${card}.querySelectorAll('.s-agent')].map((r) => [...r.querySelectorAll('b, small')].map((x) => x.textContent))`),
+          [["Looping agent", "3 failed calls in a row"], ["Reads the tests"], ["Runs the suite", "212/340"], ["Busy agent 1"]],
+          "at most four, the stuck one first, each with no tool call: only how far a call has got",
+        );
+        assert.equal(await page.eval<string>(`${card}.querySelector('.s-agents > .s-more').textContent`), "+2 more at work · 6 done");
+        assert.equal(await page.eval<number>(`${card}.querySelectorAll('.s-bad').length`), 0, "the stuck agent is said once, on its own row");
+        const said = await page.eval<string>(`${card}.textContent + [...${card}.querySelectorAll('[title]')].map((e) => e.title).join(' ')`);
+        assert.doesNotMatch(said, /Bash|sed -n|pgrep|python3|StructuredOutput/, "no tool call on the card, not even in a tooltip");
+        assert.doesNotMatch(await page.eval<string>(`${card}.querySelector('.s-work').textContent`), /main|Opus/, "the project's own branch and the model are left to the panel");
+        const pagos = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('payment webhooks'))`;
+        assert.match(await page.eval<string>(`${pagos}.querySelector('.quiet-line').textContent`), /^Waiting for you · 3 min$/, "a session read and waiting says so in a few words");
+      } finally {
+        quiet.upsertSession({ id: "noisy", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, state: "ended" });
+        quiet.markSessionUnread("demo-pagos");
+      }
     });
 
     it("gives the top back to Needs you when a question arrives, the sessions landing in the right column", async () => {
@@ -1396,7 +1431,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.click(".tabbar button", "Sessions");
       await page.waitFor("document.querySelector('.col-sessions').getClientRects().length");
       assert.equal(await page.eval<number>("document.querySelectorAll('.scard.rich').length"), 3);
-      assert.equal(await page.eval<number>(`${checkout}.querySelectorAll('.s-agent').length`), 5);
+      assert.equal(await page.eval<number>(`${checkout}.querySelectorAll('.s-agent').length`), 4);
       assert.deepEqual(await agentMarks(page), { sizes: [14], left: true, centred: true }, "on its own line, the goal keeps its mark centred on it");
       assert.equal(await page.eval<number>("document.documentElement.scrollWidth"), 390, "nothing overflows sideways");
       await page.click(".tabbar button", "To review");

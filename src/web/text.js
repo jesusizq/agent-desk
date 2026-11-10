@@ -65,6 +65,10 @@ export const TEXT = {
     moreAsks: (n) => `+${n} more`,
     /** @param {number} n */
     moreAgents: (n) => `+${plural(n, "more agent", "more agents")}`,
+    /** @param {number} n */
+    moreAtWork: (n) => `+${n} more at work`,
+    /** @param {number} n */
+    agentsDone: (n) => `${n} done`,
     /** @param {number} working @param {number} done */
     agents: (working, done) => [working && `${working} agent${working === 1 ? "" : "s"} working`, done && `${done} done`].filter(Boolean).join(" · "),
   },
@@ -197,6 +201,8 @@ export const TEXT = {
   /** @param {string} names */
   waits: (names) => `waits for ${names}`,
   flow: "Flow",
+  /** @param {string} t how long ago its turn ended */
+  waitingForYou: (t) => `Waiting for you${t && t !== NOW ? ` · ${t}` : ""}`,
   /** @param {string} t */
   awaiting: (t) => `Finished${t === NOW ? " just now" : t ? ` ${t} ago` : ""} · waiting for your next instruction`,
   details: "Details",

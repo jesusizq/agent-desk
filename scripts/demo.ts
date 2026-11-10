@@ -63,7 +63,7 @@ store.updateSession("demo-pagos", (s) => ({
     text: "Both agents stopped when the session restarted, so I relaunched them.\n\n- **Webhooks:** starts over, the previous run had saved nothing. It will add:\n  - the `/webhooks/stripe` endpoint with signature checks;\n  - idempotent retries.\n- **Refunds:** carries on from what was already saved.\n\n`stripe listen` stopped too. I can start it again if you want.",
   },
 }));
-store.updateSession("demo-checkout", (s) => ({ ...s, activity: "Edit: src/checkout/OrderSummary.tsx" }));
+store.updateSession("demo-checkout", (s) => ({ ...s, activity: "Edit: src/checkout/OrderSummary.tsx", activityIsCall: true }));
 for (const [from, text] of [
   ["developer", "Move the order summary beside the cart, so the pay button never scrolls out of view."],
   ["session", "On it. Five agents:\n\n- **summary**: the summary beside the cart.\n- **pay-button**: three button variants.\n- **e2e**: the checkout suite.\n- **a11y**: an axe audit.\n- **cart-rebase**: rebase the cart once summary lands."],

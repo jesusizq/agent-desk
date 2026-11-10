@@ -13,11 +13,11 @@ const ATTENTION = ["failed", "blocked", "idle", "working", "waiting", "done"];
 
 /** At work, but its latest call started a job of its own or waits for one: waiting on it. @param {Agent | Session} x */
 const onItsJob = (x) => x.state === "working" && x.waitsForJob === true;
-/** One dot per agent says the shape of a session at a glance. @param {Agent} a */
-export function agentDot(a) {
+/** One dot per agent says the shape of a session at a glance. `words`: its tooltip holds no tool call. @param {Agent} a @param {boolean} [words] */
+export function agentDot(a, words = false) {
   const st = onItsJob(a) ? "waiting" : a.state;
   const mark = dot(st);
-  mark.title = [a.name, TEXT.state[st], a.activity].filter(Boolean).join(" · ");
+  mark.title = [a.name, TEXT.state[st], words ? spoken(a) : a.activity].filter(Boolean).join(" · ");
   return st === "working" ? h("span", { class: "live" }, mark) : mark;
 }
 /** The session itself at work, before its agents' dots, or waiting on its own job. @param {Session} s */
@@ -36,11 +36,23 @@ function waitsLine(a) {
 export function agentDoing(a) {
   return waitsLine(a) ?? a.activity ?? (a.type ? TEXT.agentType(a.type) : "");
 }
-/** Why an agent is in trouble, in a few words. @param {Agent} a */
-export function troubleText(a) {
-  if (a.state === "failed") return a.activity ?? TEXT.failedAgent;
+/**
+ * Why an agent is in trouble, in a few words. `words`: only what the session or the adapter wrote,
+ * never a tool call. @param {Agent} a @param {boolean} [words]
+ */
+export function troubleText(a, words = false) {
+  if (a.state === "failed") return (words ? spoken(a) : a.activity) ?? TEXT.failedAgent;
   return waitsLine(a) ?? TEXT.idleSince(hm(a.updatedAt));
 }
+/** Its activity as words someone wrote; of a tool call, only how far it has got ("9/14"). @param {Agent | Session} x */
+export const spoken = (x) => (x.activityIsCall ? (progressOf(x.activity) ?? undefined) : x.activity);
+/** What an agent is at, for a card that shows no tool calls: why it is in trouble, or what it was said to do. @param {Agent} a */
+export function agentGist(a) {
+  if (a.state === "failed" || a.state === "blocked" || a.state === "idle") return troubleText(a, true);
+  return spoken(a) ?? (onItsJob(a) ? TEXT.state.waiting : "");
+}
+/** How long it has run, or how long it took. @param {Agent} a */
+export const agentAge = (a) => (a.endedAt ? TEXT.tookFor(ago(a.startedAt, a.endedAt)) : ago(a.startedAt));
 // An agent or session at work with no tool call for this long, and no job of its own to wait on, may be stuck.
 const QUIET_MS = 5 * 60_000;
 /** Minutes since `at`, once past QUIET_MS; otherwise 0. @param {string} at */
@@ -60,6 +72,18 @@ export const failedInARow = (x) => x.failedAt?.length ?? 0;
 export const failing = (x) => x.state === "working" && failedInARow(x) >= 3;
 /** The call that keeps failing, kept for a tooltip: it is not printed in the line. @param {Agent | Session} x */
 export const failingTip = (x) => (x.failedWhat ? TEXT.lastFailed(x.failedWhat) : undefined);
+/**
+ * Why a working agent may be stuck (quiet, or failing its calls in a row), with the call that keeps
+ * failing for a tooltip; null while it is not. @param {Agent} a
+ */
+export function stuckNote(a) {
+  const quiet = agentQuiet(a);
+  const fails = failing(a);
+  if (!quiet && !fails) return null;
+  return { text: [quiet ? TEXT.quietFor(quiet) : "", fails ? TEXT.failingCalls(failedInARow(a)) : ""].filter(Boolean).join(" · "), tip: fails ? failingTip(a) : undefined };
+}
+/** It needs a look: failed, blocked, idle, or at work and maybe stuck. @param {Agent} a */
+export const inTrouble = (a) => a.state === "failed" || a.state === "blocked" || a.state === "idle" || stuckNote(a) !== null;
 /**
  * A working session none of whose own calls nor working agents' has moved for a while: minutes, or 0.
  * Never while it, or one of its working agents, waits on a job of its own. @param {Session} s
@@ -164,6 +188,11 @@ function agentBar(a, x) {
  */
 export function agentRows(rows, axis) {
   /** @param {Agent} a */
+  const stuck = (a) => {
+    const note = stuckNote(a);
+    return note ? h("span", { class: "astuck", title: note.tip }, note.text) : null;
+  };
+  /** @param {Agent} a */
   const tip = (a) => [a.branch && `${a.branch}${a.commit ? ` @ ${a.commit}` : ""}`, a.tokens !== undefined && TEXT.tokens(a.tokens)].filter(Boolean).join(" · ");
   return h(
     "div",
@@ -179,12 +208,10 @@ export function agentRows(rows, axis) {
           h("span", { class: "aname" }, agentDot(a), h("span", { class: "agoal" }, a.goal ?? a.name)),
           a.summary ? h("span", { class: "asummary" }, a.summary) : null,
           agentDoing(a) ? h("span", { class: "adoing" }, a.state === "working" && a.activity ? TEXT.now_(agentDoing(a)) : agentDoing(a)) : null,
-          agentQuiet(a) || failing(a)
-            ? h("span", { class: "astuck", title: failing(a) ? failingTip(a) : undefined }, [agentQuiet(a) ? TEXT.quietFor(agentQuiet(a)) : "", failing(a) ? TEXT.failingCalls(failedInARow(a)) : ""].filter(Boolean).join(" · "))
-            : null,
+          stuck(a),
         ),
         axis ? agentBar(a, axis) : null,
-        h("span", { class: "num faint", title: TEXT.state[a.state] }, a.endedAt ? TEXT.tookFor(ago(a.startedAt, a.endedAt)) : ago(a.startedAt)),
+        h("span", { class: "num faint", title: TEXT.state[a.state] }, agentAge(a)),
       ),
     ),
   );

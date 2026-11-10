@@ -18,6 +18,10 @@ export const mergedOf = (p) => p.worktrees.filter((w) => !w.main && w.merged);
 export const projectsInView = () => data.projects.filter((p) => ui.project === null || p.name === ui.project);
 /** @param {Session} s */
 export const projectOf = (s) => data.projects.find((p) => p.dir === s.project.dir);
+/** The branch its main checkout is on, which the others are compared against. @param {ProjectScan | undefined} p */
+const baseOf = (p) => p?.baseBranch ?? "main";
+/** @param {Session} s */
+export const baseBranchOf = (s) => baseOf(projectOf(s));
 /** Worth a chip: a lot to reclaim, or a lot of growth today. @param {ProjectScan} p */
 export const worthWarning = (p) => sum(mergedOf(p)) > WARN_BYTES || p.totalBytes - p.dayStart.bytes > WARN_BYTES;
 
@@ -28,7 +32,7 @@ export function openProject(projectId) {
   ui.panelSession = null;
   const d = dialog("session");
   const t = TEXT.worktrees;
-  const base = p.baseBranch ?? "main";
+  const base = baseOf(p);
   const merged = mergedOf(p).sort((a, b) => b.bytes - a.bytes);
   const open = p.worktrees.filter((w) => !w.main && !w.merged).sort((a, b) => (b.ahead ?? 0) - (a.ahead ?? 0));
   const main = p.worktrees.filter((w) => w.main);

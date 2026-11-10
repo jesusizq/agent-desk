@@ -2,7 +2,7 @@
 // The desk: the inbox, the sessions and what to review, side by side, or one per tab on a phone.
 import { h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
-import { agentDoing, agentDot, agentQuiet, failedInARow, failing, failingTip, sessionAgents, sessionDot, sessionQuiet, troubleText } from "./agents.js";
+import { agentAge, agentDot, agentGist, agentQuiet, failedInARow, failing, failingTip, inTrouble, sessionAgents, sessionDot, sessionQuiet, spoken, stuckNote, troubleText } from "./agents.js";
 import { askBody, decisionOf } from "./answer.js";
 import { forgetButton } from "./control.js";
 import { ago, color, firstLine, headline, heat, hm, stamp } from "./format.js";
@@ -10,6 +10,7 @@ import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
 import { badge, bar, beacon, dot, emptyState, goLink, LOCAL_URL, localLink, planGauge, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
 import { openResult } from "./result.js";
 import { imageUrl, post, run } from "./server.js";
+import { baseBranchOf } from "./projects.js";
 import { openSession, resultRow } from "./session.js";
 import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, page, S, sessionName, toReview, ui, unread } from "./state.js";
 
@@ -221,7 +222,7 @@ function reviewColumn(quiet) {
 const sessionWeight = (s) =>
   asksOf(s.id).length * 10 +
   (endedUnseen(s) ? 10 : 0) +
-  sessionAgents(s.id).filter((a) => ["failed", "blocked", "idle"].includes(a.state) || agentQuiet(a) || failing(a)).length +
+  sessionAgents(s.id).filter(inTrouble).length +
   (sessionQuiet(s) || failing(s) ? 1 : 0);
 
 /**
@@ -255,15 +256,16 @@ function sessionCard(s, rich, planInHead = false) {
   /** One line of trouble: red only for a failed agent, amber for one that may be stuck. @param {DotState} st @param {string} what @param {string} [tip] */
   const troubleLine = (st, what, tip) => h("div", { class: `s-bad${st === "failed" ? "" : " s-warn"}`, title: tip }, dot(st), h("span", {}, what));
   if (s.state !== "ended" && !isLive(s)) matters.push(troubleLine("idle", TEXT.goneAsking));
-  /** Calls failing in a row warn; the call itself waits in the tooltip and the session's agent rows. @param {Agent | Session} x @param {string} who */
-  const failLine = (x, who) => troubleLine("idle", [who, TEXT.failingCalls(failedInARow(x))].filter(Boolean).join(" · "), failingTip(x));
-  // A rich card says why on the agent's own row.
-  if (!rich) for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a)}`));
+  /** Calls failing in a row warn; the call itself waits in the tooltip (none on a rich card) and the session's agent rows. @param {Agent | Session} x @param {string} who */
+  const failLine = (x, who) => troubleLine("idle", [who, TEXT.failingCalls(failedInARow(x))].filter(Boolean).join(" · "), rich ? undefined : failingTip(x));
+  // A rich card says each agent's trouble on the agent's own row, once.
+  const listed = rich ? [] : as;
+  for (const a of listed.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a)}`));
   if (failing(s)) matters.push(failLine(s, ""));
-  for (const a of as.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
+  for (const a of listed.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
   const quiet = sessionQuiet(s);
-  if (quiet) matters.push(troubleLine("idle", TEXT.trouble.sessionQuiet(quiet)));
-  else for (const a of as.filter(agentQuiet)) matters.push(troubleLine("idle", `${a.goal ?? a.name} · ${TEXT.quietFor(agentQuiet(a))}`));
+  if (quiet) matters.push(troubleLine("idle", TEXT.quietFor(quiet)));
+  else for (const a of listed.filter(agentQuiet)) matters.push(troubleLine("idle", `${a.goal ?? a.name} · ${TEXT.quietFor(agentQuiet(a))}`));
   const shown = matters.slice(0, 3);
   const open = () => openSession(s.id);
   return h(
@@ -287,7 +289,7 @@ function sessionCard(s, rich, planInHead = false) {
       h("span", { class: "s-meta num" }, [ctx !== undefined ? `${Math.round(ctx)}%` : "", ago(since)].filter(Boolean).join(" · ")),
     ),
     shown,
-    shown.length && !rich ? null : quietLine(s),
+    shown.length && !rich ? null : quietLine(s, rich),
     matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
     rich ? agentLines(as) : working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
     rich ? workLine(s, m, planInHead) : m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
@@ -299,39 +301,54 @@ function sessionCard(s, rich, planInHead = false) {
 /** @param {Event} e */
 const stopClick = (e) => e.stopPropagation();
 
-// A rich card's agent rows; past them, one line counts the rest (sessionAgents puts trouble first, done last).
-const AGENT_LINES = 6;
+// A rich card's agent rows: the agents at work or in trouble; past them, one line counts the rest.
+const AGENT_LINES = 4;
+/** @param {Agent} a */
+const atWork = (a) => a.state === "working" || a.state === "waiting";
 
-/** Each agent on one row: its state, its goal and what it does now or why it stopped, and for how long. @param {Agent[]} as */
+/**
+ * The agents that are live or need a look, trouble first, each on one row: its state, its goal, what
+ * it was said to do or why it stopped (never a tool call), and for how long. Finished ones are only
+ * counted. @param {Agent[]} as
+ */
 function agentLines(as) {
   if (!as.length) return null;
-  const rows = as.slice(0, as.length > AGENT_LINES ? AGENT_LINES - 1 : AGENT_LINES);
+  // sessionAgents puts failed, blocked and idle first; an agent that may be stuck comes right after them.
+  const rank = (/** @type {Agent} */ a) => (a.state === "failed" || a.state === "blocked" || a.state === "idle" ? 0 : stuckNote(a) ? 1 : 2);
+  const open = as.filter((a) => a.state !== "done").sort((a, b) => rank(a) - rank(b));
+  const rows = open.slice(0, AGENT_LINES);
+  const hidden = open.slice(AGENT_LINES);
+  const done = as.length - open.length;
+  const t = TEXT.sessionLine;
+  const rest = [hidden.length ? (hidden.every(atWork) ? t.moreAtWork(hidden.length) : t.moreAgents(hidden.length)) : "", done ? t.agentsDone(done) : ""].filter(Boolean).join(" · ");
   return h(
     "div",
     { class: "s-agents" },
     rows.map((a) => {
-      const doing = a.state === "failed" || a.state === "blocked" ? troubleText(a) : agentDoing(a);
+      const gist = agentGist(a);
+      const stuck = stuckNote(a)?.text;
       return h(
         "div",
-        { class: `s-agent${a.state === "failed" ? " failed" : ""}`, title: [a.goal ?? a.name, doing].filter(Boolean).join("\n") },
-        agentDot(a),
-        h("span", { class: "s-agent-t" }, h("b", {}, a.goal ?? a.name), doing ? h("small", {}, doing) : null),
-        h("span", { class: "s-agent-at num" }, a.endedAt ? TEXT.tookFor(ago(a.startedAt, a.endedAt)) : ago(a.startedAt)),
+        { class: `s-agent${a.state === "failed" ? " failed" : ""}`, title: [a.goal ?? a.name, stuck, gist].filter(Boolean).join("\n") },
+        agentDot(a, true),
+        h("span", { class: "s-agent-t" }, h("b", {}, a.goal ?? a.name), stuck ? h("small", { class: "astuck" }, stuck) : null, gist ? h("small", {}, gist) : null),
+        h("span", { class: "s-agent-at num" }, agentAge(a)),
       );
     }),
-    as.length > rows.length ? h("div", { class: "s-more" }, TEXT.sessionLine.moreAgents(as.length - rows.length)) : null,
+    rest ? h("div", { class: "s-more" }, rest) : null,
   );
 }
 
 /**
  * What a session runs on, in one wrapping line: its context (with the command it calls for), its plan
- * windows unless the column's head shows them, its live previews, its model and branch. Each part only
- * when its provider reports it. @param {Session} s @param {Metrics | undefined} m @param {boolean} planInHead
+ * windows unless the column's head shows them, its live previews, and its branch when it is not the
+ * project's own. Each part only when its provider reports it; the model is in the session panel.
+ * @param {Session} s @param {Metrics | undefined} m @param {boolean} planInHead
  */
 function workLine(s, m, planInHead) {
   const ctx = m?.contextPercent;
   const services = data.services.filter((v) => v.sessionId === s.id);
-  const where = [[m?.model, m?.effort].filter(Boolean).join(" · "), m?.branch].filter(Boolean).join(" · ");
+  const branch = m?.branch !== undefined && m.branch !== baseBranchOf(s) ? m.branch : undefined;
   const parts = [
     ctx !== undefined || m?.suggestion
       ? h("span", { class: "s-gauge" }, ctx !== undefined ? bar(ctx) : null, m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : TEXT.context(ctx ?? 0))
@@ -339,17 +356,23 @@ function workLine(s, m, planInHead) {
     ...(planInHead ? [] : (m?.planWindows ?? []).map((w) => planGauge(w, "s-gauge"))),
     // A preview opens in its own tab, not the session.
     ...services.map((v) => h("span", { class: "s-live", title: TEXT.svcSince(ago(v.startedAt)), onclick: stopClick }, h("span", { class: "up" }), localLink(v.url, `${v.name} ${v.url.replace(LOCAL_URL, "")}`))),
-    where ? h("span", { class: "s-where", title: where }, where) : null,
+    branch ? h("span", { class: "s-where", title: branch }, branch) : null,
   ].filter(Boolean);
   return parts.length ? h("div", { class: "s-work" }, parts) : null;
 }
 
-/** What a session is up to, in one quiet line: its current tool call, or that it waits for instructions. @param {Session} s */
-function quietLine(s) {
+/**
+ * What a session is up to, in one quiet line: what it said that is new, that it waits for instructions,
+ * or what it does now. A rich card says it short, and leaves a tool call to the session panel.
+ * @param {Session} s @param {boolean} rich
+ */
+function quietLine(s, rich) {
   if (endedUnseen(s)) return h("div", { class: "quiet-line unread", title: s.lastMessage ? firstLine(s.lastMessage.text) : "" }, h("span", { class: "badge k-new" }, TEXT.endedAsking), s.lastMessage ? firstLine(s.lastMessage.text) : "");
   if (s.state === "waiting" && s.lastMessage && unread(s)) return h("div", { class: "quiet-line unread", title: firstLine(s.lastMessage.text) }, readBadge(s), firstLine(s.lastMessage.text));
+  if (s.state === "waiting" && rich) return h("div", { class: "quiet-line" }, TEXT.waitingForYou(s.lastMessage ? ago(s.lastMessage.at) : ""));
   if (s.state === "waiting") return h("div", { class: "quiet-line" }, readBadge(s), TEXT.awaiting(s.lastMessage ? ago(s.lastMessage.at) : ""));
-  if (s.activity) return h("div", { class: "quiet-line", title: s.activity }, TEXT.sessionLine.now, " ", h("code", {}, s.activity));
+  const now = rich ? spoken(s) : s.activity;
+  if (now) return h("div", { class: "quiet-line", title: now }, TEXT.sessionLine.now, " ", h("code", {}, now));
   return null;
 }
 /** "New message" until the developer opens the session, "Seen" after. @param {Session} s */
