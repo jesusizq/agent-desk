@@ -10,6 +10,8 @@ without going to look for it.
 You run several AI coding sessions across a few projects, each with its own swarm of sub-agents,
 and step away. When you come back, one browser tab shows:
 
+- **What happened while you were away:** back after 20 minutes or more, or at the day's first look,
+  one summary of what finished, what failed, what waits and what you answered in a terminal meanwhile.
 - **What needs you, in order.** Questions and permission prompts from every session, the oldest
   shown large. Answer on the page (a click or a few words) and the session carries on by itself; or
   press "Go to session" and its exact terminal tab comes to the front.

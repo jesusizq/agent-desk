@@ -2228,6 +2228,95 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  describe("while you were away", () => {
+    /** The desk as this device saw it last `minutes` ago. */
+    async function openAway(minutes: number, width = 1400, height = 900, phone = false): Promise<Page> {
+      const page = await browser.newPage(width, height);
+      pages.push(page);
+      if (phone) {
+        await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 3, mobile: true });
+        await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+      }
+      await page.send("Page.addScriptToEvaluateOnNewDocument", { source: `localStorage.setItem("agent-desk:last-looked", String(Date.now() - ${minutes} * 60000));` });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('.next')");
+      return page;
+    }
+    const lines = (page: Page, group: string) => page.eval<string[]>(`[...document.querySelectorAll('.away [data-key="${group}"] .away-line')].map((l) => l.textContent)`);
+
+    it("sums up what finished, failed, waits and was answered in the terminal, each line opening it, until dismissed", async () => {
+      const done = store.addResult({ sessionId: "demo-iva", title: "Finished while away", url: "http://localhost:5173/away" });
+      store.addResult({ sessionId: "demo-iva", title: "Failed while away", status: "failed" });
+      const q = store.ask({ sessionId: "demo-pagos", kind: "question", text: "Answered in the terminal while away?" });
+      store.closeOpen("demo-pagos", { answer: "Yes, from the terminal", which: (x) => x.id === q.id });
+      const page = await openAway(120);
+      await page.waitFor("document.querySelector('#strip .away')");
+      assert.match(await page.eval<string>("document.querySelector('.away-head').textContent"), /^While you were away\s*since \d\d:\d\d · .*finished.*answered in the terminal/);
+      assert.ok((await lines(page, "finished")).some((l) => l.includes("Finished while away")));
+      assert.ok((await lines(page, "failed")).some((l) => l.includes("Failed while away")));
+      assert.ok((await lines(page, "answered")).some((l) => l.includes("Answered in the terminal while away?") && l.includes("Yes, from the terminal")));
+      assert.ok((await lines(page, "waits")).length > 0, "what waits, oldest first");
+      assert.equal(await page.eval<boolean>("document.querySelector('#strip > .muted') === null"), true, "it takes the place of the line on what is new");
+      // A line opens what it names; the summary stays for the next one.
+      await page.click(".away .away-line", "Finished while away");
+      await page.waitFor(`${arrived("result")} && document.querySelector('#result h3').textContent === 'Finished while away'`);
+      await page.press("Escape");
+      await page.waitFor("!document.getElementById('result').open");
+      await page.click(".away .away-line", "Answered in the terminal while away?");
+      await page.waitFor(arrived("session"));
+      assert.match(await page.eval<string>("document.querySelector('#session h3').textContent"), /./);
+      await page.press("Escape");
+      await page.waitFor("!document.getElementById('session').open");
+      // Answering stays where it was: the large card answers as without the summary.
+      assert.ok(await page.eval<boolean>("!!document.querySelector('.next .answer')"));
+      await page.click(".away-close");
+      await page.waitFor("!document.querySelector('.away') && document.querySelector('#strip > .muted')");
+      store.markResultSeen(done.id);
+    });
+
+    it("says nothing after a short absence, and sums up on coming back to a page left hidden for a while", async () => {
+      const page = await openAway(5);
+      await new Promise((r) => setTimeout(r, 600));
+      assert.equal(await page.eval<boolean>("!!document.querySelector('.away')"), false, "5 minutes away is not away");
+      // Hidden for an hour: the device noted when it stopped looking, and something finished meanwhile.
+      await page.eval(`(() => {
+        Object.defineProperty(document, "hidden", { configurable: true, get: () => window.fakeHidden });
+        window.fakeHidden = true;
+        document.dispatchEvent(new Event("visibilitychange"));
+        localStorage.setItem("agent-desk:last-looked", String(Date.now() - 60 * 60000));
+      })()`);
+      const r = store.addResult({ sessionId: "demo-iva", title: "Finished behind a hidden page", url: "http://localhost:5173/hidden" });
+      await page.eval(`(() => { window.fakeHidden = false; document.dispatchEvent(new Event("visibilitychange")); })()`);
+      await page.waitFor("[...document.querySelectorAll('.away .away-line')].some((l) => l.textContent.includes('Finished behind a hidden page'))");
+      // Not in History: it belongs to the desk.
+      await page.click("#views button", "History");
+      await page.waitFor("!document.querySelector('.away')");
+      await page.click("#views button", "Desk");
+      await page.waitFor("!!document.querySelector('.away')");
+      store.markResultSeen(r.id);
+    });
+
+    it("on a phone, sits above Needs you one line per group, on every tab of the desk", async () => {
+      const r = store.addResult({ sessionId: "demo-iva", title: "Finished while the phone slept", url: "http://localhost:5173/phone" });
+      const page = await openAway(90, 390, 844, true);
+      await page.waitFor("document.querySelector('#strip .away')?.getBoundingClientRect().height > 0");
+      const away = await page.eval<{ bottom: number; needsTop: number; width: number; groups: number[] }>(`(() => ({
+        bottom: document.querySelector('.away').getBoundingClientRect().bottom,
+        needsTop: document.querySelector('.col-needs').getBoundingClientRect().top,
+        width: document.querySelector('.away').getBoundingClientRect().right,
+        groups: [...document.querySelectorAll('.away-group')].map((g) => g.querySelectorAll('.away-line').length),
+      }))()`);
+      assert.ok(away.bottom <= away.needsTop, "above Needs you, covering nothing");
+      assert.ok(away.width <= 390, "inside the screen");
+      assert.ok(away.groups.every((n) => n === 1), `one line per group: ${away.groups}`);
+      await page.tap(".tabbar button", "Sessions");
+      await page.waitFor("document.querySelector('.away')?.getBoundingClientRect().height > 0");
+      await page.tap(".away-close");
+      await page.waitFor("!document.querySelector('.away')");
+      store.markResultSeen(r.id);
+    });
+  });
+
   describe("forgetting a session", () => {
     it("offers Forget only on a session that is not running, acts on the second click, and takes it off the desk", async () => {
       const at = new Date(Date.now() - 30 * 60000).toISOString();

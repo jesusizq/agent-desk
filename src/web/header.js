@@ -4,6 +4,7 @@ import { byId, h, icon, patch } from "./dom.js";
 import { reducedMotion } from "./motion.js";
 import { TEXT } from "./text.js";
 import { clockAt, gb, hm } from "./format.js";
+import { awaySummary } from "./away.js";
 import { markCut } from "./layout.js";
 import { projectMark } from "./pieces.js";
 import { mergedOf, openProject, projectsInView, sum, worthWarning } from "./projects.js";
@@ -141,11 +142,13 @@ export function renderStrip() {
     .filter((s) => isLive(s) && inProject(s.id))
     .map((s) => ({ s, c: metricsOf(s.id)?.contextPercent }))
     .filter(/** @returns {x is { s: Session, c: number }} */ (x) => x.c !== undefined && x.c >= CONTEXT_WARN);
+  // Back from a while away, the summary of what happened meanwhile takes the place of the line on what is new.
+  const away = awaySummary();
   patch(
     byId("strip"),
     ui.offline ? offlineNotice("strip-offline") : null,
     // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear.
-    ui.loaded ? h("span", { class: "muted" }, summary) : h("span", { class: "skel", "aria-hidden": "true" }),
+    away ?? (ui.loaded ? h("span", { class: "muted" }, summary) : h("span", { class: "skel", "aria-hidden": "true" })),
     fresh.length ? h("button", { class: "linkish", onclick: () => run(post("/api/seen")) }, TEXT.markSeen) : null,
     h("span", { class: "spacer" }),
     data.problems.length ? h("span", { class: "chip warn problems", title: data.problems.join("\n") }, TEXT.problems(data.problems.length)) : null,

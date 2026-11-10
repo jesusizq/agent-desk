@@ -245,6 +245,20 @@ export const TEXT = {
   /** @param {string} t */
   nothingNew: (t) => `Nothing new since ${t}.`,
   nothingYet: "Nothing has finished yet.",
+  away: {
+    title: "While you were away",
+    /** @param {string} t */
+    since: (t) => `since ${t}`,
+    /** @param {number} done @param {number} failed @param {number} answered */
+    summary: (done, failed, answered) => [counts(done, failed), answered && `${answered} answered in the terminal`].filter(Boolean).join(", ") || "new questions",
+    waits: COLS.needs,
+    failed: "Failed",
+    finished: "Finished",
+    answered: "Answered in the terminal",
+    /** @param {number} n */
+    more: (n) => `+${n} more`,
+    dismiss: "Dismiss this summary",
+  },
   markSeen: "Mark all as seen",
   /** @param {string} free @param {string} projects */
   disk: (free, projects) => `Disk: ${free} free (${projects})`,

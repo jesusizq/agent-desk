@@ -24,6 +24,7 @@ const STATIC: Record<string, string> = {
   "/alerts.js": "text/javascript; charset=utf-8",
   "/answer.js": "text/javascript; charset=utf-8",
   "/arrivals.js": "text/javascript; charset=utf-8",
+  "/away.js": "text/javascript; charset=utf-8",
   "/control.js": "text/javascript; charset=utf-8",
   "/conversation.js": "text/javascript; charset=utf-8",
   "/desk.js": "text/javascript; charset=utf-8",

@@ -6,6 +6,7 @@ import { animateLists, fadeIn, stopLists } from "./motion.js";
 import { TEXT } from "./text.js";
 import { renderAlerts } from "./alerts.js";
 import { renderArrival } from "./arrivals.js";
+import { watchAway } from "./away.js";
 import { board, skeleton } from "./desk.js";
 import { renderDisplay, renderHeader, renderStrip } from "./header.js";
 import { focusHistorySearch, historyView } from "./history.js";
@@ -28,7 +29,8 @@ const TICK_MS = 30_000;
  * @param {{ instant?: boolean }} [how]
  */
 function renderView({ instant = false } = {}) {
-  document.body.dataset.tab = ui.tab;
+  // style.css shows a phone's strip by both: on the desk's Inbox and To review tabs, not in History.
+  Object.assign(document.body.dataset, { view: ui.view, tab: ui.tab });
   const view = byId("view");
   const placeholder = view.querySelector(".board[aria-busy]") !== null;
   /** @type {Map<string, number>} */
@@ -251,6 +253,7 @@ render();
 await refresh();
 route();
 follow();
+watchAway();
 followKeyboard();
 // A phone puts a hidden tab's timers to sleep: coming back, the desk is fetched at once, not at the next tick.
 document.addEventListener("visibilitychange", () => document.hidden || refresh());

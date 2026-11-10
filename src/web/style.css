@@ -69,6 +69,24 @@ kbd { font: 0.6875rem var(--mono); border: 1px solid var(--border-strong); borde
 .strip { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 7px 14px; font-size: 0.8125rem;
   border-bottom: 1px solid var(--border); background: var(--surface-2); flex: none; }
 .strip b { font-weight: 650; }
+/* While you were away: the strip's line on what is new grows into a calm summary, groups side by side,
+   each line a way to what it names. It pushes nothing off screen and covers nothing. */
+.strip > .away { flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 2px 0 4px; }
+.away-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.away-head .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.away-close { height: 26px; padding: 0 6px; flex: none; }
+.away-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 18px; }
+.away-group { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+.away-group h4 { margin: 0 0 1px; font: 650 0.6875rem var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+.away-line { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; border: 0; background: none; padding: 3px 6px; margin-left: -6px;
+  border-radius: 6px; text-align: left; font-size: 0.8125rem; color: var(--text); transition: background-color var(--dur-1) var(--ease-out); }
+.away-line:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.away-line > :first-child { flex: none; margin-right: 0; }
+.away-line > svg.i { width: 13px; height: 13px; color: var(--faint); }
+.away-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.away-where { color: var(--faint); font-size: 0.75rem; }
+.away-more { font-size: 0.75rem; }
+@media (prefers-reduced-motion: reduce) { .away-line { transition: none; } }
 .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface);
   border-radius: 999px; padding: 1px 9px; font-size: 0.7812rem; }
 button.chip:hover { border-color: var(--border-strong); }
@@ -746,6 +764,15 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .strip:has(.offline) { flex-wrap: wrap; }
   .strip .offline { order: -2; flex: 1 1 100%; white-space: normal; }
   .strip .chip { order: -1; } /* warnings first: the summary repeats the Results count */
+  /* So does the summary of the time away, one row per group: what it names stays a tap away above Needs you. */
+  .strip:has(> .away) { flex-wrap: wrap; }
+  .strip > .away { order: -1; flex: 1 1 100%; white-space: normal; }
+  .away-head { white-space: nowrap; }
+  .away-groups { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .away-group { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
+  /* Each group's mark says which it is (a needs dot, a cross, a tick, a terminal); its name stays for screen readers. */
+  .away-group h4 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .away-line { min-height: 34px; }
   .chip { max-width: 100%; min-width: 0; }
   .board { padding: 10px max(10px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); gap: 10px; }
   .col-body { padding: 8px; }
@@ -863,8 +890,9 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .col-head { font-size: 1rem; padding: 4px 2px 8px; }
   #toasts { bottom: calc(var(--bar) + 12px + env(safe-area-inset-bottom)); left: 12px; right: 12px; width: auto; transform: none; align-items: stretch; }
   .toast { max-width: none; padding: 12px 14px; font-size: 0.875rem; border-radius: 10px; }
-  /* The strip (warnings, what is new to review) belongs with Inbox and Results; elsewhere it gives its room back, unless it says the desk is offline. */
-  body:not([data-view="desk"][data-tab="inbox"]):not([data-view="desk"][data-tab="review"]) .strip:not(:has(.offline)) { display: none; }
+  /* The strip (warnings, what is new to review) belongs with Inbox and Results; elsewhere it gives its room back,
+     unless it says the desk is offline or what happened while the developer was away (shown on the desk only). */
+  body:not([data-view="desk"][data-tab="inbox"]):not([data-view="desk"][data-tab="review"]) .strip:not(:has(.offline, > .away)) { display: none; }
   /* The large card: kind and age on the first line, where it comes from on its own line below. */
   .next > .meta { flex-wrap: wrap; }
   .next > .meta > .where { order: 1; flex-basis: 100%; }
