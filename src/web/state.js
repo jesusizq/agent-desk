@@ -150,6 +150,8 @@ export const endedUnseen = (s) => s.state === "ended" && s.endedAsking === true 
 export const toReview = () => data.results.filter((r) => inProject(r.sessionId) && isNew(r) && r.status !== "failed");
 /** What a session asks that is still open, in the order asked. @param {string} sid */
 export const asksOf = (sid) => data.questions.filter((q) => q.status === "open" && q.sessionId === sid);
+/** On the desk: it runs, or its process is gone while it still asks or ended unseen, so what it asked can be forgotten with it. @param {Session} s */
+export const onDesk = (s) => isLive(s) || endedUnseen(s) || asksOf(s.id).length > 0;
 
 /** An answer or message is on its way to the desk, or an image to the store: leaving now would lose it. */
 export const inFlight = () => ui.sending.size > 0 || [...ui.uploading.values()].some((n) => n > 0);

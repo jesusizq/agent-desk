@@ -10,7 +10,7 @@ import { projectMark } from "./pieces.js";
 import { mergedOf, openProject, projectsInView, sum, worthWarning } from "./projects.js";
 import { offlineNotice, post, run } from "./server.js";
 import { openSession } from "./session.js";
-import { asksOf, CONTEXT_WARN, data, endedUnseen, inbox, inProject, isLive, isNew, label, metricsOf, openItems, page, toReview, ui } from "./state.js";
+import { CONTEXT_WARN, data, inbox, inProject, isLive, isNew, label, metricsOf, onDesk, openItems, page, toReview, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 
@@ -25,7 +25,7 @@ export function renderHeader() {
     ),
   );
   // A project is offered while one of its sessions runs or still has something for the developer.
-  const current = (/** @type {Session} */ s) => isLive(s) || endedUnseen(s) || asksOf(s.id).length > 0 || data.results.some((r) => r.sessionId === s.id && isNew(r));
+  const current = (/** @type {Session} */ s) => onDesk(s) || data.results.some((r) => r.sessionId === s.id && isNew(r));
   const names = [...new Set(data.sessions.filter(current).map((s) => s.project.name))].sort();
   if (ui.project !== null && !names.includes(ui.project)) ui.project = null;
   const projects = byId("projects");

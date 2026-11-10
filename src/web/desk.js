@@ -12,7 +12,7 @@ import { openResult } from "./result.js";
 import { imageUrl, post, run } from "./server.js";
 import { baseBranchOf } from "./projects.js";
 import { openSession, resultRow } from "./session.js";
-import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, page, S, sessionName, toReview, ui, unread } from "./state.js";
+import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, page, S, sessionName, toReview, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -391,8 +391,7 @@ function readBadge(s) {
 }
 /** @param {boolean} rich the cards have the room to show each session's work @param {boolean} quiet */
 function sessionsColumn(rich, quiet) {
-  // A session whose process is gone stays while it still asks, so what it asked can be forgotten with it.
-  const list = data.sessions.filter((s) => (isLive(s) || endedUnseen(s) || asksOf(s.id).length > 0) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
+  const list = data.sessions.filter((s) => onDesk(s) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
   const legend = h("div", { class: "legend" }, LEGEND.map((st) => h("span", {}, dot(st), TEXT.state[st])));
   const working = list.filter((s) => s.state === "working").length;
   const agents = data.agents.filter((a) => a.state === "working" && list.some((s) => s.id === a.sessionId)).length;

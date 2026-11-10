@@ -50,7 +50,7 @@ function panelChips(s, m) {
     "div",
     { class: "pchips" },
     m?.suggestion && command ? suggestionChip(m.suggestion, m.contextPercent ?? 0, command) : null,
-    s.state === "ended" || data.gone.includes(s.id) ? [h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone), forgetButton(s, () => redrawPanel(s.id), "chip")] : null,
+    !isLive(s) ? [h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone), forgetButton(s, () => redrawPanel(s.id), "chip")] : null,
     failed ? agents : null,
     m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
     (m?.planWindows ?? []).map((w) => planGauge(w, "chip")),
