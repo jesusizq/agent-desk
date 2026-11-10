@@ -1263,6 +1263,130 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<boolean>("!!document.querySelector('.tabbar').getClientRects().length"), true);
   });
 
+  describe("the desk when nothing needs the developer", () => {
+    let quiet: Store;
+    let quietBase: string;
+    let closeQuiet: () => Promise<void>;
+    before(async () => {
+      const home = path.join(tempHome(), "store");
+      execFileSync(process.execPath, [path.join(import.meta.dirname, "../scripts/demo.ts"), home]);
+      quiet = new Store(home);
+      for (const q of quiet.listQuestions()) if (q.status === "open") quiet.dismiss(q.id);
+      for (const r of quiet.listResults()) if (!r.seenAt) quiet.markResultSeen(r.id);
+      ({ base: quietBase, close: closeQuiet } = await serve(quiet));
+    });
+    after(() => closeQuiet?.());
+    afterEach(() => {
+      for (const q of quiet.listQuestions()) if (q.status === "open") quiet.dismiss(q.id);
+    });
+    async function openQuiet(width = 1440, height = 900): Promise<Page> {
+      const page = await browser.newPage(width, height);
+      pages.push(page);
+      await page.goto(quietBase + "/");
+      await page.waitFor("document.querySelectorAll('.scard').length === 3");
+      return page;
+    }
+    const box = (page: Page, sel: string) => page.eval<{ top: number; bottom: number; left: number; right: number; height: number }>(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height }; })()`);
+    const checkout = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('checkout redesign'))`;
+
+    it("shrinks Needs you to one line and gives the centre to the sessions, with what each does now, its agents and what it runs on", async () => {
+      const page = await openQuiet();
+      assert.equal(await page.eval<boolean>("document.querySelector('.board').classList.contains('quiet')"), true);
+      assert.equal(await page.eval<boolean>("!document.querySelector('.col-needs .col-head') && !!document.querySelector('.col-needs .all-clear')"), true, "Needs you is the one line");
+      assert.match(await page.eval<string>("document.querySelector('.all-clear').textContent"), /^All clear.*nothing needs you, nothing new to review.*last answer \d\d:\d\d · “?Yes, one series per year/);
+      const line = await box(page, ".all-clear");
+      assert.ok(line.height < 50, `one line (${line.height} px)`);
+      const sessions = await box(page, ".col-sessions");
+      const split = await box(page, ".split");
+      assert.ok(sessions.right <= split.left && sessions.top >= line.bottom, "the sessions sit under the line, left of the splitter");
+      const review = await box(page, ".col-review");
+      assert.ok(review.left >= split.right && review.top < line.bottom, "To review keeps the right column whole");
+      assert.equal(await page.eval<number>("document.querySelectorAll('.scard.rich').length"), 3, "every card is the rich one");
+      assert.equal(await page.eval<number>("new Set([...document.querySelectorAll('.scard')].map((c) => Math.round(c.getBoundingClientRect().top))).size < 3"), true, "cards side by side");
+      assert.match(await page.eval<string>(`${checkout}.querySelector('.quiet-line').textContent`), /^Now: Edit: src\/checkout\/OrderSummary\.tsx$/);
+      assert.deepEqual(
+        await page.eval<string[][]>(`[...${checkout}.querySelectorAll('.s-agent')].map((r) => [r.querySelector('b').textContent, r.querySelector('small').textContent])`),
+        [
+          ["Checkout e2e suite", "No space left on device while writing traces"],
+          ["Rebase the cart on the new summary", "waits for Order summary beside the cart"],
+          ["Order summary beside the cart", "Editing src/checkout/OrderSummary.tsx"],
+          ["Accessibility audit", "Running axe on 14 pages (9/14)"],
+          ["Three pay button variants", "3 variants in Storybook"],
+        ],
+        "each agent with what it does, or why it stopped, trouble first",
+      );
+      assert.deepEqual(await page.eval<string[]>(`[...${checkout}.querySelectorAll('.s-agent-at')].map((t) => t.textContent.replace(/\\d+/g, "N"))`), ["took N h N min", "N min", "N min", "N min", "took N h N min"]);
+      assert.equal(await page.eval<number>(`${checkout}.querySelectorAll('.s-bad').length`), 0, "a failed or blocked agent says why on its own row, not twice");
+      assert.equal(await page.eval<boolean>(`${checkout}.querySelector('.s-agent').classList.contains('failed')`), true);
+      const work = await page.eval<string>(`${checkout}.querySelector('.s-work').textContent`);
+      assert.match(work, /Context 71%.*5 h limit 42% · resets \d\d:\d\d.*vite dev :5173.*storybook :6006.*Opus 5\.5 · high · feat\/checkout-mobile/);
+      assert.equal(await page.eval<string>(`${checkout}.querySelector('.s-live a').getAttribute('href')`), "http://localhost:5173");
+      // A preview opens in its own tab: a click beside its link does not open the session.
+      await page.eval(`${checkout}.querySelector('.s-live').click()`);
+      assert.deepEqual(await openDialogs(page), []);
+      const vat = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('VAT rounding'))`;
+      assert.match(await page.eval<string>(`${vat}.querySelector('.s-work .chip').textContent`), /^Context 86% · \/compact$/, "the command its context calls for stands for its context");
+      assert.match(await page.eval<string>("document.querySelector('.col-sessions .col-head').textContent"), /Sessions3.*2 working · 4 agents at work/);
+      assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.rearlier .rrow .rt')].map((t) => t.textContent)"), ["Migration 0041 applied locally", "Checkout e2e: failed, disk full", "Three pay button variants", "Checkout: before and after"], "the results already seen, newest first");
+      assert.match(await page.eval<string>("document.querySelector('.col-review .col-head').textContent"), /nothing new · seen earlier/);
+      await page.click(".last-answer");
+      await page.waitFor("document.body.dataset.view === 'history'");
+    });
+
+    it("gives the top back to Needs you when a question arrives, the sessions landing in the right column", async () => {
+      const page = await openQuiet();
+      // What moves is read the moment the board changes shape, right after its redraw.
+      await page.eval(`(() => {
+        const board = document.querySelector('.board');
+        new MutationObserver((_, mo) => {
+          if (board.classList.contains('quiet')) return;
+          mo.disconnect();
+          window.moved = {
+            cards: [...document.querySelectorAll('.scard')].map((c) => c.getAnimations().some((a) => a.effect.getKeyframes().some((k) => k.opacity === '0' || k.opacity === 0))),
+            head: document.querySelector('.col-needs .col-head').getAnimations().length > 0,
+            line: !!document.querySelector('.all-clear[data-leaving]'),
+          };
+        }).observe(board, { attributes: true, attributeFilter: ['class'] });
+      })()`);
+      quiet.ask({ sessionId: "demo-pagos", kind: "question", text: "Shall I start stripe listen again?", options: ["Yes", "No"] });
+      await page.waitFor("window.moved && document.querySelector('.next')");
+      assert.deepEqual(await page.eval("window.moved"), { cards: [true, true, true], head: true, line: true }, "the cards land in their new column, Needs you's head fades in, the line folds away");
+      const needs = await box(page, ".col-needs");
+      const sessions = await box(page, ".col-sessions");
+      assert.ok(needs.right <= sessions.left && needs.top < sessions.top + 1, "Needs you takes the left column again, the sessions the right");
+      assert.equal(await page.eval<number>("document.querySelectorAll('.scard.rich').length"), 0, "the cards are the short ones again");
+      assert.equal(await page.eval<boolean>("document.querySelector('.scard.needs')?.textContent.includes('payment webhooks')"), true);
+      for (const q of quiet.listQuestions()) if (q.status === "open") quiet.dismiss(q.id);
+      await page.waitFor("document.querySelector('.board.quiet .all-clear')");
+    });
+
+    it("moves nothing for a developer who prefers reduced motion", async () => {
+      const page = await browser.newPage(1440, 900);
+      pages.push(page);
+      await page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+      await page.goto(quietBase + "/");
+      await page.waitFor("document.querySelector('.board.quiet')");
+      quiet.ask({ sessionId: "demo-pagos", kind: "question", text: "Shall I start stripe listen again?", options: ["Yes", "No"] });
+      await page.waitFor("document.querySelector('.next')");
+      assert.equal(await page.eval<number>("document.getAnimations().filter((a) => a.id === 'motion').length"), 0);
+    });
+
+    it("on a phone, keeps its tabs and the centred All clear, and gives the Sessions tab the rich cards", async () => {
+      const page = await openQuiet(390, 800);
+      assert.equal(await page.eval<boolean>("document.querySelector('.board').classList.contains('quiet')"), false, "the board keeps its tabs");
+      assert.equal(await page.eval<string>("document.querySelector('.col-needs .empty').textContent"), "All clear: nothing needs you, nothing new to review.");
+      await page.click(".tabbar button", "Sessions");
+      await page.waitFor("document.querySelector('.col-sessions').getClientRects().length");
+      assert.equal(await page.eval<number>("document.querySelectorAll('.scard.rich').length"), 3);
+      assert.equal(await page.eval<number>(`${checkout}.querySelectorAll('.s-agent').length`), 5);
+      assert.equal(await page.eval<number>("document.documentElement.scrollWidth"), 390, "nothing overflows sideways");
+      await page.click(".tabbar button", "To review");
+      assert.equal(await page.eval<boolean>("!document.querySelector('.rearlier') && !!document.querySelector('.col-review .empty')"), true, "To review as before: nothing new, and the way to earlier results");
+      await page.resize(1440, 900);
+      await page.waitFor("document.querySelector('.board.quiet')");
+    });
+  });
+
   describe("redraws change only what changed, and lists move on their own cards", () => {
     it("keeps the focused card, the selected text and every node through new data and the 30 s tick", async () => {
       const page = await browser.newPage(1400, 900);

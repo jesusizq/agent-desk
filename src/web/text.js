@@ -13,6 +13,9 @@ const NOW = "now";
 const COLS = { needs: "Needs you", sessions: "Sessions", review: "To review" };
 /** @param {number} c */
 const contextAt = (c) => `Context ${Math.round(c)}%`;
+const CLEAR = "All clear";
+/** @param {boolean} resultsToo */
+const clearRest = (resultsToo) => (resultsToo ? "nothing needs you, nothing new to review" : "nothing needs you");
 
 export const TEXT = {
   appName: "Agent Desk",
@@ -60,6 +63,8 @@ export const TEXT = {
     more: (n) => `and ${n} more`,
     /** @param {number} n */
     moreAsks: (n) => `+${n} more`,
+    /** @param {number} n */
+    moreAgents: (n) => `+${plural(n, "more agent", "more agents")}`,
     /** @param {number} working @param {number} done */
     agents: (working, done) => [working && `${working} agent${working === 1 ? "" : "s"} working`, done && `${done} done`].filter(Boolean).join(" · "),
   },
@@ -96,7 +101,19 @@ export const TEXT = {
   remoteNoLink: "Opened from another device: answer here, or go to the computer",
   keysHint: "oldest first · ↑ ↓ · 1–9 picks an option, Enter sends it · Ctrl+Enter sends · Enter goes to the session",
   /** @param {boolean} resultsToo */
-  allClear: (resultsToo) => (resultsToo ? "All clear: nothing needs you, nothing new to review." : "All clear: nothing needs you."),
+  allClear: (resultsToo) => `${CLEAR}: ${clearRest(resultsToo)}.`,
+  // The desk when nothing needs the developer: Needs you is one line, the sessions take the centre.
+  quiet: {
+    clear: CLEAR,
+    rest: clearRest,
+    /** @param {string} t */
+    lastAnswer: (t) => `last answer ${t}`,
+    lastAnswerTitle: "Past decisions, in History",
+    /** @param {number} working @param {number} agents */
+    sessionsAside: (working, agents) => [working && `${working} working`, agents && `${plural(agents, "agent", "agents")} at work`].filter(Boolean).join(" · "),
+    earlierAside: "nothing new · seen earlier",
+    allResults: "All results",
+  },
   emptyResults: "Nothing new to review.",
   seeHistory: "Earlier results",
   dismissResult: "Seen, move it to the history",

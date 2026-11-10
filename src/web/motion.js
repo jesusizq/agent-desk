@@ -69,6 +69,8 @@ export function animateLists(scope, update) {
   const scrolls = new Map(before.map(({ scroller }) => [scroller, { top: scroller.scrollTop, edge: viewTop(scroller) }]));
   /** @type {Map<Element, number>} */
   const grows = new Map([...scope.querySelectorAll("[data-grow]")].map((el) => [el, el.getBoundingClientRect().height]));
+  /** @type {Map<Element, DOMRect>} */
+  const glides = new Map([...scope.querySelectorAll("[data-glide]")].map((el) => [el, el.getBoundingClientRect()]));
   update();
   /** @typedef {{ el: HTMLElement, rect: DOMRect }} Seen */
   /** @type {Map<string, Seen & { list: Element }>} cards no longer in their list, by what they show */
@@ -105,6 +107,35 @@ export function animateLists(scope, update) {
     if (!change.added.length && !leaving.length && !moved) continue;
     if (getComputedStyle(change.list).display === "grid") animateGrid(change, leaving, t);
     else animateColumn(change, leaving, outOf, grows, scrolls, t);
+  }
+  glide(scope, glides, t);
+}
+
+/**
+ * The parts of a layout outside its lists, marked `data-glide` (a column's head and foot), follow its
+ * new shape: each slides from where it was (or lands, when it crossed to another column), and one that
+ * a redraw of the same layout added fades in. Never inside a list's card, which carries them already.
+ * @param {Element} scope @param {Map<Element, DOMRect>} before where each stood before the redraw @param {Tokens} t
+ */
+function glide(scope, before, t) {
+  for (const el of scope.querySelectorAll("[data-glide]")) {
+    if (!(el instanceof HTMLElement) || !shown(el)) continue;
+    const was = before.get(el);
+    if (!was) {
+      if (before.size) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: t.fade, easing: t.easing, id: MOTION });
+      continue;
+    }
+    if (!was.width && !was.height) continue; // not shown before (a phone's other tab): it appears, it does not travel
+    stop(el);
+    const now = el.getBoundingClientRect();
+    if (Math.abs(was.left - now.left) < 0.5 && Math.abs(was.top - now.top) < 0.5) continue;
+    // Across to another column it would pass over what lies between: it lands there, as the cards do.
+    if (apart(was, now)) land(el, was, now, t);
+    else {
+      slide(el, was, now, t);
+      // Pushed along by the cards of a column that grew into its place, it passes under them.
+      el.animate([{ zIndex: -1 }, { zIndex: -1 }], { duration: t.move, id: MOTION });
+    }
   }
 }
 
@@ -213,7 +244,7 @@ function animateColumn({ list, scroller, items, was, now, added }, leaving, outO
     if (old) moves.push([el, scrolled(old)]);
   }
   const starts = moves.map(([el]) => el.getBoundingClientRect());
-  moves.forEach(([el, old], i) => slide(el, old, starts[i], t));
+  moves.forEach(([el, old], i) => (cameFromAside(old, list) ? land(el, old, starts[i], t) : slide(el, old, starts[i], t)));
 }
 
 /**
@@ -240,7 +271,32 @@ function animateGrid({ list, was, now, added }, leaving, t) {
   for (const el of added) el.animate([{ opacity: 0, transform: "scale(.96)" }, { opacity: 1, transform: "none" }], { duration: t.move, easing: t.easing, id: MOTION });
   const kept = now.filter((el) => was.has(el));
   const starts = kept.map((el) => el.getBoundingClientRect());
-  kept.forEach((el, i) => slide(el, /** @type {DOMRect} */ (was.get(el)), starts[i], t));
+  kept.forEach((el, i) => {
+    const old = /** @type {DOMRect} */ (was.get(el));
+    if (cameFromAside(old, list)) land(el, old, starts[i], t);
+    else slide(el, old, starts[i], t);
+  });
+}
+
+/**
+ * A card whose list moved to another column (the board changed shape): where it was shares no width with
+ * the box that clips it now (its list or its column), which would hide the whole of its way there.
+ * @param {DOMRect} from @param {Element} list
+ */
+function cameFromAside(from, list) {
+  for (let e = /** @type {Element | null} */ (list); e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
+    if (getComputedStyle(e).overflowX !== "visible") return apart(from, e.getBoundingClientRect());
+  }
+  return false;
+}
+/** Side by side, sharing no width: a move from one to the other crosses columns. @param {DOMRect} a @param {DOMRect} b */
+const apart = (a, b) => a.right <= b.left + 0.5 || a.left >= b.right - 0.5;
+
+/** What crossed to another column fades in where it lands, from a little on the side it came from. @param {HTMLElement} el @param {DOMRect} from @param {DOMRect | undefined} to @param {Tokens} t */
+function land(el, from, to, t) {
+  const dx = to ? Math.sign(from.left - to.left) * 16 : 0;
+  el.animate([{ transform: `translateX(${dx}px)` }, { transform: "translateX(0px)" }], { duration: t.move, easing: t.easing, composite: "add", id: MOTION });
+  el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: t.move, easing: t.easing, id: MOTION });
 }
 
 /** Ends at once every movement under `scope`: gone cards leave, the rest stand where the layout puts them. @param {Element} scope */

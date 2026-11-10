@@ -208,6 +208,47 @@ body.resizing { cursor: col-resize; user-select: none; }
 .s-ask code, .scard .quiet-line code { font-size: 0.7188rem; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
 .s-more, .s-l3 { color: var(--faint); font-size: 0.75rem; }
 .scard .badge.k-new { background: none; padding: 0; color: var(--accent); font-weight: 650; }
+/* Rich cards (desk.js), when the sessions have the room: each its own box, as many side by side as fit;
+   what it does now, its agents one per row, then what it runs on, each part under a hairline. */
+.slist.rich { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); gap: 10px; align-items: start;
+  background: transparent; border-color: transparent; overflow: visible; }
+.slist.rich > .scard { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; gap: 6px; }
+.scard.rich > :is(.s-ask, .s-bad, .s-more, .quiet-line) { padding-left: 0; }
+.s-agents { display: flex; flex-direction: column; padding-top: 4px; border-top: 1px solid var(--border); }
+.s-agent { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 0; font-size: 0.8125rem; }
+.s-agent > .live, .s-agent > .dot { justify-self: center; }
+.s-agent-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-agent-t b { font-weight: 600; }
+.s-agent-t small { margin-left: 6px; font-size: 0.75rem; color: var(--faint); }
+.s-agent.failed small { color: var(--danger); }
+.s-agent-at { color: var(--faint); font-size: 0.75rem; white-space: nowrap; }
+.s-agents > .s-more { padding: 2px 0 0 19px; }
+.s-work { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--muted); }
+.s-work > span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.s-work .chip { font-size: 0.75rem; }
+.s-live a { color: var(--accent); text-decoration: none; }
+.s-live a:hover { text-decoration: underline; text-underline-offset: 2px; }
+.s-live .up { margin-right: 0; }
+.s-work > .s-where { display: block; flex-basis: 100%; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A quiet desk's one line in place of Needs you: what is clear, and the last answer given, quietly. */
+.all-clear { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px 14px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); font-size: 0.8125rem; color: var(--muted); }
+.all-clear > b { flex: none; color: var(--text); font-weight: 650; }
+.all-clear > .clear-rest { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.last-answer { margin-left: auto; flex: 0 1 auto; min-width: 6em; border: 0; background: none; padding: 0; color: var(--faint); font-size: 0.7812rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color var(--dur-2); }
+.last-answer q { color: var(--accent); }
+.last-answer:hover { color: var(--text); }
+/* Results already seen, kept in view by a quiet desk: rows without a box until the pointer is on one. */
+.rearlier { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 4px 8px; flex: none; }
+.rearlier .rrow .rm { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The page's own colour, yet opaque: a column's head gliding under the rows stays hidden under them. */
+.rearlier .rrow { grid-template-columns: 56px minmax(0, 1fr); padding: 6px 8px; background: var(--bg); }
+.rearlier .rrow:not(.failed) { border-color: transparent; }
+.rearlier .rrow:hover { background: var(--surface); border-color: var(--border); }
+.rearlier .rrow img, .rearlier .rrow .ph { width: 56px; height: 38px; }
+.rearlier .rrow .rbody { padding: 0; gap: 0; }
+.rearlier + .linkish { align-self: flex-start; margin: 2px 8px 0; }
 .ctx { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--muted); }
 .mini { width: 54px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
 .mini i, .bar i { display: block; height: 100%; background: var(--done); border-radius: 2px; }
@@ -465,6 +506,10 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   .strip { min-height: calc(0.7812rem * 1.45 + 19px); }
   /* A wide window does not stretch the inbox past a reading width: its content stays centred in its column. */
   .col-needs > :is(.col-head, .col-body) { padding-inline: max(8px, calc((100% - 864px) / 2)); }
+  /* Nothing needs the developer (desk.js): Needs you is one line over the sessions, which take the centre;
+     To review keeps the right column whole. The line spans the sessions' width. */
+  .board.quiet { grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "needs split review" "sessions split review"; }
+  .board.quiet .col-needs > .col-body { flex: none; padding-inline: 8px; padding-bottom: 6px; }
   /* The head and foot reserve the list's scrollbar gutter too, whatever its width here, so all three share one right edge. */
   :is(.col-head, .col-foot) { overflow: hidden; scrollbar-gutter: stable; }
   /* A list cut by its scroll area fades at the edge that hides more (layout.js sets data-cut). */
@@ -621,6 +666,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 
 .rrow, .qrow, .hitem.open { transition: transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out), border-color var(--dur-2), background-color var(--dur-2); }
 .scard { transition: background-color var(--dur-2); }
+/* The sessions' box fades in or out as their cards land in or leave the column that draws one. */
+.slist { transition: background-color var(--dur-3) var(--ease-out), border-color var(--dur-3) var(--ease-out); }
 .rrow:hover, .qrow:hover { transform: translateY(-1px); box-shadow: var(--shadow-lift); }
 :is(button, a).primary, :is(button, a).secondary, .answer .opts button, .seg button, .chip, .icon-btn {
   transition: background-color var(--dur-2), border-color var(--dur-2), color var(--dur-2), filter var(--dur-2), transform var(--dur-1) var(--ease-out), box-shadow var(--dur-2); }
@@ -678,7 +725,7 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .skel-msg.mine { align-self: flex-end; width: min(40%, 280px); height: 40px; border-radius: 14px 14px 4px 14px; }
 
 @media (prefers-reduced-motion: reduce) {
-  dialog, dialog::backdrop, .scard, .rrow, .qrow, .toast.leaving, .bar i, .mini i { transition: none; }
+  dialog, dialog::backdrop, .scard, .slist, .rrow, .qrow, .toast.leaving, .bar i, .mini i { transition: none; }
   .scard:hover, .rrow:hover, .qrow:hover { transform: none; }
   :is(button, a).primary:active, :is(button, a).secondary:active, .answer .opts button:active, .icon-btn:active { transform: none; }
   .skel, .answer .send[aria-busy="true"] .spin, .arm.armed::after { animation: none; }
@@ -848,6 +895,12 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .answer .send .send-lbl { display: none; }
   .answer .send svg.i { width: 18px; height: 18px; }
   .scard .mini { width: 34px; }
+  /* On a phone, what a rich card's agent does takes its own line under its goal, rather than being cut to a word. */
+  .s-agent { align-items: start; }
+  .s-agent > :is(.live, .dot) { margin-top: 3px; }
+  .s-agent-t { display: flex; flex-direction: column; }
+  .s-agent-t > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .s-agent-t small { margin-left: 0; }
 
   /* Dialogs fill the screen; the head stays, the body scrolls. */
   dialog.result, dialog.sess { margin: 0; inset: var(--viewport-top, 0px) 0 auto; width: 100%; max-width: 100%; height: var(--viewport-height, 100dvh); max-height: var(--viewport-height, 100dvh); border-radius: 0; }

@@ -14,7 +14,7 @@ const ATTENTION = ["failed", "blocked", "idle", "working", "waiting", "done"];
 /** At work, but its latest call started a job of its own or waits for one: waiting on it. @param {Agent | Session} x */
 const onItsJob = (x) => x.state === "working" && x.waitsForJob === true;
 /** One dot per agent says the shape of a session at a glance. @param {Agent} a */
-function agentDot(a) {
+export function agentDot(a) {
   const st = onItsJob(a) ? "waiting" : a.state;
   const mark = dot(st);
   mark.title = [a.name, TEXT.state[st], a.activity].filter(Boolean).join(" · ");
@@ -33,7 +33,7 @@ function waitsLine(a) {
   return waits.length ? TEXT.waits(waits.map((n) => agentOf(a.sessionId, n)?.goal ?? n).join(", ")) : null;
 }
 /** What an agent does now: who it waits for, its latest tool call, or what kind of agent it is. @param {Agent} a */
-function agentDoing(a) {
+export function agentDoing(a) {
   return waitsLine(a) ?? a.activity ?? (a.type ? TEXT.agentType(a.type) : "");
 }
 /** Why an agent is in trouble, in a few words. @param {Agent} a */

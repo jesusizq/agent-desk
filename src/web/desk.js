@@ -2,21 +2,22 @@
 // The desk: the inbox, the sessions and what to review, side by side, or one per tab on a phone.
 import { h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
-import { agentQuiet, failedInARow, failing, failingTip, sessionAgents, sessionDot, sessionQuiet, troubleText } from "./agents.js";
+import { agentDoing, agentDot, agentQuiet, failedInARow, failing, failingTip, sessionAgents, sessionDot, sessionQuiet, troubleText } from "./agents.js";
 import { askBody, decisionOf } from "./answer.js";
 import { forgetButton } from "./control.js";
-import { ago, color, firstLine, headline, heat, hm, stamp } from "./format.js";
-import { markCuts, revealNext } from "./layout.js";
-import { badge, beacon, dot, emptyState, goLink, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
+import { ago, clockAt, color, firstLine, headline, heat, hm, stamp } from "./format.js";
+import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
+import { badge, bar, beacon, dot, emptyState, goLink, LOCAL_URL, localLink, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
 import { openResult } from "./result.js";
 import { imageUrl, post, run } from "./server.js";
-import { openSession } from "./session.js";
+import { openSession, resultRow } from "./session.js";
 import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, page, S, sessionName, toReview, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Question} Question */
 /** @typedef {import("../core/protocol.ts").Agent} Agent */
 /** @typedef {import("../core/protocol.ts").Result} Result */
+/** @typedef {import("../core/protocol.ts").Metrics} Metrics */
 /** @typedef {import("./state.js").Item} Item */
 /** @typedef {import("./dom.js").Child} Child */
 /** @typedef {import("./state.js").DotState} DotState */
@@ -24,16 +25,17 @@ import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew
 const LEGEND = /** @type {const} */ (["needs", "working", "waiting", "blocked", "idle", "failed", "done"]);
 
 /**
+ * A column: its head, its body and its foot. Head and foot glide when the board changes shape (motion.js).
  * @param {keyof typeof TEXT.cols} key @param {number | null} count @param {Child} body
- * @param {{ foot?: Child, quiet?: boolean, aside?: Child, list?: boolean }} [more] `list`: the body's own children are cards that move (motion.js)
+ * @param {{ foot?: Child, quiet?: boolean, aside?: Child, list?: boolean, headless?: boolean }} [more] `list`: the body's own children are cards that move (motion.js)
  */
-function column(key, count, body, { foot, quiet, aside, list } = {}) {
+function column(key, count, body, { foot, quiet, aside, list, headless } = {}) {
   return h(
     "section",
     { class: `col col-${key}`, "data-key": `col-${key}`, "aria-label": TEXT.cols[key] },
-    h("div", { class: "col-head" }, TEXT.cols[key], count !== null ? h("span", { class: `count${quiet ? " quiet" : ""}` }, count) : null, aside ? h("span", { class: "head-aside" }, aside) : null),
+    headless ? null : h("div", { class: "col-head", "data-glide": true }, TEXT.cols[key], count !== null ? h("span", { class: `count${quiet ? " quiet" : ""}` }, count) : null, aside ? h("span", { class: "head-aside" }, aside) : null),
     h("div", { class: "col-body", "data-scroll": `col-${key}`, "data-list": list }, body),
-    foot ? h("div", { class: "col-foot" }, foot) : null,
+    foot ? h("div", { class: "col-foot", "data-glide": true }, foot) : null,
   );
 }
 
@@ -133,10 +135,16 @@ function resolvedItem() {
   return q ? itemOf(q) : undefined;
 }
 
-/** The inbox: the selected item large, with what it takes to answer it, then the rest in order. */
-function inboxColumn() {
-  const { items, failures, count } = inbox();
-  const resolved = resolvedItem();
+/**
+ * The inbox: the selected item large, with what it takes to answer it, then the rest in order. On a
+ * quiet desk, one line that says so.
+ * @param {ReturnType<typeof inbox>} box @param {Item | undefined} resolved @param {boolean} quiet
+ */
+function inboxColumn({ items, failures, count }, resolved, quiet) {
+  if (quiet) {
+    ui.sel = null;
+    return column("needs", null, allClearLine(), { list: true, headless: true });
+  }
   const selected = items.find((it) => it.key === ui.sel) ?? resolved ?? items[0];
   ui.sel = selected?.key ?? null;
   const rows = [...items.filter((it) => it !== selected).map(questionRow), ...failures.map(failureRow)];
@@ -147,6 +155,25 @@ function inboxColumn() {
     aside: items.length > 1 ? h("span", { class: "keys-only faint" }, TEXT.keysHint) : null,
     list: true,
   });
+}
+
+/** Nothing needs the developer: one line that says so, and the last answer given, which opens the past decisions. */
+function allClearLine() {
+  const last = data.questions.filter((q) => q.answer && inProject(q.sessionId)).sort((a, b) => (b.answer?.at ?? "").localeCompare(a.answer?.at ?? ""))[0]?.answer;
+  return h(
+    "div",
+    { class: "all-clear", role: "status", "data-key": "clear-line" },
+    dot("done"),
+    h("b", {}, TEXT.quiet.clear),
+    h("span", { class: "clear-rest" }, TEXT.quiet.rest(!toReview().length)),
+    last ? h("button", { class: "last-answer", title: TEXT.quiet.lastAnswerTitle, onclick: showDecisions }, TEXT.quiet.lastAnswer(stamp(last.at)), " · ", h("q", {}, firstLine(last.text))) : null,
+  );
+}
+
+function showDecisions() {
+  ui.view = "history";
+  ui.hfilter = "decision";
+  page.render();
 }
 
 function showEarlierResults() {
@@ -174,11 +201,20 @@ function reviewTile(r) {
   );
 }
 
-/** Finished work to look at; failures wait in the inbox instead. */
-function reviewColumn() {
+// How many results already seen a quiet desk keeps in view while there is nothing new.
+const EARLIER_RESULTS = 8;
+
+/**
+ * Finished work to look at; failures wait in the inbox instead. On a quiet desk with nothing new, the
+ * latest results already seen, quietly. @param {boolean} quiet
+ */
+function reviewColumn(quiet) {
   const list = toReview();
-  const empty = emptyState("no-results", TEXT.emptyResults, { action: h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory) });
-  return column("review", list.length || null, list.length ? h("div", { class: "rtiles", "data-list": true }, list.map(reviewTile)) : empty, { quiet: true });
+  if (list.length) return column("review", list.length, h("div", { class: "rtiles", "data-list": true }, list.map(reviewTile)), { quiet: true });
+  const all = h("button", { class: "linkish", onclick: showEarlierResults }, quiet ? TEXT.quiet.allResults : TEXT.seeHistory);
+  const earlier = quiet ? data.results.filter((r) => inProject(r.sessionId) && !isNew(r)).sort((a, b) => b.at.localeCompare(a.at)).slice(0, EARLIER_RESULTS) : [];
+  if (earlier.length) return column("review", null, [h("div", { class: "rearlier", "data-list": true }, earlier.map((r) => resultRow(r))), all], { aside: h("span", { class: "faint" }, TEXT.quiet.earlierAside) });
+  return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: all }), { quiet: true });
 }
 
 /** @param {Session} s */
@@ -191,9 +227,11 @@ const sessionWeight = (s) =>
 /**
  * One row per session: its state, name, context and age, then only what matters about it — what it
  * asks, which of its agents fail or have gone quiet — or else what it does now; its agents counted.
- * @param {Session} s
+ * Rich, when the sessions have the room (a quiet desk, a phone's Sessions tab): what it does now,
+ * then each agent on its row with its state, and its context, plan, live previews, model and branch.
+ * @param {Session} s @param {boolean} rich
  */
-function sessionCard(s) {
+function sessionCard(s, rich) {
   const as = sessionAgents(s.id);
   const asks = asksOf(s.id).sort((a, b) => a.askedAt.localeCompare(b.askedAt));
   const asking = asks[0];
@@ -219,7 +257,8 @@ function sessionCard(s) {
   if (s.state !== "ended" && !isLive(s)) matters.push(troubleLine("idle", TEXT.goneAsking));
   /** Calls failing in a row warn; the call itself waits in the tooltip and the session's agent rows. @param {Agent | Session} x @param {string} who */
   const failLine = (x, who) => troubleLine("idle", [who, TEXT.failingCalls(failedInARow(x))].filter(Boolean).join(" · "), failingTip(x));
-  for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a)}`));
+  // A rich card says why on the agent's own row.
+  if (!rich) for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a)}`));
   if (failing(s)) matters.push(failLine(s, ""));
   for (const a of as.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
   const quiet = sessionQuiet(s);
@@ -230,7 +269,7 @@ function sessionCard(s) {
   return h(
     "div",
     {
-      class: `scard${asking ? " needs" : ""}`,
+      class: `scard${rich ? " rich" : ""}${asking ? " needs" : ""}`,
       role: "button",
       tabindex: "0",
       onclick: open,
@@ -247,13 +286,62 @@ function sessionCard(s) {
       h("span", { class: "sname", title: label(s) }, ui.project === null ? [projectMark(s.project.name, "pname sproj"), h("span", { class: "sep" }, "›")] : tagIcon(color(s.project.name)), h("b", {}, sessionName(s))),
       h("span", { class: "s-meta num" }, [ctx !== undefined ? `${Math.round(ctx)}%` : "", ago(since)].filter(Boolean).join(" · ")),
     ),
-    shown.length ? shown : quietLine(s),
+    shown,
+    shown.length && !rich ? null : quietLine(s),
     matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
-    working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
-    m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
+    rich ? agentLines(as) : working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
+    rich ? workLine(s, m) : m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
     // Its own click: not the card's, which opens the session.
-    isLive(s) ? null : h("div", { class: "s-actions", onclick: (/** @type {Event} */ e) => e.stopPropagation() }, forgetButton(s, () => page.renderView(), "secondary")),
+    isLive(s) ? null : h("div", { class: "s-actions", onclick: stopClick }, forgetButton(s, () => page.renderView(), "secondary")),
   );
+}
+
+/** @param {Event} e */
+const stopClick = (e) => e.stopPropagation();
+
+// A rich card's agent rows; past them, one line counts the rest (sessionAgents puts trouble first, done last).
+const AGENT_LINES = 6;
+
+/** Each agent on one row: its state, its goal and what it does now or why it stopped, and for how long. @param {Agent[]} as */
+function agentLines(as) {
+  if (!as.length) return null;
+  const rows = as.slice(0, as.length > AGENT_LINES ? AGENT_LINES - 1 : AGENT_LINES);
+  return h(
+    "div",
+    { class: "s-agents" },
+    rows.map((a) => {
+      const doing = a.state === "failed" || a.state === "blocked" ? troubleText(a) : agentDoing(a);
+      return h(
+        "div",
+        { class: `s-agent${a.state === "failed" ? " failed" : ""}`, title: [a.goal ?? a.name, doing].filter(Boolean).join("\n") },
+        agentDot(a),
+        h("span", { class: "s-agent-t" }, h("b", {}, a.goal ?? a.name), doing ? h("small", {}, doing) : null),
+        h("span", { class: "s-agent-at num" }, a.endedAt ? TEXT.tookFor(ago(a.startedAt, a.endedAt)) : ago(a.startedAt)),
+      );
+    }),
+    as.length > rows.length ? h("div", { class: "s-more" }, TEXT.sessionLine.moreAgents(as.length - rows.length)) : null,
+  );
+}
+
+/**
+ * What a session runs on, in one wrapping line: its context (with the command it calls for), its plan
+ * windows, its live previews, its model and branch. Each part only when its provider reports it.
+ * @param {Session} s @param {Metrics | undefined} m
+ */
+function workLine(s, m) {
+  const ctx = m?.contextPercent;
+  const services = data.services.filter((v) => v.sessionId === s.id);
+  const where = [[m?.model, m?.effort].filter(Boolean).join(" · "), m?.branch].filter(Boolean).join(" · ");
+  const parts = [
+    ctx !== undefined || m?.suggestion
+      ? h("span", { class: "s-gauge" }, ctx !== undefined ? bar(ctx) : null, m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : TEXT.context(ctx ?? 0))
+      : null,
+    ...(m?.planWindows ?? []).map((w) => h("span", { class: "s-gauge", title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, bar(w.percent), TEXT.planChip(w.label, w.percent, w.resetsAt ? clockAt(w.resetsAt) : ""))),
+    // A preview opens in its own tab, not the session.
+    ...services.map((v) => h("span", { class: "s-live", title: TEXT.svcSince(ago(v.startedAt)), onclick: stopClick }, h("span", { class: "up" }), localLink(v.url, `${v.name} ${v.url.replace(LOCAL_URL, "")}`))),
+    where ? h("span", { class: "s-where", title: where }, where) : null,
+  ].filter(Boolean);
+  return parts.length ? h("div", { class: "s-work" }, parts) : null;
 }
 
 /** What a session is up to, in one quiet line: its current tool call, or that it waits for instructions. @param {Session} s */
@@ -269,21 +357,42 @@ function readBadge(s) {
   if (!s.lastMessage) return null;
   return unread(s) ? h("span", { class: "badge k-new" }, TEXT.newBadge) : h("span", { class: "badge k-seen", title: s.readAt ? TEXT.seenAt(hm(s.readAt)) : "" }, TEXT.seenBadge);
 }
-function sessionsColumn() {
+/** @param {boolean} rich the cards have the room to show each session's work @param {boolean} quiet */
+function sessionsColumn(rich, quiet) {
   // A session whose process is gone stays while it still asks, so what it asked can be forgotten with it.
   const list = data.sessions.filter((s) => (isLive(s) || endedUnseen(s) || asksOf(s.id).length > 0) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
   const legend = h("div", { class: "legend" }, LEGEND.map((st) => h("span", {}, dot(st), TEXT.state[st])));
-  return column("sessions", list.length, list.length ? h("div", { class: "slist", "data-list": true }, list.map(sessionCard)) : emptyState("no-sessions", TEXT.emptyRunning), { foot: legend, quiet: true });
+  const working = list.filter((s) => s.state === "working").length;
+  const agents = data.agents.filter((a) => a.state === "working" && list.some((s) => s.id === a.sessionId)).length;
+  return column("sessions", list.length, list.length ? h("div", { class: `slist${rich ? " rich" : ""}`, "data-list": true }, list.map((s) => sessionCard(s, rich))) : emptyState("no-sessions", TEXT.emptyRunning), {
+    foot: legend,
+    quiet: true,
+    aside: quiet && (working || agents) ? h("span", { class: "faint" }, TEXT.quiet.sessionsAside(working, agents)) : null,
+  });
 }
 
 /**
- * The inbox on the left; the sessions and what to review on the right. On a phone one of them at a
- * time, chosen in the tab bar.
+ * The inbox on the left; the sessions and what to review on the right. While nothing needs the
+ * developer, Needs you is one line and the sessions take the centre under it, To review the right
+ * column whole; a question that arrives takes the top back, and that move is the signal. On a phone
+ * one part at a time, chosen in the tab bar, its Sessions tab always with the room for rich cards.
  */
 export function board() {
+  const box = inbox();
+  const resolved = resolvedItem();
+  const quiet = !box.count && !resolved && !ONE_COLUMN.matches;
   const reviewEmpty = !toReview().length;
-  return h("main", { class: `board${reviewEmpty ? " review-empty" : ""}`, "data-tab": ui.tab }, inboxColumn(), splitter(), sessionsColumn(), reviewColumn());
+  return h(
+    "main",
+    { class: `board${quiet ? " quiet" : ""}${reviewEmpty ? " review-empty" : ""}`, "data-tab": ui.tab },
+    inboxColumn(box, resolved, quiet),
+    splitter(),
+    sessionsColumn(quiet || ONE_COLUMN.matches, quiet),
+    reviewColumn(quiet),
+  );
 }
+// The board's shape and its cards follow the window: crossing into one column, or out of it, redraws them.
+ONE_COLUMN.addEventListener("change", () => page.renderView({ instant: true }));
 
 // The right column's width, set by dragging the line before it; kept in this browser.
 const SIDE_KEY = "agent-desk:side-width";
