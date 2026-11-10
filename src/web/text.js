@@ -39,20 +39,7 @@ export const TEXT = {
   tabbar: { inbox: COLS.needs, sessions: COLS.sessions, review: COLS.review, history: "History" },
   /** @param {number} n */
   nOptions: (n) => plural(n, "option", "options"),
-  trouble: {
-    /** @param {number} n */
-    failed: (n) => `${n} failed`,
-    /** @param {number} n */
-    blocked: (n) => `${n} blocked`,
-    /** @param {number} n */
-    idle: (n) => `${n} idle`,
-    /** @param {number} n */
-    quiet: (n) => `${n} quiet`,
-    /** @param {number} n */
-    failing: (n) => `${n} failing`,
-    /** @param {number} m */
-    sessionQuiet: (m) => `no activity for ${m} min`,
-  },
+
   /** @param {number} m */
   quietFor: (m) => `no activity for ${m} min`,
   sessionLine: {
@@ -126,11 +113,8 @@ export const TEXT = {
   now: NOW,
   go: "Go",
   next: "Next",
-  asks: { question: "Asks you", waiting: "Asks you", permission: "Asks permission to" },
-  itsMessage: "Its message, before the question",
   unfoldMessage: "Show the whole message",
   foldMessage: "Show less",
-  options: "Options",
   pickSeveral: "Pick one or more",
   group: {
     /** @param {number} i @param {number} n */
@@ -221,7 +205,6 @@ export const TEXT = {
     agentsAtWork: (n) => `Its turn ended; ${n === 1 ? "1 agent is" : `${n} agents are`} still at work`,
     /** Its agents not finished, of which `failed` failed. @param {number} n @param {number} failed */
     agentsLeft: (n, failed) => [n - failed && `${n - failed} still running`, failed && `${failed} failed`].filter(Boolean).join(" · "),
-    session: "Session",
     you: "You",
     youDesk: "You, from the desk",
     delivered: "Delivered",
