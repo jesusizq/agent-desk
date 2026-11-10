@@ -640,22 +640,68 @@ export class Store {
     const source = this.paths.agent(sessionId, from);
     const target = this.paths.agent(sessionId, to);
     if (source === target) return this.getAgent(sessionId, from);
-    // Both locks, always in the same order, so two renames between the same names cannot deadlock.
-    const [first, second] = source < target ? [source, target] : [target, source];
-    return withLock(first, () =>
-      withLock(second, () => {
-        const moved = this.getAgent(sessionId, from);
-        if (!moved) return undefined;
-        const existing = this.getAgent(sessionId, to);
-        if (existing?.ref !== undefined && existing.ref !== moved.ref) return undefined;
-        const reported = existing ? compact({ goal: existing.goal, summary: existing.summary, branch: existing.branch, commit: existing.commit }) : {};
-        const after = existing && existing.after.length > 0 ? existing.after : moved.after;
-        const next = readAgent({ ...moved, ...reported, after, name: to, updatedAt: this.stamp() }, target);
-        writeJson(target, next);
-        fs.rmSync(source, { force: true });
-        return next;
-      }),
-    );
+    return this.withBothAgents(source, target, () => {
+      const moved = this.getAgent(sessionId, from);
+      if (!moved) return undefined;
+      const existing = this.getAgent(sessionId, to);
+      if (existing?.ref !== undefined && existing.ref !== moved.ref) return undefined;
+      const reported = existing ? reportedOf(existing) : {};
+      const after = existing && existing.after.length > 0 ? existing.after : moved.after;
+      const next = readAgent({ ...moved, ...reported, after, name: to, updatedAt: this.stamp() }, target);
+      writeJson(target, next);
+      fs.rmSync(source, { force: true });
+      return next;
+    });
+  }
+
+  /**
+   * Makes two records that follow the same agent (the same `ref`) one record under `into`: what was
+   * reported for it (goal, summary, branch, commit, `after`), its launch and type stay as `into`
+   * has them, else as `from` has them; state, activity and failures come from the record updated
+   * last; it started when the earlier one did. Nothing moves, and undefined is returned, when either
+   * is not recorded or they follow different agents. Safe to run again, as renameAgent.
+   */
+  mergeAgent(sessionId: string, from: string, into: string): Agent | undefined {
+    const source = this.paths.agent(sessionId, from);
+    const target = this.paths.agent(sessionId, into);
+    if (source === target) return undefined;
+    return this.withBothAgents(source, target, () => {
+      const gone = this.getAgent(sessionId, from);
+      const kept = this.getAgent(sessionId, into);
+      if (!gone || !kept || gone.ref === undefined || gone.ref !== kept.ref) return undefined;
+      const live = gone.updatedAt > kept.updatedAt ? gone : kept;
+      const next = readAgent(
+        {
+          ...live,
+          ...reportedOf(gone),
+          ...reportedOf(kept),
+          ...compact({ type: kept.type ?? gone.type, launch: kept.launch ?? gone.launch }),
+          after: kept.after.length > 0 ? kept.after : gone.after,
+          startedAt: gone.startedAt < kept.startedAt ? gone.startedAt : kept.startedAt,
+          name: into,
+          updatedAt: this.stamp(),
+        },
+        target,
+      );
+      writeJson(target, next);
+      fs.rmSync(source, { force: true });
+      return next;
+    });
+  }
+
+  /**
+   * Runs `fn` holding the lock on the session's agents as a whole, which writers take while they
+   * decide which record follows which agent (`ref`): one's read, decision and writes cannot
+   * interleave with another's. Record locks are taken inside it, never the other way round.
+   */
+  withAgentsLocked<T>(sessionId: string, fn: () => T): T {
+    return withLock(this.paths.agentsLock(sessionId), fn);
+  }
+
+  /** Both records' locks, always in the same order, so two writers on the same pair cannot deadlock. */
+  private withBothAgents<T>(a: string, b: string, fn: () => T): T {
+    const [first, second] = a < b ? [a, b] : [b, a];
+    return withLock(first, () => withLock(second, fn));
   }
 
   private writeAgent(sessionId: string, name: string, current: Agent | undefined, fields: AgentFields): Agent {
@@ -1124,6 +1170,9 @@ export class Store {
     }
   }
 }
+
+/** What the session reported for an agent, which a merge keeps over what its adapter recorded. */
+const reportedOf = (a: Agent) => compact({ goal: a.goal, summary: a.summary, branch: a.branch, commit: a.commit });
 
 const ANSWER_MAX = 20_000;
 const MESSAGES_KEPT = 500;

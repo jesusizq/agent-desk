@@ -645,6 +645,72 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(agents.map((a) => a.ref).sort(), ids, "every start took a different launch");
   });
 
+  it("keeps one record per sub-agent while background launches return and their sub-agents start at once", async () => {
+    const { Store } = await import("../src/store/store.ts");
+    const ids = Array.from({ length: 6 }, (_, i) => `bg${i}`);
+    const description = (id: string) => `Audit ${id}`;
+    for (let round = 0; round < 5; round++) {
+      const home = tempHome();
+      const projects = tempHome();
+      const transcript = path.join(projects, "cc-c.jsonl");
+      const notes = path.join(projects, "cc-c", "subagents");
+      fs.mkdirSync(notes, { recursive: true });
+      const { hook, run, all } = hookProcesses(home, transcript);
+      await all([hook({ hook_event_name: "SessionStart", source: "startup" })]);
+      // A long session: every hook reads the agents it ran before.
+      const store = new Store(home);
+      for (let i = 0; i < 40; i++) store.upsertAgent("cc-c", `earlier-${i}`, { ref: `old${i}`, state: "done" });
+      for (const id of ids) await all([hook({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_use_id: `toolu_${id}`, tool_input: { description: description(id), subagent_type: "general-purpose", run_in_background: true } })]);
+      // A background call returns at once, naming its sub-agent, while that sub-agent starts, makes
+      // its first call (its notes written for half of them) and the session reports it.
+      for (const id of ids.slice(0, 3)) fs.writeFileSync(path.join(notes, `agent-${id}.meta.json`), JSON.stringify({ agentType: "general-purpose", description: description(id) }));
+      await all(ids.flatMap((id) => [
+        hook({ hook_event_name: "SubagentStart", agent_id: id, agent_type: "general-purpose" }),
+        hook({ hook_event_name: "PostToolUse", tool_name: "Agent", tool_use_id: `toolu_${id}`, tool_input: { description: description(id), run_in_background: true }, tool_response: { isAsync: true, status: "async_launched", agentId: id } }),
+        hook({ hook_event_name: "PostToolUse", agent_id: id, tool_name: "Bash", tool_input: { command: `audit ${id}` } }),
+        run([CLI, "agent", description(id), "--summary", `Delivers ${id}`, "--session", "cc-c"]),
+      ]));
+      const current = () => store.listAgents("cc-c").filter((a) => !a.name.startsWith("earlier-"));
+      assert.deepEqual(
+        current().map((a) => [a.name, a.ref, a.launch, a.state, a.summary]).sort(),
+        ids.map((id) => [slug(description(id)), id, `toolu_${id}`, "working", `Delivers ${id}`]),
+        `round ${round}: one record per sub-agent, on its own launch`,
+      );
+      await all(ids.map((id) => hook({ hook_event_name: "SubagentStop", agent_id: id, agent_type: "general-purpose", last_assistant_message: `Audited ${id}.` })));
+      assert.deepEqual(current().map((a) => [a.ref, a.state, a.activity]).sort(), ids.map((id) => [id, "done", `Audited ${id}.`]), `round ${round}: each stops once`);
+    }
+  });
+
+  it("makes two records an earlier adapter kept for one sub-agent one again at a turn's start or end", () => {
+    const store = testStore();
+    handleHook(event("SessionStart", { source: "startup" }), ctx(store));
+    handleHook(launch("toolu_w", "Escritor mejoras", { run_in_background: true }), ctx(store));
+    store.upsertAgent("cc-1", "escritor-mejoras", { ref: "a37", summary: "Writes the 100 notes" });
+    // The start that missed the launch: named after its type, holding the same sub-agent, and the newer.
+    store.upsertAgent("cc-1", "general-purpose-2", { type: "general-purpose", ref: "a37", activity: "Edit: notes.md", activityIsCall: true });
+    handleHook(event("PostToolUse", { tool_name: "Bash", tool_input: { command: "ls" } }), ctx(store));
+    assert.equal(store.listAgents("cc-1").length, 2, "an ordinary call of the session leaves them alone");
+    handleHook(event("Stop", { last_assistant_message: "Launched it." }), ctx(store));
+    const agents = store.listAgents("cc-1");
+    assert.deepEqual(
+      agents.map((a) => [a.name, a.ref, a.launch, a.goal, a.summary, a.state, a.activity]),
+      [["escritor-mejoras", "a37", "toolu_w", "Escritor mejoras", "Writes the 100 notes", "working", "Edit: notes.md"]],
+    );
+    handleHook(event("SubagentStop", { agent_id: "a37", agent_type: "general-purpose", last_assistant_message: "Written." }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.state, a.activity]), [["escritor-mejoras", "done", "Written."]]);
+  });
+
+  it("gives a launch the sub-agent a start recorded on its own, as one record, when the launch's call names it", () => {
+    const store = testStore();
+    handleHook(launch("toolu_x", "Map the routes", { subagent_type: "Explore" }), ctx(store));
+    // Started under a type no launch awaits: a record of its own, until the call says whose it is.
+    handleHook(event("SubagentStart", { agent_id: "ex-1", agent_type: "explorer" }), ctx(store));
+    handleHook(event("PostToolUse", { agent_id: "ex-1", tool_name: "Grep", tool_input: { pattern: "route" } }), ctx(store));
+    handleHook(event("SubagentStop", { agent_id: "ex-1", agent_type: "explorer", last_assistant_message: "Mapped." }), ctx(store));
+    handleHook(event("PostToolUse", { tool_name: "Agent", tool_use_id: "toolu_x", tool_input: { description: "Map the routes" }, tool_response: { status: "completed", agentId: "ex-1" } }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.launch, a.state, a.activity]), [["map-the-routes", "ex-1", "toolu_x", "done", "Mapped."]]);
+  });
+
   it("settles a launch whose Agent call failed before its sub-agent started, so it no longer holds back the others", () => {
     const store = testStore();
     handleHook(event("SessionStart", { source: "startup" }), ctx(store));

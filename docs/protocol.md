@@ -39,6 +39,12 @@ Hooks, the CLI and the server write the same files from different processes.
 - Read-modify-write cycles hold `.<record>.lock`, created exclusively and holding a random token.
   A lock older than 15 s is taken as abandoned and taken over by renaming it away, which only one
   process can do; a lock is released only by the holder of its token.
+- Which agent record follows which agent (`ref`) is decided under one lock per session,
+  `agents/.<session>.json.lock` (`Store.withAgentsLocked`), with record locks taken inside it,
+  never the other way round. Two records found on the same `ref` become one
+  (`Store.mergeAgent`): goal, summary, branch, commit, `after`, `launch` and type from the record
+  kept, else from the other; state, activity and failures from the one updated last; the earlier
+  start.
 - Open questions and closed ones are kept in separate folders, so the hooks that run on every turn
   read only what is open.
 - An answer in an inbox is claimed by renaming it before it is read, so each answer reaches exactly

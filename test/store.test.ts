@@ -724,6 +724,29 @@ describe("agents and results", () => {
     assert.equal(store.updateAgent("s1", "worker", { state: "done" })?.state, "done");
   });
 
+  it("merges two records of one agent into one, keeping what was reported and the latest of how it runs", () => {
+    const store = testStore();
+    addSession(store);
+    const launched = store.upsertAgent("s1", "audit", { type: "general-purpose", launch: "t1", ref: "a1", goal: "Audit", summary: "Audits the API", after: ["build"] });
+    store.upsertAgent("s1", "general-purpose", { type: "general-purpose", ref: "a1", goal: "audit:label", branch: "agent/audit", activity: "Bash: npm test", activityIsCall: true, failedAt: ["2026-10-28T08:00:09.000Z"] });
+    const one = store.mergeAgent("s1", "general-purpose", "audit");
+    assert.deepEqual(
+      [one?.name, one?.ref, one?.launch, one?.goal, one?.summary, one?.branch, one?.after, one?.activity, one?.failedAt, one?.startedAt],
+      ["audit", "a1", "t1", "Audit", "Audits the API", "agent/audit", ["build"], "Bash: npm test", ["2026-10-28T08:00:09.000Z"], launched.startedAt],
+    );
+    assert.deepEqual(store.listAgents("s1").map((a) => a.name), ["audit"]);
+    assert.equal(store.mergeAgent("s1", "general-purpose", "audit"), undefined, "already merged: nothing to do");
+
+    // The kept record updated last: its own state stays.
+    store.upsertAgent("s1", "copy", { ref: "a1", activity: "Edit: old.ts" });
+    store.updateAgent("s1", "audit", { state: "done", activity: "Audited." });
+    assert.deepEqual([store.mergeAgent("s1", "copy", "audit")?.state, store.getAgent("s1", "audit")?.activity], ["done", "Audited."]);
+
+    store.upsertAgent("s1", "other", { ref: "a2" });
+    assert.equal(store.mergeAgent("s1", "other", "audit"), undefined, "never two different agents");
+    assert.deepEqual(store.listAgents("s1").map((a) => [a.name, a.ref]), [["audit", "a1"], ["other", "a2"]]);
+  });
+
   it("updates an agent only while its record still is what the writer compared", () => {
     const store = testStore();
     addSession(store);

@@ -62,13 +62,17 @@ button in the session panel.
 
 - `SubagentStart` does not name the Agent call that launched it, and Claude Code writes its notes on
   the sub-agent (`<session>/subagents/…/agent-<id>.meta.json`, with the launch's `description`) only
-  after that hook. The adapter pairs each start with the oldest unpaired launch of the same type
-  (claimed under that record's lock, so starts running at once take different launches), and
-  corrects the pairing from the notes at the agent's first recorded tool call or at its stop, and
-  from the call's result once it returns. Until then, launches of one type started together may
+  after that hook. The adapter pairs each start with the oldest unpaired launch of the same type,
+  and corrects the pairing from the notes at the agent's first recorded tool call or at its stop,
+  and from the call's result once it returns. Until then, launches of one type started together may
   show each other's names (verified 2026-10-29 with three agents launched in one message), and an
   agent launched otherwise (a workflow's) is named after its type (`workflow-subagent-3`); with the
   notes it takes its label's name.
+- A background Agent call returns (`async_launched`, naming its sub-agent) as that sub-agent
+  starts, so those hooks, the sub-agent's first calls and `agent-desk agent` run at once. Every
+  change to which record follows which sub-agent is made under the session's agents lock and ends
+  with one record per sub-agent id. Two records an earlier adapter left on one id become one when a
+  turn starts or ends, under the launch's name and with what the session reported.
 - Claude Code fires neither `PostToolUse` nor `PostToolUseFailure` for an Agent call refused at its
   permission prompt, denied by auto mode or cancelled while it runs (as its hooks documentation
   states; not verified here), and `PostToolUse` starts the adapter at most every 3 s. Launches left

@@ -57,6 +57,8 @@ export class StorePaths {
   metrics(sessionId: string) { return this.inside(this.metricsDir, `${id(sessionId, "session id")}.json`); }
   agentDir(sessionId: string) { return this.inside(this.agentsDir, id(sessionId, "session id")); }
   agent(sessionId: string, name: string) { return this.inside(this.agentDir(sessionId), `${id(name, "agent name")}.json`); }
+  /** One lock for all of a session's agents, beside their folder, so archiving the folder leaves it alone. */
+  agentsLock(sessionId: string) { return this.inside(this.agentsDir, `${id(sessionId, "session id")}.json`); }
   sessionInbox(sessionId: string) { return this.inside(this.inboxDir, id(sessionId, "session id")); }
   inboxEntry(sessionId: string, questionId: string) {
     return this.inside(this.sessionInbox(sessionId), `${id(questionId, "question id")}.json`);
