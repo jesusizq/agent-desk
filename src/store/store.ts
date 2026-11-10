@@ -178,6 +178,31 @@ export class Store {
     return this.updateSession(sessionId, ({ readAt: _readAt, ...s }) => s);
   }
 
+  /**
+   * The developer forgets a session that ended or whose process is gone: it leaves the desk now.
+   * It is marked ended and read, what it still asked is dismissed (answers waiting in its inbox
+   * included), and its results not seen yet are marked seen; its record, decisions and results stay
+   * for the history, until the archive takes them. Refused for a session still running. Only what
+   * existed when it was forgotten is closed, and running it again finishes what a failure left.
+   */
+  forgetSession(sessionId: string): { session: Session; dismissed: number; seen: number } {
+    let at = "";
+    const session = this.updateSession(sessionId, (s) => {
+      if (!finished(s)) throw new InputError(`session ${sessionId} is still running; end it first, then forget it`);
+      at = this.stamp();
+      const { endedAsking: _endedAsking, ...rest } = s;
+      return { ...rest, state: "ended", endedAt: s.endedAt ?? at, readAt: at };
+    });
+    const before = (iso: string) => iso <= at;
+    const dismissed = [
+      ...this.withdrawInbox(sessionId),
+      ...this.closeOpen(sessionId, { status: "dismissed", which: (q) => before(q.askedAt) }),
+    ];
+    const unseen = this.listResults().filter((r) => r.sessionId === sessionId && !r.seenAt && before(r.at));
+    for (const r of unseen) this.markResultSeen(r.id);
+    return { session, dismissed: dismissed.length, seen: unseen.length };
+  }
+
   listSessions(problems?: string[]): Session[] {
     return this.readAll(this.paths.sessionsDir, readSession, problems).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
@@ -229,7 +254,7 @@ export class Store {
     const sessions = new Map(this.listSessions().map((s) => [s.id, s]));
     const held = this.openQuestions().filter((q) => {
       const s = sessions.get(q.sessionId);
-      const live = s !== undefined && s.state !== "ended" && (!s.process || isAlive(s.process.pid, s.process.start));
+      const live = s !== undefined && !finished(s);
       return q.writing === true && live && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
     });
     return new Set(held.map((q) => q.id));
@@ -833,8 +858,7 @@ export class Store {
     }
     const open = new Set(this.openQuestions().map((q) => q.sessionId));
     for (const s of this.listSessions()) {
-      const finished = s.state === "ended" || (s.process !== undefined && !isAlive(s.process.pid, s.process.start));
-      if (!finished || open.has(s.id) || (s.endedAt ?? s.updatedAt) >= before) continue;
+      if (!finished(s) || open.has(s.id) || (s.endedAt ?? s.updatedAt) >= before) continue;
       for (const service of this.listServices().filter((v) => v.sessionId === s.id)) this.moveToArchive(this.paths.service(service.id));
       this.moveToArchive(this.paths.agentDir(s.id));
       this.moveToArchive(this.paths.metrics(s.id));
@@ -1042,6 +1066,11 @@ function within(dir: string, root: string): boolean {
 /** Text compared without case or accents ("Decisión" finds "decision"). */
 function fold(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+/** The session ended, or its process is gone: nothing runs it any more. */
+function finished(s: Session): boolean {
+  return s.state === "ended" || (s.process !== undefined && !isAlive(s.process.pid, s.process.start));
 }
 
 function imageType(data: Buffer): ImageExt | undefined {

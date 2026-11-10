@@ -188,6 +188,7 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/sessions/<id>/keys` `{ "action": "compact" \| "interrupt" \| "enter" \| "option-1"…"option-5" }` | sends those keys to the session's tmux pane (see `.claude/rules/security.md`) |
 | `POST /api/sessions/<id>/unread` | its last message is new again on every device, until the session is opened |
 | `POST /api/sessions/<id>/end` | sends SIGTERM to the session's own process, only while its pid still has the start time the session recorded (see `.claude/rules/security.md`) |
+| `POST /api/sessions/<id>/forget` | takes a session that ended, or whose process is gone, off the desk at once: it is marked ended and read, what it still asked is dismissed (an answer waiting in its inbox too) and its results not seen yet are marked seen; its record, decisions and results stay in History until the archive moves them. Refused (400) while the session runs. Returns `{ session, dismissed, seen }` |
 | `GET /api/push/key` | this install's VAPID public key, which the phone subscribes with |
 | `POST /api/push/subscribe` (a `PushSubscription` as JSON), `POST /api/push/unsubscribe` `{ "endpoint": "…" }` | the phone that gets "N need you" when a question opens; only `https://*.push.apple.com`, `https://fcm.googleapis.com` and `https://updates.push.services.mozilla.com` endpoints are accepted |
 | `GET /images/<id>` | a stored image, served with `Content-Security-Policy: default-src 'none'; sandbox` |

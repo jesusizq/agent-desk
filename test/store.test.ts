@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { InputError } from "../src/core/check.ts";
+import { procInfo } from "../src/core/proc.ts";
 import { Store } from "../src/store/store.ts";
 import { addSession, PNG, tempHome, testStore } from "./helpers.ts";
 
@@ -358,6 +359,102 @@ describe("archive", () => {
     assert.deepEqual(store.listAgents("old"), []);
     assert.equal(store.getQuestion(openQ.id)?.status, "open");
     assert.ok(store.getSession("live"));
+  });
+});
+
+describe("forgetting a session", () => {
+  const own = procInfo(process.pid);
+  /** A session whose recorded process is this test's own (live), or a pid now held by another process (gone). */
+  const withProcess = (store: Store, id: string, live: boolean) =>
+    store.updateSession(id, (s) => ({ ...s, process: { pid: process.pid, start: live ? (own?.start ?? "") : "0", ancestors: [] } }));
+
+  it("takes an ended session off the desk: what it asked dismissed, its results seen, its record and history kept", () => {
+    const store = testStore();
+    addSession(store);
+    addSession(store, "other");
+    const open = store.ask({ sessionId: "s1", kind: "question", text: "Still there?" });
+    const answered = store.ask({ sessionId: "s1", kind: "question", text: "Which?" });
+    store.closeOpen("s1", { answer: "this one", which: (q) => q.id === answered.id });
+    const otherQ = store.ask({ sessionId: "other", kind: "question", text: "Other?" });
+    const result = store.addResult({ sessionId: "s1", title: "Done", url: "http://localhost:3000" });
+    const seenBefore = store.markResultSeen(store.addResult({ sessionId: "s1", title: "Seen earlier", url: "http://localhost:3000" }).id);
+    const otherR = store.addResult({ sessionId: "other", title: "Other's", url: "http://localhost:3000" });
+    store.updateSession("s1", (s) => ({ ...s, state: "ended", endedAt: "2026-10-28T08:00:01.000Z", endedAsking: true, lastMessage: { text: "Bye", at: "2026-10-28T08:00:01.000Z" } }));
+    const out = store.forgetSession("s1");
+    assert.deepEqual([out.dismissed, out.seen], [1, 1]);
+    const s = store.getSession("s1");
+    assert.equal(s?.state, "ended");
+    assert.equal(s?.endedAt, "2026-10-28T08:00:01.000Z", "the end it recorded is kept");
+    assert.equal(s?.endedAsking, undefined);
+    assert.ok(s?.readAt && s.lastMessage && s.readAt > s.lastMessage.at, "read, so it no longer waits to be opened");
+    assert.equal(store.getQuestion(open.id)?.status, "dismissed");
+    assert.equal(store.getQuestion(answered.id)?.answer?.text, "this one", "the history keeps its decisions");
+    assert.ok(store.listResults().find((r) => r.id === result.id)?.seenAt, "its result stays, seen");
+    assert.equal(store.listResults().find((r) => r.id === seenBefore.id)?.seenAt, seenBefore.seenAt);
+    assert.equal(store.getQuestion(otherQ.id)?.status, "open", "another session is left alone");
+    assert.equal(store.listResults().find((r) => r.id === otherR.id)?.seenAt, undefined);
+    assert.deepEqual([store.forgetSession("s1").dismissed, store.forgetSession("s1").seen], [0, 0], "forgetting again changes nothing");
+  });
+
+  it("forgets a session whose process is gone, marking it ended, and withdraws an answer still waiting in its inbox", () => {
+    const store = testStore();
+    addSession(store);
+    withProcess(store, "s1", false);
+    const q = store.ask({ sessionId: "s1", kind: "question", text: "Which?" });
+    const stop = store.listen("s1");
+    store.answerFromDesk(q.id, "never delivered");
+    stop();
+    const out = store.forgetSession("s1");
+    assert.equal(out.dismissed, 1);
+    assert.equal(store.getSession("s1")?.state, "ended");
+    assert.ok(store.getSession("s1")?.endedAt);
+    assert.equal(store.getQuestion(q.id)?.status, "dismissed");
+    assert.deepEqual(store.takeInbox("s1"), [], "nothing left for a session that will never read it");
+  });
+
+  it("never forgets a session still running, and changes nothing trying", () => {
+    const store = testStore();
+    addSession(store, "live");
+    withProcess(store, "live", true);
+    addSession(store, "unknown"); // no process recorded and not ended: it may be running
+    for (const id of ["live", "unknown"]) {
+      const q = store.ask({ sessionId: id, kind: "question", text: "Still open?" });
+      const before = store.getSession(id);
+      assert.throws(() => store.forgetSession(id), (e: unknown) => e instanceof InputError && /still running/.test(e.message));
+      assert.deepEqual(store.getSession(id), before);
+      assert.equal(store.getQuestion(q.id)?.status, "open");
+    }
+    assert.throws(() => store.forgetSession("missing"), InputError);
+  });
+
+  it("closes only what the session had when it was forgotten, should it come back meanwhile", () => {
+    const store = testStore();
+    addSession(store);
+    store.updateSession("s1", (s) => ({ ...s, state: "ended" }));
+    const earlier = store.ask({ sessionId: "s1", kind: "question", text: "Before?" });
+    // A session resumed under the same id while the forget runs: what it asks from then on is new.
+    const resumed = new Store(store.paths.home, () => new Date("2026-10-28T09:00:00.000Z"));
+    const later = resumed.ask({ sessionId: "s1", kind: "question", text: "After?" });
+    const result = resumed.addResult({ sessionId: "s1", title: "After", url: "http://localhost:3000" });
+    store.forgetSession("s1");
+    assert.equal(store.getQuestion(earlier.id)?.status, "dismissed");
+    assert.equal(store.getQuestion(later.id)?.status, "open");
+    assert.equal(store.listResults().find((r) => r.id === result.id)?.seenAt, undefined);
+  });
+
+  it("loses no update while processes forget a session and its hooks still write to it", async () => {
+    const store = testStore();
+    addSession(store);
+    store.updateSession("s1", (s) => ({ ...s, state: "ended" }));
+    const ids = Array.from({ length: 20 }, (_, i) => store.ask({ sessionId: "s1", kind: "question", text: `Q${i}?` }).id);
+    for (let i = 0; i < 10; i++) store.addResult({ sessionId: "s1", title: `R${i}`, url: "http://localhost:3000" });
+    await Promise.all([workers(store.paths.home, "forget", 5, 3), workers(store.paths.home, "activity", 25, 2)]);
+    const s = store.getSession("s1");
+    assert.equal(s?.state, "ended");
+    assert.ok(s?.readAt);
+    assert.match(s?.activity ?? "", /^Edit /, "the hooks' updates are kept too");
+    assert.deepEqual(ids.map((id) => store.getQuestion(id)?.status), ids.map(() => "dismissed"));
+    assert.ok(store.listResults().every((r) => r.seenAt));
   });
 });
 

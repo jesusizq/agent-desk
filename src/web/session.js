@@ -5,7 +5,7 @@ import { arrive } from "./motion.js";
 import { TEXT } from "./text.js";
 import { agentRows, agentsPart, sessionAgents, sessionQuiet } from "./agents.js";
 import { askBody, replyBox } from "./answer.js";
-import { controlSection } from "./control.js";
+import { controlSection, forgetButton } from "./control.js";
 import { conversationView, loadConversation, outgoingView } from "./conversation.js";
 import { ago, clockAt, duration, gb, stamp } from "./format.js";
 import { fitNewBoxes, showNeedsYou } from "./layout.js";
@@ -50,7 +50,7 @@ function panelChips(s, m) {
     "div",
     { class: "pchips" },
     m?.suggestion && command ? suggestionChip(m.suggestion, m.contextPercent ?? 0, command) : null,
-    s.state === "ended" || data.gone.includes(s.id) ? h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone) : null,
+    s.state === "ended" || data.gone.includes(s.id) ? [h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone), forgetButton(s, () => redrawPanel(s.id), "chip")] : null,
     failed ? agents : null,
     m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
     (m?.planWindows ?? []).map((w) => h("span", { class: "chip", title: TEXT.plan(w.label, w.percent, w.resetsAt ? ago(new Date().toISOString(), w.resetsAt) : "") }, bar(w.percent), TEXT.planChip(w.label, w.percent, w.resetsAt ? clockAt(w.resetsAt) : ""))),

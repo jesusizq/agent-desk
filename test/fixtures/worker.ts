@@ -36,6 +36,8 @@ if (task === "increment") {
     const asked = store.ask({ sessionId: "s1", kind: "question", text: `Decided ${process.pid}-${i}?` });
     store.closeOpen("s1", { answer: `yes ${process.pid}-${i}`, which: (q) => q.id === asked.id });
   }
+} else if (task === "forget") {
+  for (let i = 0; i < Number(count); i++) store.forgetSession("s1");
 } else {
   throw new Error(`unknown task ${task}`);
 }

@@ -4,6 +4,7 @@ import { h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
 import { agentQuiet, failing, recentFailures, sessionAgents, sessionDot, sessionQuiet, troubleText } from "./agents.js";
 import { askBody, decisionOf } from "./answer.js";
+import { forgetButton } from "./control.js";
 import { ago, color, firstLine, headline, heat, hm, stamp } from "./format.js";
 import { markCuts, revealNext } from "./layout.js";
 import { badge, beacon, dot, emptyState, goLink, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
@@ -215,6 +216,7 @@ function sessionCard(s) {
   }
   /** One line of trouble; the failed call, when known, on one line below it. @param {DotState} st @param {string} what @param {string} [call] */
   const troubleLine = (st, what, call) => h("div", { class: `s-bad${st === "idle" ? " s-warn" : ""}` }, dot(st), h("span", {}, what, call ? h("code", {}, call) : null));
+  if (s.state !== "ended" && !isLive(s)) matters.push(troubleLine("idle", TEXT.goneAsking));
   /** @param {Agent | Session} x @param {string} who */
   const failLine = (x, who) => troubleLine("failed", [who, TEXT.failingCalls(recentFailures(x.failedAt))].filter(Boolean).join(" · "), x.failedWhat);
   if (failing(s)) matters.push(failLine(s, ""));
@@ -249,6 +251,8 @@ function sessionCard(s) {
     matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
     working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
     m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
+    // Its own click: not the card's, which opens the session.
+    isLive(s) ? null : h("div", { class: "s-actions", onclick: (/** @type {Event} */ e) => e.stopPropagation() }, forgetButton(s, () => page.renderView(), "secondary")),
   );
 }
 
@@ -266,7 +270,8 @@ function readBadge(s) {
   return unread(s) ? h("span", { class: "badge k-new" }, TEXT.newBadge) : h("span", { class: "badge k-seen", title: s.readAt ? TEXT.seenAt(hm(s.readAt)) : "" }, TEXT.seenBadge);
 }
 function sessionsColumn() {
-  const list = data.sessions.filter((s) => (isLive(s) || endedUnseen(s)) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
+  // A session whose process is gone stays while it still asks, so what it asked can be forgotten with it.
+  const list = data.sessions.filter((s) => (isLive(s) || endedUnseen(s) || asksOf(s.id).length > 0) && inProject(s.id)).sort((a, b) => sessionWeight(b) - sessionWeight(a));
   const legend = h("div", { class: "legend" }, LEGEND.map((st) => h("span", {}, dot(st), TEXT.state[st])));
   return column("sessions", list.length, list.length ? h("div", { class: "slist", "data-list": true }, list.map(sessionCard)) : emptyState("no-sessions", TEXT.emptyRunning), { foot: legend, quiet: true });
 }

@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { procInfo } from "../src/core/proc.ts";
 import { Push } from "../src/server/push.ts";
 import { createDeskServer } from "../src/server/server.ts";
 import type { Store } from "../src/store/store.ts";
@@ -194,6 +195,24 @@ describe("server", () => {
     assert.equal((await post("/api/sessions/s-end/end", {}, { Origin: "http://evil.example" })).status, 403);
     assert.equal((await post("/api/sessions/s-end/end", {})).status, 200);
     assert.equal(await exited, "SIGTERM");
+  });
+
+  it("forgets a session only from the page, and never one still running", async () => {
+    addSession(store, "s-forget");
+    store.updateSession("s-forget", (s) => ({ ...s, process: { pid: process.pid, start: procInfo(process.pid)?.start ?? "", ancestors: [] } }));
+    const q = store.ask({ sessionId: "s-forget", kind: "question", text: "Still there?" });
+    const running = await post("/api/sessions/s-forget/forget", {});
+    assert.equal(running.status, 400);
+    assert.match(((await running.json()) as { error: string }).error, /still running/);
+    store.updateSession("s-forget", (s) => ({ ...s, state: "ended" }));
+    assert.equal((await post("/api/sessions/s-forget/forget", {}, { Origin: "http://evil.example" })).status, 403);
+    assert.equal((await post("/api/sessions/s-forget/forget", {}, { "X-Agent-Desk-Secret": "wrong" })).status, 403);
+    assert.equal(store.getQuestion(q.id)?.status, "open", "a refused request changes nothing");
+    const res = await post("/api/sessions/s-forget/forget", {});
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { dismissed: number }).dismissed, 1);
+    assert.equal(store.getQuestion(q.id)?.status, "dismissed");
+    assert.equal((await post("/api/sessions/..%2Fx/forget", {})).status, 400);
   });
 
   it("subscribes a phone to push only from the page, and only to a known push service", async () => {

@@ -2228,6 +2228,46 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  describe("forgetting a session", () => {
+    it("offers Forget only on a session that is not running, acts on the second click, and takes it off the desk", async () => {
+      const at = new Date(Date.now() - 30 * 60000).toISOString();
+      store.upsertSession({ id: "to-forget", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "ended and forgotten", state: "ended", endedAt: at, endedAsking: true, lastMessage: { text: "Shall I go on?", at } });
+      const result = store.addResult({ sessionId: "to-forget", title: "Left behind by the ended session", url: "http://localhost:5173/left" });
+      const page = await open();
+      const card = "[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('ended and forgotten'))";
+      await page.waitFor(card);
+      assert.equal(await page.eval<number>("[...document.querySelectorAll('.scard')].filter((c) => c.querySelector('[data-key=forget]')).length"), 1, "only the session that ended offers it");
+      await page.click(".scard [data-key=forget]");
+      assert.equal(await page.eval<string>(`${card}.querySelector('[data-key=forget]').getAttribute('aria-label')`), "Forget it?");
+      assert.equal(await page.eval<boolean>("document.getElementById('session').open"), false, "the click is the button's, not the card's");
+      assert.equal(store.getSession("to-forget")?.endedAsking, true, "one click does nothing yet");
+      // Its 3 s countdown runs as a transform, which page.click waits out: the second click comes at once, as a person's does.
+      await page.eval("document.querySelector('.scard [data-key=forget]').click()");
+      await page.waitFor(`!${card}`);
+      await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Forgot web-shop › ended and forgotten'))");
+      assert.ok(store.listResults().find((r) => r.id === result.id)?.seenAt, "its result went to History");
+      assert.equal(await page.eval<boolean>("[...document.querySelectorAll('.rtile')].some((t) => t.textContent.includes('Left behind'))"), false);
+      await page.click("#views button", "History");
+      await page.waitFor("[...document.querySelectorAll('.hitem')].some((h) => h.textContent.includes('Left behind by the ended session') && h.textContent.includes('ended and forgotten'))");
+      await page.click("#views button", "Desk");
+    });
+
+    it("keeps a session whose process is gone on the desk while it asks, and forgets it from its panel", async () => {
+      store.upsertSession({ id: "gone-asking", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "gone while asking", state: "waiting", process: { pid: 2 ** 31 - 3, ancestors: [] } });
+      const q = store.ask({ sessionId: "gone-asking", kind: "question", text: "Asked before its process went away?" });
+      const page = await open();
+      await page.click(".scard", "gone while asking");
+      await page.waitFor(arrived("session"));
+      assert.match(await page.eval<string>("document.querySelector('#session .pchips').textContent"), /its process is gone\s*Forget/);
+      await page.click("#session .pchips [data-key=forget]");
+      await page.eval("document.querySelector('#session .pchips [data-key=forget]').click()");
+      await page.waitFor("!document.getElementById('session').open");
+      await page.waitFor("![...document.querySelectorAll('.scard, .qrow, .next')].some((c) => c.textContent.includes('gone while asking') || c.textContent.includes('Asked before its process'))");
+      assert.equal(store.getQuestion(q.id)?.status, "dismissed");
+      assert.equal(store.getSession("gone-asking")?.state, "ended");
+    });
+  });
+
   it("asks before leaving only while an image or an answer is on its way", async () => {
     store.upsertSession({ id: "leaving", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "leaving mid-upload", takesMessagesWhileWorking: true });
     const page = await browser.newPage(1400, 900);

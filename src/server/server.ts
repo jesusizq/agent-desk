@@ -142,6 +142,7 @@ const ACTIONS: Record<string, Action> = {
     endProcess(s.process.pid, s.process.start);
     return { ended: target };
   },
+  "sessions/forget": (store, target) => store.forgetSession(target),
 };
 
 export function createDeskServer(store: Store, port: number, remote: Access["remote"] = remoteFromEnv(process.env), feedOptions: Partial<FeedOptions> = {}): Server {
@@ -208,7 +209,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
       throw error;
     }
   }
-  const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read|unread|end)$/.exec(route);
+  const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read|unread|end|forget)$/.exec(route);
   const action = m ? ACTIONS[`${m[1]}/${m[3]}`] : undefined;
   if (!m?.[2] || !action) return sendJson(res, 404, { error: "not found" });
   if (!ID_PATTERN.test(m[2])) return sendJson(res, 400, { error: "invalid id" });

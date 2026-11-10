@@ -658,7 +658,10 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .arm-lbl > * { grid-area: 1 / 1; justify-self: center; }
 .arm .arm-ask, .arm.armed .arm-idle { visibility: hidden; }
 .arm.armed .arm-ask { visibility: visible; }
-button.secondary.arm.armed { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+:is(button.secondary, button.chip).arm.armed { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+/* Forget on a session's card, under what it said: small, it only takes the card off the desk. */
+.scard > .s-actions { padding-left: 17px; margin-top: 2px; }
+.s-actions .secondary { padding: 2px 10px; font-size: 0.75rem; }
 button.secondary.danger.arm.armed { background: var(--danger); border-color: var(--danger); color: #fff; }
 .arm.armed::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: currentColor; opacity: .55;
   transform-origin: left; animation: arm-out 3s linear forwards; }

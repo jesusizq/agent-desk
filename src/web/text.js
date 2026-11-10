@@ -167,6 +167,7 @@ export const TEXT = {
   markUnread: "Mark unread",
   markUnreadHint: "Keep it as a new message until you open it again",
   endedAsking: "It ended while asking",
+  goneAsking: "Its process is gone: no answer reaches it",
   seenBadge: "Seen",
   /** @param {string} t */
   seenAt: (t) => `Opened at ${t}`,
@@ -219,6 +220,11 @@ export const TEXT = {
     endHint: "Stops its process, as closing its terminal would.",
     /** @param {string} where */
     ended: (where) => `Asked ${where} to end. It closes in a moment.`,
+    forget: "Forget",
+    forgetConfirm: "Forget it?",
+    forgetHint: "Takes it off the desk now: what it still asks is dismissed; its results and decisions stay in History",
+    /** @param {string} where */
+    forgot: (where) => `Forgot ${where}. Its results and decisions stay in History.`,
   },
   /** @param {string} type */
   agentType: (type) => `${type} agent`,
