@@ -19,6 +19,10 @@ command.
 - Reject requests whose `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (DNS rebinding),
   except the configured tailnet host (`AGENT_DESK_REMOTE_HOST`) carrying the configured Tailscale
   login (`AGENT_DESK_REMOTE_USER`); writes from it need its `https://` origin and the secret.
+- A request is local only from a loopback socket, with a local `Host` and none of the headers a proxy
+  adds (`Tailscale-*`, `X-Forwarded-*`, `Forwarded`, `Via`, `X-Real-IP`); any proxied request is let
+  in only as the configured tailnet host and login, behind the PIN, and remote access is never set
+  up through a port forward, portproxy, socat, a reverse proxy or a 0.0.0.0 bind.
 - Every state-changing request needs a per-install secret (random, stored with 0600 permissions)
   and an exact `Origin` match; no CORS for any other origin (CSRF from other local pages).
 - No endpoint executes commands, spawns processes or reads arbitrary paths, with two exceptions,
