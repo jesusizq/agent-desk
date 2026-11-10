@@ -504,6 +504,24 @@ function launchAgent(input: Common, ctx: HookContext): void {
   }));
 }
 
+/** A launch no sub-agent start has been paired with yet, and that has not been settled. */
+const awaitsStart = (a: Agent) => a.state === "working" && a.ref?.startsWith(PENDING) === true;
+
+/**
+ * Pairs a start with the oldest launch of its type that awaits one. Each claim is compared under the
+ * record's lock, so two starts of the same type running at once take two different launches.
+ */
+function claimLaunch(store: Store, sessionId: string, type: string, agentId: string): boolean {
+  for (let tries = 0; tries < 3; tries++) {
+    const waiting = store.listAgents(sessionId).filter((a) => awaitsStart(a) && (a.type === type || type === ""));
+    if (waiting.length === 0) return false;
+    for (const launch of waiting) {
+      if (store.updateAgent(sessionId, launch.name, { ref: agentId, state: "working" }, (a) => awaitsStart(a) && a.ref === launch.ref)) return true;
+    }
+  }
+  throw new Error(`sub-agent ${agentId} of session ${sessionId}: the launches it could pair with were taken or renamed meanwhile, three times; run the hook again`);
+}
+
 function startAgent(input: Common, ctx: HookContext, problems: string[]): void {
   const agentId = text(input.raw.agent_id ?? "", "hook input.agent_id", 200);
   const type = text(input.raw.agent_type ?? "", "hook input.agent_type", 200);
@@ -513,11 +531,7 @@ function startAgent(input: Common, ctx: HookContext, problems: string[]): void {
     updateByRef(ctx.store, input.sessionId, agentId, () => ({ state: "working" }));
     return;
   }
-  const pending = ctx.store.listAgents(input.sessionId).find((a) => a.ref?.startsWith(PENDING) && (a.type === type || type === ""));
-  if (pending) {
-    ctx.store.upsertAgent(input.sessionId, pending.name, { ref: agentId, state: "working" });
-    return;
-  }
+  if (claimLaunch(ctx.store, input.sessionId, type, agentId)) return;
   // Launched by something other than the Agent tool (a workflow): its label, when already noted, is its goal.
   const goal = launchNotes(subagentMeta(input, agentId), problems).description;
   ctx.store.addAgent(input.sessionId, slug(goal || type || "agent"), compact({ type: type || undefined, ref: agentId, goal, state: "working" as const }));

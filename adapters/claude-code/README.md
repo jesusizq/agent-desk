@@ -61,7 +61,8 @@ button in the session panel.
 
 - `SubagentStart` does not name the Agent call that launched it, and Claude Code writes its notes on
   the sub-agent (`<session>/subagents/…/agent-<id>.meta.json`, with the launch's `description`) only
-  after that hook. The adapter pairs each start with the oldest unpaired launch of the same type, and
+  after that hook. The adapter pairs each start with the oldest unpaired launch of the same type
+  (claimed under that record's lock, so starts running at once take different launches), and
   corrects the pairing from the notes at the agent's first recorded tool call or at its stop. Until
   then, launches of one type started together may show each other's names (verified 2026-10-29 with
   three agents launched in one message), and an agent launched otherwise (a workflow's) is named

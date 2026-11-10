@@ -25,6 +25,24 @@ function workflowRun() {
     fs.writeFileSync(path.join(run, `agent-${agentId}.meta.json`), JSON.stringify({ agentType: "workflow-subagent", description }));
   return { transcript: path.join(projects, "cc-1.jsonl"), subagents, run, note };
 }
+/** The adapter's entry point and the CLI run as separate processes on store `home`, as Claude Code runs hooks, for session "cc-c". */
+function hookProcesses(home: string, transcript: string) {
+  const env = { ...process.env, AGENT_DESK_HOME: home, TERM_PROGRAM: "vscode", CLAUDE_PROJECT_DIR: "/work/shop" };
+  const run = (args: string[], input = "") =>
+    new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, args, { env });
+      let stderr = "";
+      child.stderr.on("data", (d: Buffer) => (stderr += d));
+      child.on("error", reject);
+      child.on("exit", (code) => resolve({ code, stderr }));
+      child.stdin.end(input);
+    });
+  const hook = (input: object) => run([MAIN, "hook"], JSON.stringify({ session_id: "cc-c", cwd: "/work/shop", transcript_path: transcript, ...input }));
+  const all = async (runs: Promise<{ code: number | null; stderr: string }>[]) => {
+    for (const r of await Promise.all(runs)) assert.equal(r.code, 0, r.stderr);
+  };
+  return { run, hook, all };
+}
 const event = (hook_event_name: string, extra: Record<string, unknown> = {}) =>
   readHookInput(JSON.stringify({ session_id: "cc-1", cwd: "/work/shop/sub", hook_event_name, permission_mode: "auto", ...extra }));
 
@@ -402,21 +420,8 @@ describe("Claude Code hooks", () => {
   it("keeps one record per agent while the hooks of several workflow agents run at once", async () => {
     const home = tempHome();
     const wf = workflowRun();
-    const env = { ...process.env, AGENT_DESK_HOME: home, TERM_PROGRAM: "vscode", CLAUDE_PROJECT_DIR: "/work/shop" };
-    const run = (args: string[], input = "") =>
-      new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
-        const child = spawn(process.execPath, args, { env });
-        let stderr = "";
-        child.stderr.on("data", (d: Buffer) => (stderr += d));
-        child.on("error", reject);
-        child.on("exit", (code) => resolve({ code, stderr }));
-        child.stdin.end(input);
-      });
-    const hook = (input: object) => run([MAIN, "hook"], JSON.stringify({ session_id: "cc-c", cwd: "/work/shop", transcript_path: wf.transcript, ...input }));
+    const { hook, run, all } = hookProcesses(home, wf.transcript);
     const report = (label: string) => run([CLI, "agent", label, "--summary", `Delivers ${label}`, "--session", "cc-c"]);
-    const all = async (runs: Promise<{ code: number | null; stderr: string }>[]) => {
-      for (const r of await Promise.all(runs)) assert.equal(r.code, 0, r.stderr);
-    };
     const ids = ["w1", "w2", "w3", "w4"];
     const label = (id: string) => `audit:${id}`;
     await all([hook({ hook_event_name: "SessionStart", source: "startup" })]);
@@ -475,6 +480,19 @@ describe("Claude Code hooks", () => {
     assert.deepEqual([byGoal.get("Delta check")?.ref, byGoal.get("Delta check")?.state], ["d", "done"]);
     // Gamma waits for its own start again, as an unpaired launch.
     assert.deepEqual([byGoal.get("Gamma check")?.ref?.startsWith("tool:"), byGoal.get("Gamma check")?.state], [true, "working"]);
+  });
+
+  it("pairs each of several starts of one type, run at once, with a launch of its own", async () => {
+    const home = tempHome();
+    const { hook, all } = hookProcesses(home, path.join(tempHome(), "cc-c.jsonl"));
+    const ids = Array.from({ length: 10 }, (_, i) => `s${i}`);
+    await all([hook({ hook_event_name: "SessionStart", source: "startup" })]);
+    for (const id of ids) await all([hook({ hook_event_name: "PreToolUse", tool_name: "Agent", tool_use_id: `toolu_${id}`, tool_input: { description: `Check ${id}`, subagent_type: "general-purpose" } })]);
+    await all(ids.map((id) => hook({ hook_event_name: "SubagentStart", agent_id: id, agent_type: "general-purpose" })));
+    const { Store } = await import("../src/store/store.ts");
+    const agents = new Store(home).listAgents("cc-c");
+    assert.equal(agents.length, ids.length, "no start made a record of its own");
+    assert.deepEqual(agents.map((a) => a.ref).sort(), ids, "every start took a different launch");
   });
 
   it("treats an agent started again with the same id as the same agent", () => {

@@ -512,12 +512,16 @@ export class Store {
     }
   }
 
-  /** Merges `fields` into the agent; undefined, with nothing written, when it is not recorded (e.g. renamed meanwhile). */
-  updateAgent(sessionId: string, name: string, fields: AgentFields): Agent | undefined {
+  /**
+   * Merges `fields` into the agent; undefined, with nothing written, when it is not recorded (e.g.
+   * renamed meanwhile) or `when`, checked under the agent's lock, refuses its current record: two
+   * writers comparing the same record that way cannot both change it.
+   */
+  updateAgent(sessionId: string, name: string, fields: AgentFields, when?: (current: Agent) => boolean): Agent | undefined {
     const file = this.paths.agent(sessionId, name);
     return withLock(file, () => {
       const current = this.getAgent(sessionId, name);
-      return current && this.writeAgent(sessionId, name, current, fields);
+      return current && (when === undefined || when(current)) ? this.writeAgent(sessionId, name, current, fields) : undefined;
     });
   }
 

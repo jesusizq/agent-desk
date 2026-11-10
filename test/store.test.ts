@@ -447,6 +447,16 @@ describe("agents and results", () => {
     assert.equal(store.updateAgent("s1", "worker", { state: "done" })?.state, "done");
   });
 
+  it("updates an agent only while its record still is what the writer compared", () => {
+    const store = testStore();
+    addSession(store);
+    store.upsertAgent("s1", "lint", { ref: "tool:t1" });
+    const unclaimed = (a: { ref?: string }) => a.ref === "tool:t1";
+    assert.equal(store.updateAgent("s1", "lint", { ref: "a1" }, unclaimed)?.ref, "a1");
+    assert.equal(store.updateAgent("s1", "lint", { ref: "a2" }, unclaimed), undefined, "a second claim of the same record is refused");
+    assert.equal(store.getAgent("s1", "lint")?.ref, "a1");
+  });
+
   it("finishes a rename interrupted between its two writes when run again", () => {
     const store = testStore();
     addSession(store);
