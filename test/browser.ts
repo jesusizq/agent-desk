@@ -175,7 +175,9 @@ export class Page {
       const moving = () => document.getAnimations().some((a) => a.playState !== "finished" && a.effect?.target instanceof Element && a.effect.target.contains(el) && a.effect.getKeyframes().some((k) => "transform" in k || "translate" in k));
       const at = () => JSON.stringify(el?.getBoundingClientRect());
       const before = at();
-      for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
+      // A tab behind another gets no animation frames: a timer stands in, so the click cannot hang there.
+      const frame = () => new Promise((r) => (requestAnimationFrame(r), setTimeout(r, 100)));
+      for (let i = 0; i < 2; i++) await frame();
       return before === at() && !moving();
     })()`;
     const end = Date.now() + WAIT_MS;
