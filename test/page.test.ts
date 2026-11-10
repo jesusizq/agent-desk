@@ -2227,4 +2227,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<boolean>("!!document.querySelector('#result .compare')"), true, "a before and after keeps its slider");
     await page.press("Escape");
   });
+
+  it("knows every window of the page by one list", async () => {
+    const page = await open();
+    assert.deepEqual(await page.eval<string[]>("import('/dom.js').then((m) => [...m.WINDOWS])"), await page.eval<string[]>("[...document.querySelectorAll('dialog')].map((d) => d.id)"));
+  });
 });

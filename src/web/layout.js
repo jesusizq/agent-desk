@@ -1,7 +1,7 @@
 // @ts-check
 // Where things are on the screen: one column or two, what is in sight, the boxes' height, the edges
 // that hide more, the keyboard over the page.
-import { dialog } from "./dom.js";
+import { dialog, WINDOWS } from "./dom.js";
 import { inProject, page, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -29,7 +29,7 @@ export function inSight(q) {
 export function showNeedsYou() {
   ui.view = "desk";
   ui.tab = "inbox";
-  for (const id of ["result", "session", "zoom"]) dialog(id).close();
+  for (const id of WINDOWS) dialog(id).close();
   page.render();
   revealNext("start");
 }

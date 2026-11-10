@@ -1,7 +1,7 @@
 // @ts-check
 // The desk page: follows the store through the local server and renders it. All strings live in text.js.
 // This entry draws the view and wires the page; each area lives in its own module.
-import { byId, dialog, patch } from "./dom.js";
+import { byId, dialog, patch, WINDOWS } from "./dom.js";
 import { animateLists, fadeIn, stopLists } from "./motion.js";
 import { TEXT } from "./text.js";
 import { renderAlerts } from "./alerts.js";
@@ -147,7 +147,7 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("touchstart", () => {}, { passive: true });
 // A tap is not a scroll: counted, it put off the redraw that shows what the tap did.
 for (const event of ["scroll", "touchmove"]) dialog("session").addEventListener(event, () => (ui.panelTouchedAt = Date.now()), { capture: true, passive: true });
-for (const id of ["result", "session", "zoom"]) {
+for (const id of WINDOWS) {
   const d = dialog(id);
   // A press inside that is released on the backdrop (selecting text) clicks the dialog itself: only one that starts there closes it.
   let pressedBackdrop = false;

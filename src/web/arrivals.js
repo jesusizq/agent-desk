@@ -1,6 +1,6 @@
 // @ts-check
 // Arrivals: a question that comes out of sight is a small bubble at the screen's edge.
-import { byId, dialog, h, icon, md, patch } from "./dom.js";
+import { byId, dialog, h, icon, md, patch, WINDOWS } from "./dom.js";
 import { arrive, bump, fadeIn, retreat } from "./motion.js";
 import { TEXT } from "./text.js";
 import { askBody } from "./answer.js";
@@ -206,5 +206,5 @@ function goToArrival(item) {
   document.addEventListener("visibilitychange", scheduleRetreat);
   // A window opening or closing changes where the bubble lives, and what is in sight.
   const hosts = new MutationObserver(() => ui.arrivals.length && renderArrival());
-  for (const id of ["result", "session", "zoom"]) hosts.observe(dialog(id), { attributes: true, attributeFilter: ["open"], childList: true });
+  for (const id of WINDOWS) hosts.observe(dialog(id), { attributes: true, attributeFilter: ["open"], childList: true });
 }

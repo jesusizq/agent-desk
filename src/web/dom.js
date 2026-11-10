@@ -363,6 +363,9 @@ export function byId(id) {
   return el;
 }
 
+/** The page's windows (index.html): a backdrop click, going back to Needs you and the arrival bubble treat them alike. */
+export const WINDOWS = /** @type {const} */ (["result", "session", "zoom"]);
+
 /** @param {string} id @returns {HTMLDialogElement} */
 export function dialog(id) {
   const el = byId(id);
