@@ -4,12 +4,18 @@ import * as os from "node:os";
 import { createInterface } from "node:readline";
 import * as path from "node:path";
 import { parseArgs, type ParseArgsConfig } from "node:util";
-import { InputError, localUrl, nonEmpty, oneOf } from "../core/check.ts";
+import { compact, InputError, int, localUrl, nonEmpty, oneOf } from "../core/check.ts";
 import { id, slug } from "../core/ids.ts";
 import { AGENT_STATES, type Agent } from "../core/model.ts";
 import { ancestors, isAlive } from "../core/proc.ts";
 import { storeHome } from "../store/paths.ts";
-import { Store } from "../store/store.ts";
+import { type Decision, type DecisionQuery, Store } from "../store/store.ts";
+
+/** Decisions listed by default: enough to recall a project's recent ones without filling a model's context. */
+const DECISIONS_SHOWN = 20;
+const DECISIONS_MAX = 500;
+/** Longer answers are cut in the text listing; --json keeps them whole. */
+const ANSWER_SHOWN = 1000;
 
 const USAGE = `agent-desk — a local desk for every AI coding session
 
@@ -22,6 +28,9 @@ Posting (from a session; the session is found from the calling process, or --ses
                     [--activity "<text>"] [--branch <name>] [--commit <sha>] [--after "<name>"]...
   agent-desk service <name> <http://localhost:PORT/...>    agent-desk service <name> --stop
   agent-desk interpret "<how the latest answer was understood>"
+  agent-desk decisions [--search "<words>"] [--project <folder or name>] [--limit N] [--permissions] [--dismissed] [--json]
+                    what the session's project already decided, newest first (${DECISIONS_SHOWN} by default): each
+                    answer verbatim with how it was understood, and the decisions reported with results
 
 Reading and serving:
   agent-desk needs            open questions, oldest first
@@ -131,6 +140,29 @@ const COMMANDS: Record<string, Command> = {
     print(`interpretation recorded on ${q.id}`);
   },
 
+  decisions(args, store) {
+    const { values } = parse(
+      args,
+      {
+        project: { type: "string" },
+        search: { type: "string" },
+        limit: { type: "string" },
+        permissions: { type: "boolean" },
+        dismissed: { type: "boolean" },
+        json: { type: "boolean" },
+      },
+      0,
+    );
+    const limit = values.limit === undefined ? DECISIONS_SHOWN : int(/^\d+$/.test(values.limit) ? Number(values.limit) : values.limit, "--limit", 1, DECISIONS_MAX);
+    const search = values.search === undefined ? undefined : nonEmpty(values.search, "--search", 500);
+    const { project, unknown } = decisionsProject(store, values.project, values.session);
+    const problems: string[] = [];
+    const found = store.decisions(compact({ project, search, limit, permissions: values.permissions, unanswered: values.dismissed }), problems);
+    if (found.projects.length === 0) throw new InputError(unknown());
+    for (const problem of problems) process.stderr.write(`agent-desk decisions: skipped an unreadable record: ${problem}\n`);
+    print(values.json ? JSON.stringify({ ...found, problems }, null, 2) : describeDecisions(found, search, limit));
+  },
+
   needs(args, store) {
     parse(args, {}, 0);
     const sessions = new Map(store.listSessions().map((s) => [s.id, s]));
@@ -196,6 +228,13 @@ function parse<O extends NonNullable<ParseArgsConfig["options"]>>(args: string[]
  * process is an ancestor of this one (a session's commands run as its descendants).
  */
 function resolveSession(store: Store, flag: string | undefined): string {
+  const found = callingSession(store, flag);
+  if (found === undefined) throw new InputError("this command does not run inside a registered session; pass --session ID (the session registers when its first hook runs)");
+  return found;
+}
+
+/** The calling session as `resolveSession` finds it, or undefined when no registered session runs this command. */
+function callingSession(store: Store, flag: string | undefined): string | undefined {
   const explicit = flag ?? (process.env.AGENT_DESK_SESSION || undefined);
   if (explicit !== undefined) {
     const sessionId = id(explicit, "--session");
@@ -206,9 +245,73 @@ function resolveSession(store: Store, flag: string | undefined): string {
   const found = store
     .listSessions()
     .filter((s) => s.state !== "ended" && s.process && mine.has(s.process.pid) && isAlive(s.process.pid, s.process.start));
-  if (found.length === 1 && found[0]) return found[0].id;
   if (found.length > 1) throw new InputError(`several sessions match this process (${found.map((s) => s.id).join(", ")}); pass --session ID`);
-  throw new InputError("this command does not run inside a registered session; pass --session ID (the session registers when its first hook runs)");
+  return found[0]?.id;
+}
+
+/**
+ * The project whose decisions are listed: --project (a folder when it holds a "/" or is "." or "..",
+ * else a name), the calling session's, or the one the current folder is in. `unknown` says why none matched.
+ */
+function decisionsProject(store: Store, flag: string | undefined, session: string | undefined): { project: DecisionQuery["project"]; unknown: () => string } {
+  if (flag !== undefined) {
+    const value = nonEmpty(flag, "--project", 4096);
+    if (value === "." || value === ".." || value.includes("/")) {
+      const dir = path.resolve(value);
+      return { project: { dir }, unknown: () => `--project: no session in the store ran in ${dir}, a folder inside it or one holding it` };
+    }
+    const unknown = () => {
+      const known = [...new Set(store.listSessions().map((s) => s.project.name))].sort();
+      return `--project: no project named ${JSON.stringify(value)} in the store (known: ${known.join(", ") || "none"}); a folder is given with a "/"`;
+    };
+    return { project: { name: value }, unknown };
+  }
+  const own = callingSession(store, session);
+  const dir = own === undefined ? process.cwd() : store.getSession(own)?.project.dir;
+  if (dir === undefined) throw new Error(`session ${own} left the store while it was read; run the command again`);
+  const unknown = () => (own === undefined ? `this command does not run inside a registered session, and no session in the store ran in ${dir}, a folder inside it or one holding it; pass --project <folder or name>` : `no session in the store ran in ${dir}`);
+  return { project: { dir }, unknown };
+}
+
+/** The listing a session reads: one block per decision, newest first, each answer verbatim. */
+function describeDecisions(found: { decisions: Decision[]; total: number; projects: { name: string; dir: string }[] }, search: string | undefined, limit: number): string {
+  const where = found.projects.map((p) => `${p.name} (${p.dir})`).join(", ");
+  const matching = search === undefined ? "" : ` matching ${JSON.stringify(search)}`;
+  if (found.total === 0) return `No decisions recorded in ${where}${matching}.`;
+  const blocks = found.decisions.map((d) => {
+    const who = `session ${d.session.title === undefined ? d.session.id : `${JSON.stringify(d.session.title)} (${d.session.id})`}`;
+    const when = `${d.at.slice(0, 10)} ${d.at.slice(11, 16)}Z`;
+    if (d.source === "result") {
+      return [`${when} · ${who} · decided by the session, reported with its result ${JSON.stringify(d.result.title)}`, ...d.result.decisions.map((x) => `  - ${indented(x)}`)].join("\n");
+    }
+    const q = d.question;
+    const lines = [`${when} · ${who}${q.kind === "permission" ? " · permission prompt" : ""}`, `  Asked: ${headline(q.text)}`];
+    if (q.options.length > 0) lines.push(`  Options: ${q.options.join(" | ")}`);
+    lines.push(q.answer === undefined ? `  Answer: none (${q.status === "dismissed" ? "dismissed" : "closed without an answer"})` : `  Answer: ${indented(cut(q.answer.text))}`);
+    if (q.interpretation !== undefined) lines.push(`  Understood as: ${indented(q.interpretation)}`);
+    return lines.join("\n");
+  });
+  const left = found.total - found.decisions.length;
+  return [
+    `Decisions in ${where}${matching}, newest first: ${found.decisions.length} of ${found.total}.`,
+    ...blocks,
+    ...(left > 0 ? [`${left} older not shown; narrow with --search or raise --limit (now ${limit}).`] : []),
+  ].join("\n\n");
+}
+
+/** A question's first line, at most 300 characters. */
+function headline(value: string): string {
+  const first = value.trim().split("\n")[0] ?? "";
+  return first.length > 300 ? `${first.slice(0, 299)}…` : first;
+}
+
+function cut(value: string): string {
+  return value.length > ANSWER_SHOWN ? `${value.slice(0, ANSWER_SHOWN)}… (${value.length - ANSWER_SHOWN} more characters; --json shows it whole)` : value;
+}
+
+/** Continuation lines of a multi-line text, indented under their block. */
+function indented(value: string): string {
+  return value.replace(/\n/g, "\n    ");
 }
 
 /** Lines piped to stdin, read once and handed out in order (for scripts that set the PIN). */

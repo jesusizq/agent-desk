@@ -31,6 +31,11 @@ if (task === "increment") {
   for (let i = 0; i < Number(count); i++) store.renameAgent("s1", "worker", "build-api");
 } else if (task === "report") {
   for (let i = 0; i < Number(count); i++) store.upsertAgent("s1", "build-api", { summary: "Builds the API" });
+} else if (task === "decide") {
+  for (let i = 0; i < Number(count); i++) {
+    const asked = store.ask({ sessionId: "s1", kind: "question", text: `Decided ${process.pid}-${i}?` });
+    store.closeOpen("s1", { answer: `yes ${process.pid}-${i}`, which: (q) => q.id === asked.id });
+  }
 } else {
   throw new Error(`unknown task ${task}`);
 }

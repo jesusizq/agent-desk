@@ -108,6 +108,31 @@ it works, both reach the session. When the session ends, the question is dismiss
 | `interpret "<text>"` | how the session understood its latest answer |
 | `scan <project dir> [--if-older-than S]` | measures the project's checkouts with read-only git and a file walk; sizes are re-measured at most hourly |
 
+What a session reads: `decisions [--search "<words>"] [--project <folder or name>] [--limit N]
+[--permissions] [--dismissed] [--json]`, what its project already decided, newest first, so it does
+not ask the developer again. It writes nothing.
+
+- **A decision** is a closed question with an answer (`question` and `waiting` kinds), with its
+  interpretation, or the `--decision` lines a session reported with a result, marked as decided by
+  the session. Permission prompts come with `--permissions`; questions closed without an answer
+  (dismissed, or the session moved on) with `--dismissed`.
+- **The project** is `--project`, where a value with a `/` (or `.`, `..`) is a folder and any other
+  a project name; without it, the calling session's project folder, or, outside a session, the
+  current folder. A folder stands for the deepest recorded project folder holding it, with the
+  sessions of every project folder inside that (its worktrees); a name, every project of that name.
+  No matching session is an input error.
+- **Search** keeps the decisions holding every word, ignoring case and accents, in the question, its
+  context, options, answer, interpretation, the session's title, or the result's title, summary and
+  decisions.
+- **Sources:** `questions/closed/`, `results/` and `sessions/`, then the same folders under
+  `archive/`, so decisions older than 60 days still count; a record archived between the two reads
+  is found in the second. A file that fails to read is skipped and named on stderr (in `problems`
+  with `--json`).
+- **Output:** 20 decisions by default (`--limit` 1–500), each with its date (UTC), session, question
+  headline, options, the answer verbatim (cut at 1000 characters, with the count of the rest) and the
+  interpretation; then how many were left out. `--json` gives `{ decisions, total, projects,
+  problems }` with the whole records.
+
 Exit code 2 means the input was wrong (the message says which part and why); 1 means anything else.
 
 ## HTTP

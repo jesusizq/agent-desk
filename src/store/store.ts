@@ -70,6 +70,24 @@ export type ResultInput = {
   checks?: { criterion: string; verification: string }[];
 };
 
+export type DecisionQuery = {
+  /** A folder (the recorded project it is in, with every project folder inside that) or a project's name. */
+  project: { dir: string } | { name: string };
+  /** Words that must all occur, ignoring case and accents. */
+  search?: string;
+  permissions?: boolean;
+  /** Also questions closed without an answer (dismissed, or the session moved on). */
+  unanswered?: boolean;
+  limit: number;
+};
+
+export type DecisionSession = { id: string; title?: string; project: Session["project"] };
+
+/** An answered question, or the decisions a session reported with a result. `at`: when it was decided. */
+export type Decision =
+  | { source: "question"; at: string; session: DecisionSession; question: Question }
+  | { source: "result"; at: string; session: DecisionSession; result: Result };
+
 export const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 export const IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" } as const;
 export type ImageExt = keyof typeof IMAGE_TYPES;
@@ -860,6 +878,57 @@ export class Store {
     }
   }
 
+  // ── Decisions ───────────────────────────────────────────────────────────
+
+  /**
+   * What was decided in a project, newest first: questions answered (also archived ones) and the
+   * decisions sessions reported with their results. Permission prompts, and questions closed without
+   * an answer, only when asked for. `total` counts every match, `decisions` holds the first `limit`.
+   */
+  decisions(query: DecisionQuery, problems?: string[]): { decisions: Decision[]; total: number; projects: Session["project"][] } {
+    const members = projectSessions(this.everySession(problems), query.project);
+    const words = query.search === undefined ? [] : fold(query.search).split(/\s+/).filter(Boolean);
+    const matches = (...hay: (string | undefined)[]) => {
+      const folded = fold(hay.filter((h) => h !== undefined).join("\n"));
+      return words.every((w) => folded.includes(w));
+    };
+    const found: Decision[] = [];
+    for (const q of this.everyRecord(this.paths.questionDir("closed"), readQuestion, problems)) {
+      const session = members.get(q.sessionId);
+      if (!session || q.status === "open") continue;
+      if (q.kind === "permission" && !query.permissions) continue;
+      if ((q.status === "dismissed" || q.answer === undefined) && !query.unanswered) continue;
+      if (!matches(q.text, q.context, ...q.options, q.answer?.text, q.interpretation, session.title)) continue;
+      found.push({ source: "question", at: q.answer?.at ?? q.closedAt ?? q.askedAt, session, question: q });
+    }
+    for (const r of this.everyRecord(this.paths.resultsDir, readResult, problems)) {
+      const session = members.get(r.sessionId);
+      if (!session || r.decisions.length === 0 || !matches(r.title, r.summary, ...r.decisions, session.title)) continue;
+      found.push({ source: "result", at: r.at, session, result: r });
+    }
+    const key = (d: Decision) => (d.source === "question" ? d.question.id : d.result.id);
+    found.sort((a, b) => b.at.localeCompare(a.at) || key(b).localeCompare(key(a)));
+    const projects = new Map([...members.values()].map((s) => [`${s.project.name}\n${s.project.dir}`, s.project]));
+    return { decisions: found.slice(0, query.limit), total: found.length, projects: [...projects.values()].sort((a, b) => a.dir.localeCompare(b.dir)) };
+  }
+
+  /** Live sessions and archived ones, which past decisions still belong to. */
+  private everySession(problems?: string[]): DecisionSession[] {
+    return this.everyRecord(this.paths.sessionsDir, readSession, problems).map((s) => compact({ id: s.id, title: s.title, project: s.project }));
+  }
+
+  /**
+   * The records of a store folder and of its copy under archive/, one per id. The live folder is read
+   * first: a record archived meanwhile moves from it to the archive, so it is seen in one of them.
+   */
+  private everyRecord<T extends { id: string }>(dir: string, read: (value: unknown, where: string) => T, problems?: string[]): T[] {
+    const byId = new Map<string, T>();
+    for (const where of [dir, this.paths.archived(dir)]) {
+      for (const record of this.readAll(where, read, problems)) if (!byId.has(record.id)) byId.set(record.id, record);
+    }
+    return [...byId.values()];
+  }
+
   // ── Whole view ──────────────────────────────────────────────────────────
 
   snapshot(): Snapshot {
@@ -926,6 +995,26 @@ const MESSAGES_KEPT = 500;
 /** A prompt can be a pasted log; the history keeps a bounded copy of it. */
 function bounded(answer: string): string {
   return answer.length > ANSWER_MAX ? `${answer.slice(0, ANSWER_MAX - 1)}…` : answer;
+}
+
+/** The sessions of a project, by id. A folder stands for the deepest recorded project folder holding it. */
+function projectSessions(sessions: DecisionSession[], project: DecisionQuery["project"]): Map<string, DecisionSession> {
+  if ("name" in project) return new Map(sessions.filter((s) => s.project.name === project.name).map((s) => [s.id, s]));
+  const dir = path.resolve(project.dir);
+  const holding = sessions.map((s) => path.resolve(s.project.dir)).filter((d) => within(dir, d));
+  const root = holding.sort((a, b) => b.length - a.length)[0] ?? dir;
+  return new Map(sessions.filter((s) => within(path.resolve(s.project.dir), root)).map((s) => [s.id, s]));
+}
+
+/** `dir` is `root` or a folder inside it. */
+function within(dir: string, root: string): boolean {
+  const rel = path.relative(root, dir);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+/** Text compared without case or accents ("Decisión" finds "decision"). */
+function fold(value: string): string {
+  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 }
 
 function imageType(data: Buffer): ImageExt | undefined {

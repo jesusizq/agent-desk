@@ -111,6 +111,28 @@ To try the page with made-up sessions, without touching your data:
 dir=$(mktemp -d) && node scripts/demo.ts "$dir" && AGENT_DESK_HOME="$dir" agent-desk serve --port 7431
 ```
 
+## Decisions a session can look up
+
+Every answer you gave is kept with its date and how the session understood it. A session, or you,
+reads what its project already decided, newest first, instead of asking again:
+
+```sh
+agent-desk decisions --search "vat rounding"   # every word, any case or accent; 20 shown, --limit N
+agent-desk decisions --project invoices-api    # another project, by name or by folder
+```
+
+```text
+Decisions in invoices-api (/home/demo/Projects/invoices-api), newest first: 1 of 1.
+
+2026-11-10 08:32Z · session "VAT rounding" (demo-iva)
+  Asked: Number invoices with one series per year?
+  Answer: Yes, one series per year
+  Understood as: Format 2026-0001; the counter restarts at 1 every 1 January.
+```
+
+It also lists the decisions sessions reported with their results, and the ones archived after 60
+days. `--json` gives the whole records; details in [docs/protocol.md](docs/protocol.md#cli).
+
 ## Send keys to a session (tmux)
 
 Sessions that run inside tmux get a **Terminal** section in their window, under **More**. Its buttons

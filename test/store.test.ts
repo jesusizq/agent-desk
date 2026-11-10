@@ -508,3 +508,124 @@ describe("agents and results", () => {
     assert.deepEqual(store.listServices(), []);
   });
 });
+
+describe("decisions", () => {
+  const decide = (store: Store, sessionId: string, text: string, answer: string) => {
+    const q = store.ask({ sessionId, kind: "question", text });
+    store.closeOpen(sessionId, { answer, which: (x) => x.id === q.id });
+    return q.id;
+  };
+  const texts = (found: ReturnType<Store["decisions"]>) => found.decisions.map((d) => (d.source === "question" ? d.question.text : d.result.title));
+
+  it("keeps to the project: the folder holding the one given, the folders inside it, or every project of that name", () => {
+    const store = testStore();
+    addSession(store, "main");
+    store.upsertSession({ id: "tree", provider: "Test", project: { name: "pay-tree", dir: "/work/shop/.worktrees/pay" } });
+    store.upsertSession({ id: "blog", provider: "Test", project: { name: "blog", dir: "/work/blog" } });
+    store.upsertSession({ id: "twin", provider: "Test", project: { name: "shop", dir: "/other/shop" } });
+    decide(store, "main", "Main?", "a");
+    decide(store, "tree", "Worktree?", "b");
+    decide(store, "blog", "Blog?", "c");
+    decide(store, "twin", "Twin?", "d");
+    const all = { limit: 50 };
+    assert.deepEqual(texts(store.decisions({ ...all, project: { dir: "/work/shop/src/deep" } })), ["Worktree?", "Main?"]);
+    assert.deepEqual(texts(store.decisions({ ...all, project: { dir: "/work/shop/.worktrees/pay" } })), ["Worktree?"]);
+    assert.deepEqual(texts(store.decisions({ ...all, project: { name: "shop" } })), ["Twin?", "Main?"]);
+    assert.deepEqual(texts(store.decisions({ ...all, project: { dir: "/work/shopping" } })), [], "a sibling whose name starts the same is another project");
+    assert.deepEqual(store.decisions({ ...all, project: { dir: "/work/shop" } }).projects, [
+      { name: "shop", dir: "/work/shop" },
+      { name: "pay-tree", dir: "/work/shop/.worktrees/pay" },
+    ]);
+    assert.deepEqual(store.decisions({ ...all, project: { dir: "/nowhere" } }).projects, []);
+  });
+
+  it("lists answers and the decisions reported with results, newest first, and leaves out prompts and unanswered questions unless asked", () => {
+    const store = testStore();
+    addSession(store);
+    decide(store, "s1", "Bars or line?", "Bars");
+    store.addResult({ sessionId: "s1", title: "Chart", url: "http://localhost:5173", decisions: ["Indigo bars"] });
+    store.addResult({ sessionId: "s1", title: "No decision in it", url: "http://localhost:5173" });
+    store.ask({ sessionId: "s1", kind: "permission", text: "Run rm -rf dist?", options: ["Allow", "Deny"] });
+    store.closeOpen("s1", { kinds: ["permission"] });
+    store.dismiss(store.ask({ sessionId: "s1", kind: "question", text: "Dismissed?" }).id);
+    store.ask({ sessionId: "s1", kind: "question", text: "Moved on?" });
+    store.closeOpen("s1", {});
+    const turn = store.ask({ sessionId: "s1", kind: "waiting", text: "Deploy now?" });
+    store.closeOpen("s1", { answer: "Tomorrow", which: (q) => q.id === turn.id });
+    store.ask({ sessionId: "s1", kind: "question", text: "Still open?" });
+    const project = { dir: "/work/shop" };
+    assert.deepEqual(texts(store.decisions({ project, limit: 50 })), ["Deploy now?", "Chart", "Bars or line?"]);
+    assert.deepEqual(texts(store.decisions({ project, limit: 50, permissions: true, unanswered: true })), ["Deploy now?", "Moved on?", "Dismissed?", "Run rm -rf dist?", "Chart", "Bars or line?"]);
+  });
+
+  it("finds every word searched for, whatever its case or accents, in the question, its answer or how it was understood", () => {
+    const store = testStore();
+    addSession(store);
+    decide(store, "s1", "¿Redondeo por línea?", "Sí, como el PDF");
+    decide(store, "s1", "Which font?", "Inter");
+    store.interpret("s1", "Inter for the body, at 16 px");
+    store.addResult({ sessionId: "s1", title: "Invoice PDF", url: "http://localhost:5173", decisions: ["Totals in bold"] });
+    const found = (search: string) => texts(store.decisions({ project: { dir: "/work/shop" }, search, limit: 50 }));
+    assert.deepEqual(found("LINEA redondeo"), ["¿Redondeo por línea?"]);
+    assert.deepEqual(found("pdf"), ["Invoice PDF", "¿Redondeo por línea?"]);
+    assert.deepEqual(found("body 16"), ["Which font?"]);
+    assert.deepEqual(found("bold"), ["Invoice PDF"]);
+    assert.deepEqual(found("font serif"), [], "every word must occur");
+  });
+
+  it("returns the newest up to the limit and counts all of them", () => {
+    const store = testStore();
+    addSession(store);
+    for (let i = 0; i < 7; i++) decide(store, "s1", `Q${i}?`, `A${i}`);
+    const found = store.decisions({ project: { dir: "/work/shop" }, limit: 3 });
+    assert.deepEqual(texts(found), ["Q6?", "Q5?", "Q4?"]);
+    assert.equal(found.total, 7);
+  });
+
+  it("remembers decisions moved to the archive, with their archived session", () => {
+    let now = Date.parse("2026-01-01T00:00:00.000Z");
+    const store = new Store(tempHome(), () => new Date((now += 1000)));
+    addSession(store, "old");
+    decide(store, "old", "Old choice?", "Keep it");
+    store.addResult({ sessionId: "old", title: "Old result", url: "http://localhost:5173", decisions: ["Kept"] });
+    store.updateSession("old", (s) => ({ ...s, state: "ended" }));
+    now = Date.parse("2026-04-01T00:00:00.000Z");
+    assert.deepEqual(store.archiveOlderThan(new Date("2026-03-01T00:00:00.000Z")), { questions: 1, results: 1, sessions: 1, images: 0 });
+    assert.deepEqual(texts(store.decisions({ project: { dir: "/work/shop" }, limit: 10 })), ["Old result", "Old choice?"]);
+  });
+
+  it("skips and reports a malformed record when problems are collected, and throws otherwise", () => {
+    const store = testStore();
+    addSession(store);
+    decide(store, "s1", "Fine?", "yes");
+    fs.writeFileSync(path.join(store.paths.questionDir("closed"), "q-broken.json"), '{"id": "q-broken", "sess');
+    fs.mkdirSync(store.paths.resultsDir);
+    fs.writeFileSync(path.join(store.paths.resultsDir, "r-bad.json"), JSON.stringify({ id: "r-bad", sessionId: "s1", title: "", status: "ok", at: "2026-01-01T00:00:00.000Z" }));
+    fs.writeFileSync(path.join(store.paths.sessionsDir, "s-bad.json"), "[]");
+    const problems: string[] = [];
+    assert.deepEqual(texts(store.decisions({ project: { dir: "/work/shop" }, limit: 10 }, problems)), ["Fine?"]);
+    assert.equal(problems.length, 3);
+    assert.match(problems.join("\n"), /q-broken\.json: not valid JSON/);
+    assert.match(problems.join("\n"), /r-bad\.json\.title/);
+    assert.throws(() => store.decisions({ project: { dir: "/work/shop" }, limit: 10 }), /not valid JSON|expected/);
+  });
+
+  it("reads every decision whole while processes record new ones", async () => {
+    const store = testStore();
+    addSession(store);
+    const writing = workers(store.paths.home, "decide", 20, 4);
+    let done = false;
+    void writing.finally(() => (done = true));
+    let reads = 0;
+    while (!done || reads === 0) {
+      const problems: string[] = [];
+      const found = store.decisions({ project: { dir: "/work/shop" }, limit: 500 }, problems);
+      assert.deepEqual(problems, []);
+      for (const d of found.decisions) assert.ok(d.source === "question" && d.question.answer?.text.startsWith("yes "));
+      reads++;
+      await new Promise((r) => setImmediate(r));
+    }
+    await writing;
+    assert.equal(store.decisions({ project: { dir: "/work/shop" }, limit: 500 }).total, 80);
+  });
+});
