@@ -2546,7 +2546,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       try {
         const page = await open();
         await page.click(".qrow", "Which way after reading?");
-        await page.waitFor("document.querySelector('.next')?.textContent.includes('Which way after reading?') && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelector('.next')?.textContent.includes('Which way after reading?') && ${STILL}`);
         const order = (scope: string) =>
           page.eval<string[]>(`[...document.querySelectorAll('${scope} :is(.qtext, .qctx, .opts, textarea)')].map((el) => el.matches('.qtext') ? 'title' : el.matches('.qctx') ? 'context' : el.matches('.opts') ? 'options' : 'box')`);
         assert.deepEqual(await order(".next"), ["title", "context", "options", "box"]);
@@ -2560,7 +2560,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.waitFor("!document.getElementById('session').open");
         // Only a huge message folds, from its end: its start reads as written.
         await page.click(".qrow", "Which way after a huge message?");
-        await page.waitFor("document.querySelector('.next')?.textContent.includes('after a huge message') && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelector('.next')?.textContent.includes('after a huge message') && ${STILL}`);
         assert.equal(await page.eval<boolean>("document.querySelector('.next .qctx').classList.contains('folded')"), true);
         assert.match(await page.eval<string>("document.querySelector('.next .qctx').firstElementChild.textContent"), /^Huge line 1\./);
         assert.equal(await page.eval<number>("document.querySelector('.next .qctx').scrollTop"), 0);
@@ -2579,7 +2579,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       try {
         const page = await open();
         await page.click(".qrow", "Answered with one click?");
-        await page.waitFor("document.querySelector('.next')?.textContent.includes('Answered with one click?') && document.querySelector('.next .opts button:not([disabled])') && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelector('.next')?.textContent.includes('Answered with one click?') && document.querySelector('.next .opts button:not([disabled])') && ${STILL}`);
         assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.next .opts button')].map((b) => b.getAttribute('aria-label'))"), ["Answer: Yes, at once", "Answer: No"]);
         await page.click(".next .opts button", "Yes, at once");
         await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Yes, at once')");
@@ -2597,7 +2597,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       try {
         const page = await open();
         await page.click(".qrow", "Picked with a digit?");
-        await page.waitFor("document.querySelector('.next')?.textContent.includes('Picked with a digit?') && document.querySelector('.next textarea:not([readonly])') && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelector('.next')?.textContent.includes('Picked with a digit?') && document.querySelector('.next textarea:not([readonly])') && ${STILL}`);
         await page.eval("document.activeElement.blur()");
         for (const type of ["rawKeyDown", "char", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "2", code: "Digit2", text: type === "char" ? "2" : undefined, windowsVirtualKeyCode: 50 });
         await page.waitFor("document.querySelector('.next textarea').value === 'Second' && document.activeElement === document.querySelector('.next textarea')");
@@ -2619,7 +2619,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       try {
         const page = await openPhone();
         await page.click(".qrow", "Answered with a tap?");
-        await page.waitFor("document.querySelector('.next')?.textContent.includes('Answered with a tap?') && document.querySelector('.next .opts button:not([disabled])') && document.getAnimations().length === 0");
+        await page.waitFor(`document.querySelector('.next')?.textContent.includes('Answered with a tap?') && document.querySelector('.next .opts button:not([disabled])') && ${STILL}`);
         await page.eval("document.querySelector('.next').scrollIntoView()");
         await page.tap(".next .opts button", "Tapped");
         await page.waitFor("document.querySelector('.next.resolved')?.textContent.includes('Tapped')");
