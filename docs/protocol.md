@@ -146,6 +146,7 @@ Tailscale host and login (`SECURITY.md`).
 | --- | --- |
 | `GET /` and `/app.js` with the modules it imports (`src/web/*.js`, each listed in `STATIC`), `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
 | `GET /api/state` | `DeskState`: every record (a closed question without its context), plus `gone`, `listening`, `disk` and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
+| `GET /api/events` | server-sent events: `changed` with the state's version (the ETag of `/api/state`) on opening and at each change, never the state itself; a `: ping` comment every 20 s; 32 streams at most (503 past them); a remote device's stream ends when its unlock does |
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |
 | `POST /api/sessions/<id>/keys` `{ "action": "compact" \| "interrupt" \| "enter" \| "option-1"…"option-5" }` | sends those keys to the session's tmux pane (see `.claude/rules/security.md`) |
@@ -162,3 +163,25 @@ Tailscale host and login (`SECURITY.md`).
 
 Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header
 `X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most, except an image.
+
+### How the page follows the store
+
+- **Changes.** While a stream is open, the server watches the store's folders (`Store.stateDirs`)
+  and computes the state's version 100 ms after a change, and again every 1.5 s for what no file
+  says: a session's process that died, a listener that died, a held question shown after 5 minutes.
+  A `changed` event goes out only when the version differs. With no stream open it does neither.
+- **One stream per browser.** The tab holding the Web Lock `agent-desk:events` opens the stream and
+  passes each version to the other tabs over a `BroadcastChannel`; when it closes, another tab takes
+  the lock and opens its own. A browser keeps six connections per host over HTTP/1.1, so a stream
+  per tab would leave the seventh tab's requests waiting.
+- **Polling behind it.** The page fetches `/api/state` at each version it does not show, and every
+  15 s anyway, which also notices a stream gone quiet (a computer asleep). Without a working stream
+  (no EventSource, 3 failures in a row, no first event within 10 s) it polls every 1.5 s and tries
+  the stream again after 30 s, doubling up to 5 minutes, or at once when the desk answers again.
+  `<html data-live="stream|poll">` says which.
+- **Offline.** When `/api/state` fails or hangs 8 s, the page keeps the last state with "Offline ·
+  last update HH:MM" and why, every answer box turns inert with its draft kept, and it polls every
+  1.5 s until the desk answers. The service worker keeps the page and the last `/api/state` on the
+  device and serves them only when the network fails, hangs 5 s, or Tailscale Serve answers 502–504;
+  the page shows that copy as offline and read only. It never keeps a locked answer, and leaves the
+  event stream to the network.

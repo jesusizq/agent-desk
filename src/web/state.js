@@ -89,6 +89,7 @@ export const ui = {
   offline: false,
   /** the desk answered that this device is not allowed */ refused: false,
   /** @type {string | null} when the desk shown was saved on this device, while the computer does not answer */ savedAt: null,
+  /** @type {string | null} when the desk shown was last the desk's own, fresh or saved */ updatedAt: null,
   loaded: false,
   /** @type {string | null} the session shown in the side panel */ panelSession: null,
   /** @type {string | null} what the panel's session had said when its conversation was fetched */ panelHeard: null,

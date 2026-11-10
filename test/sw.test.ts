@@ -60,6 +60,25 @@ describe("service worker notifications", () => {
   });
 });
 
+describe("service worker requests", () => {
+  it("leaves the event stream to the network, never answering it from the device", () => {
+    const listeners = new Map<string, (e: unknown) => void>();
+    const origin = "http://127.0.0.1:7420";
+    vm.runInNewContext(SW.toString(), { self: { addEventListener: (type: string, fn: (e: unknown) => void) => listeners.set(type, fn), location: { origin } }, URL });
+    const answered = (path: string) => {
+      let taken = false;
+      const respondWith = (p: Promise<unknown>) => {
+        taken = true;
+        p.catch(() => {}); // the cache this sandbox lacks makes the answer fail; only whether the worker took the request matters
+      };
+      listeners.get("fetch")?.({ request: { method: "GET", url: origin + path }, respondWith });
+      return taken;
+    };
+    assert.equal(answered("/api/events"), false);
+    assert.equal(answered("/api/state"), true, "while the state is kept");
+  });
+});
+
 describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROME)" }, () => {
   let browser: Browser;
   let server: http.Server;

@@ -1,5 +1,5 @@
 // @ts-check
-// The desk page: polls the store through the local server and renders it. All strings live in text.js.
+// The desk page: follows the store through the local server and renders it. All strings live in text.js.
 // This entry draws the view and wires the page; each area lives in its own module.
 import { byId, dialog, patch } from "./dom.js";
 import { animateLists, fadeIn, stopLists } from "./motion.js";
@@ -14,11 +14,11 @@ import { noticeArrivals, remindWaiting } from "./notice.js";
 import { renewPush, watchPush } from "./push.js";
 import { headerMenu, sessionLink, toast } from "./pieces.js";
 import { openResult } from "./result.js";
-import { refresh, requestsWaiting } from "./server.js";
+import { follow } from "./live.js";
+import { refresh } from "./server.js";
 import { openSession, renderPanel } from "./session.js";
 import { data, itemKey, openItems, page, S, ui } from "./state.js";
 
-const POLL_MS = 1500;
 const TICK_MS = 30_000;
 
 /**
@@ -244,9 +244,7 @@ renderDisplay();
 render();
 await refresh();
 route();
-// A new poll every tick over one still waiting would make the waiting one stale, and a hung
-// connection would never get to report itself: only NO_ANSWER_MS bounds the wait.
-setInterval(() => requestsWaiting === 0 && refresh(), POLL_MS);
+follow();
 followKeyboard();
 // A phone puts a hidden tab's timers to sleep: coming back, the desk is fetched at once, not at the next tick.
 document.addEventListener("visibilitychange", () => document.hidden || refresh());

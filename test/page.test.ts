@@ -66,6 +66,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
   /** A dialog open and done moving in (on a phone it slides in from the side). */
   const arrived = (id: string) => `document.getElementById('${id}').open && !document.getElementById('${id}').getAnimations().length`;
   const openDialogs = (page: Page) => page.eval<string[]>("[...document.querySelectorAll('dialog[open]')].map((d) => d.id)");
+  /** The state fetched now: as at the stream's next change or its slow poll, which a stubbed fetch would wait for. */
+  const fetchNow = (page: Page) => page.eval("dispatchEvent(new Event('online'))");
 
   it("draws the oldest question large and every live session", async () => {
     const page = await open();
@@ -312,6 +314,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       const real = window.fetch;
       window.fetch = (url, init) => String(url) === "/api/state" ? Promise.resolve(new Response("{}", { status: 401, headers: { "X-Agent-Desk-Locked": "1" } })) : real(url, init);
     })()`);
+    await fetchNow(page);
     await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')");
     await page.click(".scard", "pin ended");
     await page.waitFor("document.querySelector('#session .chat-footer textarea')");
@@ -339,7 +342,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       window.realFetch = window.fetch;
       window.fetch = (url, init) => String(url) === "/api/state" ? Promise.resolve(new Response("{}", { status: 421 })) : window.realFetch(url, init);
     })()`);
-    await page.waitFor("document.querySelector('#strip .err')?.textContent.includes('not allowed')");
+    await fetchNow(page);
+    await page.waitFor("document.querySelector('#strip .offline')?.textContent.includes('not allowed')");
     const yesterday = new Date(Date.now() - 864e5).toISOString();
     await page.eval(`(() => {
       window.fetch = async (url, init) => {
@@ -348,9 +352,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         return new Response(await (await window.realFetch(url)).blob(), { headers });
       };
     })()`);
-    await page.waitFor("document.querySelector('#strip .err')?.textContent.includes('Last saved: Yesterday')");
+    await page.waitFor("document.querySelector('#strip .offline')?.textContent.includes('Offline · last update Yesterday')");
     await page.eval("window.fetch = window.realFetch");
-    await page.waitFor("!document.querySelector('#strip .err')");
+    await page.waitFor("!document.querySelector('#strip .offline')");
   });
 
   it("a hidden page notifies on the computer, and on a phone leaves it to the push, which carries no text", async () => {
@@ -417,10 +421,102 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       window.realFetch = window.fetch;
       window.fetch = (url, init) => String(url) === "/api/state" ? new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason))) : window.realFetch(url, init);
     })()`);
-    await page.waitFor("document.querySelector('#strip .err')?.textContent.includes('agent-desk serve')");
+    await fetchNow(page);
+    await page.waitFor("document.querySelector('#strip .offline')?.textContent.includes('agent-desk serve')");
     await page.waitFor("document.querySelector('#session .offline-line')?.textContent.includes('agent-desk serve')");
     await page.eval("window.fetch = window.realFetch");
-    await page.waitFor("!document.querySelector('#strip .err') && !document.querySelector('#session .offline-line')");
+    await page.waitFor("!document.querySelector('#strip .offline') && !document.querySelector('#session .offline-line')");
+  });
+
+  it("shows a question as soon as it is asked, told by the desk's event stream, with no poll at all", async () => {
+    const page = await browser.newPage(1400, 900);
+    pages.push(page);
+    // The poll's tick (live.js) taken away: only the event stream can bring the question.
+    await page.send("Page.addScriptToEvaluateOnNewDocument", { source: "const every = window.setInterval; window.setInterval = (fn, ms, ...rest) => (ms === 1500 ? 0 : every(fn, ms, ...rest));" });
+    await page.goto(base + "/");
+    await page.waitFor("document.querySelector('.next') && document.documentElement.dataset.live === 'stream'");
+    const q = store.ask({ sessionId: "demo-iva", kind: "question", text: "Told by the stream?" });
+    try {
+      await page.waitFor("document.querySelector('.col-needs')?.textContent.includes('Told by the stream?')");
+    } finally {
+      store.dismiss(q.id);
+    }
+    await page.waitFor("!document.querySelector('.col-needs')?.textContent.includes('Told by the stream?')");
+  });
+
+  it("shares one event stream among the tabs of a browser, handed to another tab when its tab closes", async () => {
+    const noPoll = "const every = window.setInterval; window.setInterval = (fn, ms, ...rest) => (ms === 1500 ? 0 : every(fn, ms, ...rest));";
+    const tab = async () => {
+      const page = await browser.newPage(1400, 900);
+      pages.push(page);
+      await page.send("Page.addScriptToEvaluateOnNewDocument", { source: noPoll });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('.next') && document.documentElement.dataset.live === 'stream'");
+      return page;
+    };
+    const first = await tab();
+    const second = await tab();
+    const streams = (page: Page) => page.eval<number[]>("navigator.locks.query().then((s) => [s.held.length, s.pending.length])");
+    assert.deepEqual(await streams(second), [1, 1], "one tab holds the stream, the other waits to take it over");
+    const shows =(text: string) => `document.querySelector('.col-needs')?.textContent.includes(${JSON.stringify(text)})`;
+    const q1 = store.ask({ sessionId: "demo-iva", kind: "question", text: "Heard in both tabs?" });
+    try {
+      await first.waitFor(shows("Heard in both tabs?"));
+      await second.waitFor(shows("Heard in both tabs?"));
+    } finally {
+      store.dismiss(q1.id);
+    }
+    await first.close();
+    pages.splice(pages.indexOf(first), 1);
+    const q2 = store.ask({ sessionId: "demo-iva", kind: "question", text: "Heard once the first tab closed?" });
+    try {
+      await second.waitFor(shows("Heard once the first tab closed?"));
+    } finally {
+      store.dismiss(q2.id);
+    }
+    assert.deepEqual(first.errors, [], "the closed tab reported no errors");
+  });
+
+  it("when the desk stops, keeps its last state marked offline, with answering off and the draft kept, and comes back by itself", async () => {
+    store.upsertSession({ id: "stopping", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "desk stopping", takesMessagesWhileWorking: true });
+    // A desk of its own, to stop and start again on the same port.
+    const own = await serve(store);
+    const { createDeskServer } = await import("../src/server/server.ts");
+    let back: http.Server | undefined;
+    try {
+      const page = await browser.newPage(1400, 900);
+      pages.push(page);
+      await page.goto(own.base + "/");
+      await page.waitFor("document.querySelector('.scard') && document.documentElement.dataset.live === 'stream'");
+      await page.click(".scard", "desk stopping");
+      await page.click("#session .chat-footer textarea");
+      await page.type("half a thought");
+      const box = "document.querySelector('#session .chat-footer textarea')";
+
+      await own.close();
+      await page.waitFor("document.querySelector('#strip .offline')?.textContent.includes('Offline · last update')");
+      assert.match(await page.eval<string>("document.querySelector('#strip .offline').textContent"), /agent-desk serve/, "and why");
+      assert.equal(await page.eval<string>("document.documentElement.dataset.live"), "poll", "polled while the stream is away");
+      await page.waitFor(`${box}?.readOnly`);
+      assert.deepEqual(
+        await page.eval(`[${box}.value, ${box}.placeholder, ${box}.getAttribute("aria-disabled"), document.querySelector('#session .chat-footer .send').disabled, document.querySelector('#session .send-hint').textContent]`),
+        ["half a thought", "Offline", "true", true, "Offline: it can be sent once the desk answers again."],
+        "the draft stays, nothing can be sent, and the box says why",
+      );
+      assert.ok(await page.eval<boolean>("document.querySelector('#session').textContent.includes('desk stopping') && !!document.querySelector('#session .offline-line')"), "the last state stays in view, marked");
+
+      back = createDeskServer(store, own.port);
+      await new Promise<void>((r) => back?.listen(own.port, "127.0.0.1", r));
+      await page.waitFor(`!document.querySelector('#strip .offline') && !${box}.readOnly && document.documentElement.dataset.live === 'stream'`, 10_000);
+      assert.equal(await page.eval<string>(`${box}.value`), "half a thought");
+      await page.press("Escape");
+      // The browser logs each request the stopped desk could not answer; nothing else may have gone wrong.
+      const unanswered = (e: string) => /^Failed to load resource: net::ERR_\w+ /.test(e) && e.includes(`${own.base}/api/`);
+      page.errors.splice(0, page.errors.length, ...page.errors.filter((e) => !unanswered(e)));
+    } finally {
+      back?.closeAllConnections();
+      await new Promise((r) => (back ? back.close(r) : r(undefined)));
+    }
   });
 
   it("shows a question asked during a turn only when the turn has finished writing it", async () => {
@@ -681,11 +777,12 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       window.realFetch = window.fetch;
       window.fetch = (url, init) => String(url) === "/api/state" ? new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason))) : window.realFetch(url, init);
     })()`);
-    await page.waitFor("document.querySelector('#strip .err')");
-    assert.ok(await page.eval<boolean>("document.querySelector('#strip .err').getBoundingClientRect().right <= innerWidth"), "the whole text is in view, with no sideways scroll");
-    assert.ok(await page.eval<boolean>("document.querySelector('#strip .err').getBoundingClientRect().height > 20"), "on several lines");
+    await fetchNow(page);
+    await page.waitFor("document.querySelector('#strip .offline')");
+    assert.ok(await page.eval<boolean>("document.querySelector('#strip .offline').getBoundingClientRect().right <= innerWidth"), "the whole text is in view, with no sideways scroll");
+    assert.ok(await page.eval<boolean>("document.querySelector('#strip .offline').getBoundingClientRect().height > 20"), "on several lines");
     await page.eval("window.fetch = window.realFetch");
-    await page.waitFor("!document.querySelector('#strip .err')");
+    await page.waitFor("!document.querySelector('#strip .offline')");
   });
 
   it("gives a table's long columns room to read, scrolling sideways when they do not fit", async () => {

@@ -268,12 +268,15 @@ export const TEXT = {
     cleanupNote: "The desk never removes anything: paste them in a terminal if you agree.",
   },
   offline: {
+    title: "Offline",
+    /** @param {string} at */
+    updated: (at) => `last update ${at}`,
+    answer: "Offline: it can be sent once the desk answers again.",
+    placeholder: "Offline",
     desk: "No connection to the desk: is \"agent-desk serve\" still running?",
     device: "This device has no connection.",
     refused: "This device is not allowed on this desk: sign in to Tailscale with the owner's account.",
     computer: "Can't reach the computer: it may be off or asleep, or Tailscale may be off on this device.",
-    /** @param {string} at */
-    saved: (at) => `Last saved: ${at}. Answers need the connection back.`,
   },
   /** @param {number} n */
   doneCount: (n) => `${n} done`,

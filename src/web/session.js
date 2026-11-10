@@ -12,7 +12,7 @@ import { fitNewBoxes, showNeedsYou } from "./layout.js";
 import { badge, bar, dialogHead, dot, goLink, LOCAL_URL, localLink, suggestionChip, where } from "./pieces.js";
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
-import { imageUrl, offlineText, post, run } from "./server.js";
+import { imageUrl, offlineNotice, offlineText, post, run } from "./server.js";
 import { asksOf, data, isLive, isNew, itemsOf, label, metricsOf, S, sessionName, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
@@ -275,7 +275,7 @@ export function chat(s) {
       "div",
       { class: "chat-footer" },
       // The window covers the strip that says it elsewhere.
-      ui.offline ? h("div", { class: "offline-line", role: "status" }, offlineText()) : null,
+      ui.offline ? offlineNotice("offline-line") : null,
       asking && lead
         ? h(
             "div",

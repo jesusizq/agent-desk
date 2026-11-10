@@ -582,7 +582,10 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 a.primary, a.secondary, a.row-go { text-decoration: none; }
 .problems { color: var(--danger); }
 .k-waiting { --c: var(--todo); } .k-dismissed { --c: var(--blocked); }
-.strip .err, .offline-line { color: var(--danger); font-weight: 600; }
+/* Offline is calm: nothing is wrong with the work, and the desk shown is the last one known. */
+.offline { color: var(--muted); }
+.offline b { color: var(--text); font-weight: 600; }
+.offline b::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--blocked); vertical-align: 1px; }
 .offline-line { font-size: 0.8125rem; margin-bottom: 8px; }
 .rrow .rbody { min-width: 0; }
 :is(button, a).primary[disabled], button.secondary[disabled], .answer .send-col .icon-btn[disabled] { opacity: .5; cursor: not-allowed; }
@@ -795,9 +798,9 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
   .strip > * { flex: none; }
   .strip .spacer { display: none; }
-  /* An error is read whole: it takes its own lines, and what follows wraps under it. */
-  .strip:has(.err) { flex-wrap: wrap; }
-  .strip .err { order: -2; flex: 1 1 100%; white-space: normal; }
+  /* Offline is read whole: it takes its own lines, and what follows wraps under it. */
+  .strip:has(.offline) { flex-wrap: wrap; }
+  .strip .offline { order: -2; flex: 1 1 100%; white-space: normal; }
   .strip .chip { order: -1; } /* warnings first: the summary repeats the Results count */
   .chip { max-width: 100%; min-width: 0; }
   .board { padding: 10px max(10px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); gap: 10px; }
@@ -916,8 +919,8 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .col-head { font-size: 1rem; padding: 4px 2px 8px; }
   #toasts { bottom: calc(var(--bar) + 12px + env(safe-area-inset-bottom)); left: 12px; right: 12px; width: auto; transform: none; align-items: stretch; }
   .toast { max-width: none; padding: 12px 14px; font-size: 0.875rem; border-radius: 10px; }
-  /* The strip (warnings, what is new to review) belongs with Inbox and Results; elsewhere it gives its room back, unless it reports an error. */
-  body:not([data-view="desk"][data-tab="inbox"]):not([data-view="desk"][data-tab="review"]) .strip:not(:has(.err)) { display: none; }
+  /* The strip (warnings, what is new to review) belongs with Inbox and Results; elsewhere it gives its room back, unless it says the desk is offline. */
+  body:not([data-view="desk"][data-tab="inbox"]):not([data-view="desk"][data-tab="review"]) .strip:not(:has(.offline)) { display: none; }
   /* The large card: kind and age on the first line, where it comes from on its own line below. */
   .next > .meta { flex-wrap: wrap; }
   .next > .meta > .where { order: 1; flex-basis: 100%; }

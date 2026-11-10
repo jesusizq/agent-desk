@@ -59,7 +59,10 @@ const denial = (decide, reason) => (!reason.trim() || reason.trim() === decide.a
  * @param {string} key `answer-<question id>` or `message-<session id>` @param {string[]} options @param {string} sid
  * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, several?: boolean, decide?: Decide | null, off?: string | null }} [how] `middle` is shown between the options and the box
  */
-export function replyBox(key, options, sid, { placeholder = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, decide = null, off = null } = {}) {
+export function replyBox(key, options, sid, { placeholder: asked = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, decide = null, off: why = null } = {}) {
+  // Offline, nothing can be sent: every box turns inert, and what is written in it stays.
+  const off = ui.offline ? TEXT.offline.answer : why;
+  const placeholder = ui.offline ? TEXT.offline.placeholder : asked;
   const route = routeOf(key);
   if (!route) throw new Error(`a reply box for ${key}, which names no question or session`);
   const boxes = () => boxesOf(key);

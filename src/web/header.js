@@ -7,7 +7,7 @@ import { ago, gb, hm } from "./format.js";
 import { markCut } from "./layout.js";
 import { projectMark } from "./pieces.js";
 import { mergedOf, openProject, projectsInView, sum, worthWarning } from "./projects.js";
-import { offlineText, post, run } from "./server.js";
+import { offlineNotice, post, run } from "./server.js";
 import { openSession } from "./session.js";
 import { asksOf, CONTEXT_WARN, data, endedUnseen, inbox, inProject, isLive, isNew, label, metricsOf, openItems, page, toReview, ui } from "./state.js";
 
@@ -143,7 +143,7 @@ export function renderStrip() {
     .filter(/** @returns {x is { s: Session, c: number }} */ (x) => x.c !== undefined && x.c >= CONTEXT_WARN);
   patch(
     byId("strip"),
-    ui.offline ? h("span", { class: "err" }, offlineText()) : null,
+    ui.offline ? offlineNotice("strip-offline") : null,
     // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear.
     ui.loaded ? h("span", { class: "muted" }, summary) : h("span", { class: "skel", "aria-hidden": "true" }),
     fresh.length ? h("button", { class: "linkish", onclick: () => run(post("/api/seen")) }, TEXT.markSeen) : null,

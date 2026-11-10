@@ -10,7 +10,8 @@ const SAVED_AT = "X-Agent-Desk-Saved-At";
 const NO_ANSWER_MS = 5000;
 /** What Tailscale Serve answers when the computer is up and the desk is not. */
 const DESK_DOWN = new Set([502, 503, 504]);
-/** The page, its files, the state, conversations and images: what the desk needs to draw itself. */
+/** The page, its files, the state, conversations and images: what the desk needs to draw itself. The
+ * event stream (/api/events) is not among them: it always goes to the network and is never kept. */
 const KEPT = /^\/(?:|[\w-]+\.(?:js|css|svg|png|webmanifest)|api\/state|api\/sessions\/[\w-]+\/messages|images\/[\w.-]+)$/;
 
 sw.addEventListener("install", () => sw.skipWaiting());

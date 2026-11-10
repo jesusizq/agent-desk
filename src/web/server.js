@@ -1,7 +1,8 @@
 // @ts-check
-// Talking to the desk server: the state polled, writes with the secret, and the drafts kept on this device.
+// Talking to the desk server: the state fetched, writes with the secret, and the drafts kept on this device.
+import { h } from "./dom.js";
 import { TEXT } from "./text.js";
-import { dayLabel } from "./format.js";
+import { stamp } from "./format.js";
 import { toast } from "./pieces.js";
 import { data, ID, ON_THIS_MACHINE, page, S, secret, setData, ui } from "./state.js";
 
@@ -73,9 +74,14 @@ function offlineReason() {
   if (ui.refused) return TEXT.offline.refused;
   return ON_THIS_MACHINE ? TEXT.offline.desk : navigator.onLine ? TEXT.offline.computer : TEXT.offline.device;
 }
-export function offlineText() {
-  return ui.savedAt ? `${offlineReason()} ${TEXT.offline.saved(dayLabel(ui.savedAt))}` : offlineReason();
+/** What is shown while the desk does not answer: how old the desk shown is, then why. */
+function offlineHead() {
+  const when = ui.updatedAt ? TEXT.offline.updated(stamp(ui.updatedAt)) : null;
+  return [ui.refused ? null : TEXT.offline.title, when].filter(Boolean).join(" · ");
 }
+export const offlineText = () => [offlineHead(), offlineReason()].filter(Boolean).join(" · ");
+/** The calm banner that says so, in the strip or a window. @param {string} cls */
+export const offlineNotice = (cls) => h("div", { class: `offline ${cls}`, role: "status" }, h("b", {}, offlineHead()), " ", h("span", { class: "why" }, offlineReason()));
 
 /** @param {string} route @param {unknown} [body] */
 export async function post(route, body = {}) {
@@ -96,6 +102,12 @@ let etag = "";
 let loadedBuild = null;
 let latestRequest = 0;
 export let requestsWaiting = 0;
+/** When the state was last asked for, by the poll or a change. */
+export let askedAt = 0;
+/** The desk says its state is now `version` (its ETag): fetched unless it is what is shown. @param {string} version */
+export function changed(version) {
+  if (version !== etag) refresh();
+}
 const SAVED_AT = "X-Agent-Desk-Saved-At";
 export async function refresh() {
   const request = ++latestRequest;
@@ -104,6 +116,7 @@ export async function refresh() {
   /** @type {DeskState | null} */
   let next = null;
   requestsWaiting++;
+  askedAt = Date.now();
   try {
     const res = await fetch("/api/state", { headers: etag ? { "If-None-Match": etag } : {}, signal: AbortSignal.timeout(NO_ANSWER_MS) });
     if (needsPin(res)) return location.reload();
@@ -115,13 +128,14 @@ export async function refresh() {
       if (request === latestRequest && !savedAt) etag = res.headers.get("ETag") ?? "";
     }
   } catch {
-    if (request === latestRequest) setOffline(true); // shown in the strip; polling continues
+    if (request === latestRequest) setOffline(true); // shown in the strip; the poll goes on, and tells when it is back
     return;
   } finally {
     requestsWaiting--;
   }
   if (request !== latestRequest) return; // a newer request answers instead; this one may be stale
   ui.savedAt = savedAt;
+  ui.updatedAt = savedAt ?? new Date().toISOString();
   if (savedAt) {
     // The computer does not answer and the device shows the desk it saved (sw.js): read only.
     if (next) {
