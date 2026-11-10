@@ -1119,7 +1119,6 @@ export async function waitForPermission(sessionId: string, questionId: string, s
   }
 }
 
-/** The answer goes to Claude exactly as the developer typed it, framed so it is read as their reply. */
 /**
  * Runs after each tool call while some inbox holds a message (hooks.json tests the store's marker
  * first): hands the session's messages from the desk to Claude at this step, as context it reads
@@ -1135,6 +1134,7 @@ export function deliverWhileWorking(input: Common, store: Store): HookOutput {
   return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } }) };
 }
 
+/** The answer goes to Claude exactly as the developer typed it, framed so it is read as their reply. */
 export function deliveryText(entry: { question: string; answer: string }, images: string[] = []): string {
   const question = entry.question.length > 300 ? `${entry.question.slice(0, 299)}…` : entry.question;
   return `Answer from agent-desk (the developer replied on the desk page instead of the terminal).\nYour question: ${question}\nTheir answer, verbatim:\n${entry.answer}${attachedText(images)}`;
