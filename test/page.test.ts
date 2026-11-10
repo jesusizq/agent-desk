@@ -1336,7 +1336,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       const page = await openQuiet();
       assert.equal(await page.eval<boolean>("document.querySelector('.board').classList.contains('quiet')"), true);
       assert.equal(await page.eval<boolean>("!document.querySelector('.col-needs .col-head') && !!document.querySelector('.col-needs .all-clear')"), true, "Needs you is the one line");
-      assert.match(await page.eval<string>("document.querySelector('.all-clear').textContent"), /^All clear.*nothing needs you, nothing new to review.*last answer \d\d:\d\d · “?Yes, one series per year/);
+      assert.equal(await page.eval<string>("document.querySelector('.all-clear').textContent"), "All clearnothing needs you, nothing new to review", "only what is clear: no last answer to mistake for something waiting");
+      for (const width of [1440, 1024, 800]) {
+        await page.resize(width, 900);
+        await page.waitFor("document.querySelector('.board.quiet .all-clear')");
+        const rest = await page.eval<{ cut: boolean; height: number }>("(() => { const r = document.querySelector('.all-clear .clear-rest'); return { cut: r.scrollWidth > r.clientWidth, height: document.querySelector('.all-clear').getBoundingClientRect().height }; })()");
+        assert.equal(rest.cut, false, `never cut at ${width} px`);
+        assert.ok(rest.height < 50, `one line at ${width} px (${rest.height} px)`);
+      }
+      await page.resize(1440, 900);
       const line = await box(page, ".all-clear");
       assert.ok(line.height < 50, `one line (${line.height} px)`);
       const sessions = await box(page, ".col-sessions");
@@ -1379,8 +1387,6 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.match(await page.eval<string>(`${vat}.querySelector('.s-work .chip').textContent`), /^Context 86% · \/compact$/, "the command its context calls for stands for its context");
       assert.match(await page.eval<string>("document.querySelector('.col-sessions .col-head').textContent"), /Sessions3.*2 working · 4 agents at work/);
       assert.equal(await page.eval<string>("document.querySelector('.col-review .col-body').textContent"), "Nothing new to review.Earlier results", "To review keeps only what is new: the results already seen are in History");
-      await page.click(".last-answer");
-      await page.waitFor("document.body.dataset.view === 'history'");
     });
 
     it("leaves off a rich card what does not help at a glance: finished agents, tool calls, the project's own branch", async () => {

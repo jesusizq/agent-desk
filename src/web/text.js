@@ -97,9 +97,6 @@ export const TEXT = {
   quiet: {
     clear: CLEAR,
     rest: clearRest,
-    /** @param {string} t */
-    lastAnswer: (t) => `last answer ${t}`,
-    lastAnswerTitle: "Past decisions, in History",
     /** @param {number} working @param {number} agents */
     sessionsAside: (working, agents) => [working && `${working} working`, agents && `${plural(agents, "agent", "agents")} at work`].filter(Boolean).join(" · "),
   },

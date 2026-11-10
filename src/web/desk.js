@@ -158,23 +158,15 @@ function inboxColumn({ items, failures, count }, resolved, quiet) {
   });
 }
 
-/** Nothing needs the developer: one line that says so, and the last answer given, which opens the past decisions. */
+/** Nothing needs the developer: one line that says so. */
 function allClearLine() {
-  const last = data.questions.filter((q) => q.answer && inProject(q.sessionId)).sort((a, b) => (b.answer?.at ?? "").localeCompare(a.answer?.at ?? ""))[0]?.answer;
   return h(
     "div",
     { class: "all-clear", role: "status", "data-key": "clear-line" },
     dot("done"),
     h("b", {}, TEXT.quiet.clear),
     h("span", { class: "clear-rest" }, TEXT.quiet.rest(!toReview().length)),
-    last ? h("button", { class: "last-answer", title: TEXT.quiet.lastAnswerTitle, onclick: showDecisions }, TEXT.quiet.lastAnswer(stamp(last.at)), " · ", h("q", {}, firstLine(last.text))) : null,
   );
-}
-
-function showDecisions() {
-  ui.view = "history";
-  ui.hfilter = "decision";
-  page.render();
 }
 
 function showEarlierResults() {
