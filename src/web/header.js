@@ -180,9 +180,9 @@ export function renderDisplay() {
     root.classList.add("theme-switching");
     requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("theme-switching")));
   }
-  const theme = THEMES.find((x) => x === localStorage.getItem("agent-desk:theme")) ?? "auto";
+  const theme = THEMES.find((x) => x === localStorage.getItem(THEME_KEY)) ?? "auto";
   const sizes = Object.keys(TEXT_SIZES);
-  const size = sizes.find((x) => x === localStorage.getItem("agent-desk:text")) ?? "normal";
+  const size = sizes.find((x) => x === localStorage.getItem(TEXT_KEY)) ?? "normal";
   const button = byId("theme");
   button.title = TEXT.display.title;
   button.setAttribute("aria-label", TEXT.display.title);
@@ -195,14 +195,14 @@ export function renderDisplay() {
     const choice = (key, value, text, name) =>
       h("button", { "data-pref": key, "data-value": value, "aria-label": name, title: name, onclick: () => (localStorage.setItem(key, value), renderDisplay()) }, text);
     menu.replaceChildren(
-      h("div", { class: "menu-row" }, h("span", {}, TEXT.display.theme), h("div", { class: "seg" }, THEMES.map((t) => choice("agent-desk:theme", t, h("span", { class: "row-i" }, icon(t === "auto" ? "auto" : t === "light" ? "sun" : "moon"), TEXT.theme[t]))))),
-      h("div", { class: "menu-row" }, h("span", {}, TEXT.display.text), h("div", { class: "seg sizes" }, sizes.map((k, i) => choice("agent-desk:text", k, h("span", { class: `a${i}` }, "A"), TEXT.display.sizes(k))))),
+      h("div", { class: "menu-row" }, h("span", {}, TEXT.display.theme), h("div", { class: "seg" }, THEMES.map((t) => choice(THEME_KEY, t, h("span", { class: "row-i" }, icon(t === "auto" ? "auto" : t === "light" ? "sun" : "moon"), TEXT.theme[t]))))),
+      h("div", { class: "menu-row" }, h("span", {}, TEXT.display.text), h("div", { class: "seg sizes" }, sizes.map((k, i) => choice(TEXT_KEY, k, h("span", { class: `a${i}` }, "A"), TEXT.display.sizes(k))))),
       // The fixed link written in index.html, copied: on a phone its footer gives its place to the tab bar.
       h("div", { class: "menu-credit" }, document.querySelector(".credits a")?.cloneNode(true) ?? null),
     );
   }
   /** @type {Record<string, string>} */
-  const chosen = { "agent-desk:theme": theme, "agent-desk:text": size };
+  const chosen = { [THEME_KEY]: theme, [TEXT_KEY]: size };
   for (const b of menu.querySelectorAll("button[data-pref]")) if (b instanceof HTMLElement) b.setAttribute("aria-pressed", String(chosen[b.dataset.pref ?? ""] === b.dataset.value));
   fitProjects(); // a text size changes the projects' width
 }
