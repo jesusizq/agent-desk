@@ -589,7 +589,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const resetsAt = new Date(Date.now() + 3 * 3600_000).toISOString();
     store.recordPlan([{ label: "5 h", percent: 50, resetsAt }], at(40));
     store.recordPlan([{ label: "5 h", percent: 70, resetsAt }], at(1));
-    await page.waitFor(`document.querySelector('#strip')?.textContent.includes('5 h limit: full in about')`);
+    await page.waitFor(`document.querySelector('#strip')?.textContent.includes('5 h limit: at this pace, out around')`);
     fs.rmSync(store.paths.plan);
     await page.waitFor(`!document.querySelector('#strip')?.textContent.includes('5 h limit')`);
   });

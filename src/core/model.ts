@@ -1,7 +1,7 @@
 // Validators that read protocol records back from untrusted files and input.
 import { bool, compact, fields, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
 import { id } from "./ids.ts";
-import type { PlanHistory } from "./limits.ts";
+import type { PlanHistory, PlanWindowHistory } from "./limits.ts";
 import {
   AGENT_STATES,
   ANSWER_CHANNELS,
@@ -317,18 +317,23 @@ export function readSeen(value: unknown, where = "seen"): Seen {
   return { since: isoTime(fields(value, where).since, `${where}.since`) };
 }
 
-/** The plan windows' recent history (src/core/limits.ts), checked. */
+/** The plan windows' history (src/core/limits.ts), checked; a label holding one window is the format before past windows were kept. */
 export function readPlanHistory(value: unknown, where: string): PlanHistory {
   const history: PlanHistory = {};
   for (const [label, entry] of Object.entries(fields(value, where))) {
-    const f = fields(entry, `${where}.${label}`);
-    history[label] = compact({
-      resetsAt: optional(f.resetsAt, `${where}.${label}.resetsAt`, isoTime),
-      samples: list(f.samples, `${where}.${label}.samples`, (v, w) => {
-        const sample = fields(v, w);
-        return { at: isoTime(sample.at, `${w}.at`), percent: num(sample.percent, `${w}.percent`, 0, 100) };
-      }, 200),
-    });
+    const at = `${where}.${label}`;
+    history[label] = Array.isArray(entry) ? list(entry, at, readPlanWindowHistory, 20) : [readPlanWindowHistory(entry, at)];
   }
   return history;
+}
+
+function readPlanWindowHistory(value: unknown, where: string): PlanWindowHistory {
+  const f = fields(value, where);
+  return compact({
+    resetsAt: optional(f.resetsAt, `${where}.resetsAt`, isoTime),
+    samples: list(f.samples, `${where}.samples`, (v, w) => {
+      const sample = fields(v, w);
+      return { at: isoTime(sample.at, `${w}.at`), percent: num(sample.percent, `${w}.percent`, 0, 100) };
+    }, 200),
+  });
 }

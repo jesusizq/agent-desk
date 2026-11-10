@@ -702,7 +702,7 @@ export class Store {
     });
   }
 
-  /** How the plan windows have filled lately; an unreadable file only costs the forecast. */
+  /** How the plan windows have filled, the current one and the last few; an unreadable file only costs the forecast. */
   planHistory(problems?: string[]): PlanHistory {
     try {
       const raw = readJson(this.paths.plan);

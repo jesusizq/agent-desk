@@ -3,7 +3,7 @@
 import { byId, h, icon, patch } from "./dom.js";
 import { reducedMotion } from "./motion.js";
 import { TEXT } from "./text.js";
-import { ago, gb, hm } from "./format.js";
+import { clockAt, gb, hm } from "./format.js";
 import { markCut } from "./layout.js";
 import { projectMark } from "./pieces.js";
 import { mergedOf, openProject, projectsInView, sum, worthWarning } from "./projects.js";
@@ -151,7 +151,12 @@ export function renderStrip() {
     data.problems.length ? h("span", { class: "chip warn problems", title: data.problems.join("\n") }, TEXT.problems(data.problems.length)) : null,
     data.disk.map((d) => h("span", { class: "chip warn", title: d.dir }, TEXT.disk(gb(d.freeBytes), d.projects.join(", ")))),
     contexts.map(({ s, c }) => h("button", { class: "chip warn", onclick: () => openSession(s.id) }, TEXT.contextWarn(label(s), c))),
-    data.planForecasts.map((f) => h("span", { class: "chip warn" }, TEXT.limitForecast(f.label, ago(data.now, f.fullAt), ago(data.now, f.resetsAt)))),
+    data.planForecasts.map((f) => {
+      const t = TEXT.limitForecast;
+      return f.fullAt !== undefined
+        ? h("span", { class: "chip warn" }, t.out(f.label, t.pace[f.pace], clockAt(f.fullAt), clockAt(f.resetsAt)))
+        : h("span", { class: "chip" }, t.high(f.label, t.pace[f.pace], f.atReset, clockAt(f.resetsAt)));
+    }),
     projectsInView()
       .filter((p) => worthWarning(p))
       .map((p) => {

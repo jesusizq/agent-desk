@@ -244,8 +244,13 @@ export const TEXT = {
   disk: (free, projects) => `Disk: ${free} free (${projects})`,
   /** @param {string} where @param {number} c */
   contextWarn: (where, c) => `${where}: ${contextAt(c)}`,
-  /** @param {string} label @param {string} full @param {string} reset */
-  limitForecast: (label, full, reset) => `${label} limit: full in about ${full} at this pace, resets in ${reset}`,
+  limitForecast: {
+    pace: { recent: "at this pace", window: "at its pace so far", usual: "at your usual pace" },
+    /** @param {string} label @param {string} pace @param {string} out @param {string} reset clock times */
+    out: (label, pace, out, reset) => `${label} limit: ${pace}, out around ${out} (resets ${reset})`,
+    /** @param {string} label @param {string} pace @param {number} v @param {string} reset a clock time */
+    high: (label, pace, v, reset) => `${label} limit: ${pace}, about ${v}% by its reset ${reset}`,
+  },
   /** @param {number} n */
   problems: (n) => plural(n, "unreadable file", "unreadable files"),
   /** @param {string} name @param {string} size @param {number} merged @param {string} reclaim */

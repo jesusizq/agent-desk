@@ -23,6 +23,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (marked `step`, when its adapter can tell), and each answer of the developer (typed or from the desk), the latest 500 per session | hooks, the page |
 | `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, size on disk, whether merged into the main branch and commits ahead; total and the day's starting total | `agent-desk scan`, started by adapters at the end of a turn |
 | `seen.json` | when the developer last marked everything as seen | the page |
+| `plan.json` | per plan window label (`5 h`, `7 d`, as the provider names it), its windows oldest first, the last the current one: `resetsAt` and a sample (`at`, `percent`) each time the percentage rose a point or more. A new reset time starts a window; the last four finished windows are kept, none that reset more than 35 days earlier. A label holding one window object instead of a list (the format of earlier installs) is read as its current window | the server, from the freshest metrics |
 | `secret` | per-install secret for the page's writes | the server, on first start |
 
 Ids match `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$` before they become a path segment, and every resolved
@@ -86,6 +87,22 @@ once. A turn that ends with a report is kept
 as the session's last message and shown quietly on its card ("Finished · waiting for your next
 instruction"); the session panel always shows it in full, also after its item was dismissed, and can
 reply to it while the session takes messages (see below).
+
+## Plan limits
+
+`planForecasts` (`src/core/limits.ts`) names a plan window only when it is a real risk: it runs out
+before it resets (`fullAt`), or, for a long window, it ends at 85% or more (`atReset`). Windows have
+no length in the protocol; a window's length is the shortest gap between the reset times of the
+windows kept.
+
+| Window | Pace (`pace`) |
+| --- | --- |
+| Short: under a day left and a length of a day or less, or unknown | `recent`: the rise over the last `max(30 min, time left / 5)` |
+| Long, with finished windows covering two days or more | `usual`: (use so far + usual pace × length) / (time elapsed + length), where the usual pace is the finished windows' final percentages over their time, nights and pauses included; this window counts more as it goes on |
+| Long, without them | `window`: the window's own average since it started (or since its first sample when its length is unknown), only once that covers two days |
+
+Two hours of work right after a weekly reset therefore move the forecast a little, not to "full
+tomorrow".
 
 ## Answers from the page
 
@@ -164,7 +181,7 @@ Tailscale host and login (`SECURITY.md`).
 | Request | Purpose |
 | --- | --- |
 | `GET /` and `/app.js` with the modules it imports (`src/web/*.js`, each listed in `STATIC`), `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
-| `GET /api/state` | `DeskState`: every record (a closed question without its context), plus `gone`, `listening`, `disk` and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
+| `GET /api/state` | `DeskState`: every record (a closed question without its context), plus `gone`, `listening`, `disk`, `planForecasts` (see Plan limits) and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
 | `GET /api/events` | server-sent events: `changed` with the state's version (the ETag of `/api/state`) on opening and at each change, never the state itself; a `: ping` comment every 20 s; 32 streams at most (503 past them); a remote device's stream ends when its unlock does |
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |

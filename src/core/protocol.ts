@@ -179,8 +179,16 @@ export const SUGGESTION_REASONS = ["context-full"] as const;
 export type Suggestion = { reason: (typeof SUGGESTION_REASONS)[number]; command: string };
 
 export type PlanWindow = { label: string; percent: number; resetsAt?: string };
-/** A plan window that fills before it resets, at the pace of the last while. */
-export type PlanForecast = { label: string; percent: number; fullAt: string; resetsAt: string };
+/**
+ * How a plan window fills by its reset: when it runs out (`fullAt`), or, for a long window, how full it
+ * gets when that is 85% or more (`atReset`). `pace` is what the forecast follows: the last while
+ * (`recent`, a short window), the window's own average so far (`window`), or the developer's usual pace
+ * over the past windows weighed with this one (`usual`).
+ */
+export type PlanForecast = { label: string; percent: number; resetsAt: string; pace: "recent" | "window" | "usual" } & (
+  | { fullAt: string; atReset?: never }
+  | { atReset: number; fullAt?: never }
+);
 
 /** What a session's status line shows; every field is optional because providers differ. */
 export type Metrics = {
