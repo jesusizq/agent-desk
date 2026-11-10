@@ -991,6 +991,9 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .board[data-tab="inbox"] > .col-needs, .board[data-tab="sessions"] > .col-sessions, .board[data-tab="review"] > .col-review { display: flex; }
   .board.review-empty[data-tab="review"] > .col-review { display: flex; }
   .col-head { font-size: 1rem; padding: 4px 2px 8px; }
+  /* The plan windows over the rich cards take a row of their own under the name, each gauge whole. */
+  .col-sessions > .col-head { flex-wrap: wrap; row-gap: 4px; }
+  .col-sessions .head-aside { flex-basis: 100%; margin-left: 0; flex-wrap: wrap; gap: 4px 14px; }
   #toasts { bottom: calc(var(--bar) + 12px + env(safe-area-inset-bottom)); left: 12px; right: 12px; width: auto; transform: none; align-items: stretch; }
   .toast { max-width: none; padding: 12px 14px; font-size: 0.875rem; border-radius: 10px; }
   /* The strip (warnings, what is new to review) belongs with Inbox and Results; elsewhere it gives its room back,

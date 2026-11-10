@@ -1424,7 +1424,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.equal(await page.eval<number>("document.getAnimations().filter((a) => a.id === 'motion').length"), 0);
     });
 
-    it("on a phone, keeps its tabs and the centred All clear, and gives the Sessions tab the rich cards", async () => {
+    it("on a phone, keeps its tabs and the centred All clear, and gives the Sessions tab the rich cards under the plan windows", async () => {
       const page = await openQuiet(390, 800);
       assert.equal(await page.eval<boolean>("document.querySelector('.board').classList.contains('quiet')"), false, "the board keeps its tabs");
       assert.equal(await page.eval<string>("document.querySelector('.col-needs .empty').textContent"), "All clear: nothing needs you, nothing new to review.");
@@ -1434,6 +1434,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.equal(await page.eval<number>(`${checkout}.querySelectorAll('.s-agent').length`), 4);
       assert.deepEqual(await agentMarks(page), { sizes: [14], left: true, centred: true }, "on its own line, the goal keeps its mark centred on it");
       assert.equal(await page.eval<number>("document.documentElement.scrollWidth"), 390, "nothing overflows sideways");
+      assert.equal(await page.eval<boolean>("[...document.querySelectorAll('.scard .s-work')].some((w) => w.textContent.includes('limit'))"), false, "no card repeats the plan windows");
+      assert.match(await page.eval<string>("document.querySelector('.col-sessions .col-head .head-aside').textContent"), /^5 h limit 42% · resets \d\d:\d\d$/, "they stand once over the cards, as on the quiet desk");
       await page.click(".tabbar button", "To review");
       assert.equal(await page.eval<boolean>("!document.querySelector('.rearlier') && !!document.querySelector('.col-review .empty')"), true, "To review as before: nothing new, and the way to earlier results");
       await page.resize(1440, 900);
