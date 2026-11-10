@@ -203,11 +203,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* Its mark under the card's, centred on the first line, so the text lines up with the session's name. */
 .s-bad .dot { margin-top: calc((1lh - 14px) / 2); }
 .s-bad > span:not(.dot) { flex: 1; min-width: 0; }
-/* A failed command can be a whole script: its first line is enough to recognise it. */
-.s-bad code { display: block; width: fit-content; max-width: 100%; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Quiet may be a long run, not a fault: a warning, not the red of a failure. */
-.s-warn { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
-.s-ask code, .s-bad code, .scard .quiet-line code { font-size: 0.7188rem; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+/* Quiet or failing calls may be a long run or a fix in progress, not a fault: a warning, not the red of a failure. */
+.s-warn, .astuck { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
+.s-ask code, .scard .quiet-line code { font-size: 0.7188rem; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
 .s-more, .s-l3 { color: var(--faint); font-size: 0.75rem; }
 .scard .badge.k-new { background: none; padding: 0; color: var(--accent); font-weight: 650; }
 .ctx { display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--muted); }
@@ -453,7 +451,6 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .awhat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .arow .dot { width: 16px; height: 16px; }
 .awhat .adoing, .awhat .asummary, .awhat .astuck { padding-left: 23px; font-size: 0.7812rem; }
-.astuck { color: var(--danger); font-weight: 600; }
 .agents-fold > summary { cursor: pointer; color: var(--muted); font-size: 0.7812rem; margin-top: 4px; }
 .agents-fold[open] > summary { margin-bottom: 6px; }
 .asummary { color: var(--text); }

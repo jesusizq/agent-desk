@@ -44,10 +44,18 @@ export type Session = {
   activity?: string;
   /** When its last tool call was recorded. */
   activityAt?: string;
-  /** When its latest tool calls failed, the last 10. */
+  /**
+   * When its latest tool calls failed in a row, the last 10: a successful call ends the streak and
+   * empties it, so several here mean the same thing keeps failing.
+   */
   failedAt?: string[];
-  /** The latest failed tool call, as its activity line reads ("Bash: npm test"). */
+  /** The latest failed call of that streak, as its activity line reads ("Bash: npm test"). */
   failedWhat?: string;
+  /**
+   * Its latest tool call started work that runs on, or waited for it (a background command or agent,
+   * a monitor, a wait): it is waiting on its own job, not quiet, until its next call.
+   */
+  waitsForJob?: boolean;
   /** The session's last message at the end of a turn: shown quietly unless it asks something. */
   lastMessage?: { text: string; at: string };
   /** How many messages its conversation has received, so a reader sees one added mid-turn. */
@@ -133,10 +141,18 @@ export type Agent = {
   activity?: string;
   /** When its last tool call was recorded. */
   activityAt?: string;
-  /** When its latest tool calls failed, the last 10. */
+  /**
+   * When its latest tool calls failed in a row, the last 10: a successful call ends the streak and
+   * empties it, so several here mean the same thing keeps failing.
+   */
   failedAt?: string[];
-  /** The latest failed tool call, as its activity line reads ("Bash: npm test"). */
+  /** The latest failed call of that streak, as its activity line reads ("Bash: npm test"). */
   failedWhat?: string;
+  /**
+   * Its latest tool call started work that runs on, or waited for it (a background command or agent,
+   * a monitor, a wait): it is waiting on its own job, not quiet, until its next call.
+   */
+  waitsForJob?: boolean;
   branch?: string;
   commit?: string;
   /** Names of agents of the same session this one builds on or waits for. */

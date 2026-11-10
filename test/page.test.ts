@@ -127,29 +127,48 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<number>("badges.at(-1)"), pending, "the icon counts what the title counts");
   });
 
-  it("marks an agent quiet for a while, or failing its calls, on its session's card and row", async () => {
+  it("warns in amber of an agent quiet for a while, or failing its calls in a row, on its session's card and row", async () => {
     store.upsertSession({ id: "stuck", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "stuck agents", state: "working", activityAt: new Date().toISOString() });
     const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
     store.upsertAgent("stuck", "silent", { goal: "Silent agent", activityAt: ago(8) });
-    store.upsertAgent("stuck", "looping", { goal: "Looping agent", activityAt: ago(0), failedAt: [ago(3), ago(2), ago(1)] });
-    store.upsertAgent("stuck", "fine", { goal: "Fine agent", activityAt: ago(1), failedAt: [ago(30), ago(1)] });
+    store.upsertAgent("stuck", "looping", { goal: "Looping agent", activityAt: ago(0), failedAt: [ago(3), ago(2), ago(1)], failedWhat: "Bash: npm test -- --grep checkout" });
+    // The adapter ends a streak at each successful call: failures between fixes never add up.
+    store.upsertAgent("stuck", "fine", { goal: "Fine agent", activityAt: ago(1), failedAt: [ago(1)], failedWhat: "Bash: grep -rn nothing src" });
+    store.upsertAgent("stuck", "on-job", { goal: "Agent on its job", activityAt: ago(12), waitsForJob: true, activity: "Bash: npx playwright test" });
+    store.upsertAgent("stuck", "broken", { goal: "Broken agent", state: "failed", activity: "No space left on device" });
     // An older adapter stamps no activity: its agent's last update, long ago, does not make it quiet.
     new Store(store.paths.home, () => new Date(Date.now() - 20 * 60_000)).upsertAgent("stuck", "unstamped", { goal: "Unstamped agent" });
+    store.upsertSession({ id: "on-job", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "waiting on its build", state: "working", activityAt: ago(9), waitsForJob: true, activity: "TaskOutput" });
     const page = await open();
     const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('stuck agents'))`;
     await page.waitFor(card);
-    assert.deepEqual(
-      await page.eval<string[]>(`[...${card}.querySelectorAll('.s-bad')].map((l) => l.textContent)`),
-      ["Looping agent · 3 failed calls in 10 min", "Silent agent · no activity for 8 min"],
-      "what matters about the session, one line each, failures first",
+    const lines = await page.eval<{ text: string; color: string; tip: string; code: number }[]>(
+      `[...${card}.querySelectorAll('.s-bad')].map((l) => ({ text: l.textContent, color: getComputedStyle(l).color, tip: l.title, code: l.querySelectorAll('code').length }))`,
     );
+    assert.deepEqual(
+      lines.map((l) => l.text),
+      ["Broken agent · No space left on device", "Looping agent · 3 failed calls in a row", "Silent agent · no activity for 8 min"],
+      "what matters about the session, one line each, failed agents first",
+    );
+    const [broken, looping, silent] = lines;
+    assert.notEqual(looping?.color, broken?.color, "only a failed agent is red");
+    assert.equal(looping?.color, silent?.color, "calls failing in a row warn, as a quiet agent does");
+    assert.equal(looping?.code, 0, "the failing call is not printed in the card");
+    assert.equal(looping?.tip, "Last failed: Bash: npm test -- --grep checkout", "it waits in the tooltip");
+    const jobCard = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('waiting on its build'))`;
+    assert.equal(await page.eval<number>(`${jobCard}.querySelectorAll('.s-bad').length`), 0, "a session waiting on its own job is not quiet");
+    assert.equal(await page.eval<string>(`${jobCard}.querySelector('.s-l1 .dot').title`), "Waiting on its job");
     await page.click(".scard", "stuck agents");
     await page.click("#session .agents-fold > summary");
-    const row = (goal: string) => page.eval<string>(`[...document.querySelectorAll('#session .arow')].find((r) => r.textContent.includes('${goal}'))?.querySelector('.astuck')?.textContent ?? ''`);
-    assert.equal(await row("Silent agent"), "no activity for 8 min");
-    assert.equal(await row("Looping agent"), "3 failed calls in 10 min");
-    assert.equal(await row("Fine agent"), "", "one old failure and one retry are not a pattern");
-    assert.equal(await row("Unstamped agent"), "");
+    const row = (goal: string, what = ".astuck") => `[...document.querySelectorAll('#session .arow')].find((r) => r.textContent.includes('${goal}'))?.querySelector('${what}')`;
+    const stuck = (goal: string) => page.eval<string>(`${row(goal)}?.textContent ?? ''`);
+    assert.equal(await stuck("Silent agent"), "no activity for 8 min");
+    assert.equal(await stuck("Looping agent"), "3 failed calls in a row");
+    assert.equal(await page.eval<string>(`${row("Looping agent")}.title`), "Last failed: Bash: npm test -- --grep checkout");
+    assert.equal(await stuck("Fine agent"), "", "one failure since the last successful call is not a pattern");
+    assert.equal(await stuck("Agent on its job"), "", "an agent waiting on its own job is not quiet");
+    assert.ok(await page.eval<boolean>(`${row("Agent on its job", ".dot")}.classList.contains('st-waiting')`), "it carries the waiting mark");
+    assert.equal(await stuck("Unstamped agent"), "");
     await page.press("Escape");
   });
 

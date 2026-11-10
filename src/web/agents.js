@@ -11,14 +11,18 @@ import { agentOf, data, waitingOn } from "./state.js";
 
 const ATTENTION = ["failed", "blocked", "idle", "working", "waiting", "done"];
 
+/** At work, but its latest call started a job of its own or waits for one: waiting on it. @param {Agent | Session} x */
+const onItsJob = (x) => x.state === "working" && x.waitsForJob === true;
 /** One dot per agent says the shape of a session at a glance. @param {Agent} a */
 function agentDot(a) {
-  const mark = dot(a.state);
-  mark.title = [a.name, TEXT.state[a.state], a.activity].filter(Boolean).join(" · ");
-  return a.state === "working" ? h("span", { class: "live" }, mark) : mark;
+  const st = onItsJob(a) ? "waiting" : a.state;
+  const mark = dot(st);
+  mark.title = [a.name, TEXT.state[st], a.activity].filter(Boolean).join(" · ");
+  return st === "working" ? h("span", { class: "live" }, mark) : mark;
 }
-/** The session itself at work, before its agents' dots. */
-export function sessionDot() {
+/** The session itself at work, before its agents' dots, or waiting on its own job. @param {Session} s */
+export function sessionDot(s) {
+  if (onItsJob(s)) return dot("waiting");
   const mark = dot("working");
   mark.title = TEXT.sessionWorking;
   return h("span", { class: "live" }, mark);
@@ -37,29 +41,33 @@ export function troubleText(a) {
   if (a.state === "failed") return a.activity ?? TEXT.failedAgent;
   return waitsLine(a) ?? TEXT.idleSince(hm(a.updatedAt));
 }
-// An agent or session at work with no tool call for this long, or failing calls this recently, may be stuck.
+// An agent or session at work with no tool call for this long, and no job of its own to wait on, may be stuck.
 const QUIET_MS = 5 * 60_000;
-const FAILS_MS = 10 * 60_000;
 /** Minutes since `at`, once past QUIET_MS; otherwise 0. @param {string} at */
 const quietMinutes = (at) => {
   const ms = Date.now() - Date.parse(at);
   return ms >= QUIET_MS ? Math.floor(ms / 60_000) : 0;
 };
-/** Failed tool calls in the last FAILS_MS. @param {string[] | undefined} failedAt */
-export const recentFailures = (failedAt) => (failedAt ?? []).filter((t) => Date.now() - Date.parse(t) < FAILS_MS).length;
 /**
  * A working agent quiet for a while: minutes, or 0. Only an agent whose adapter stamps its tool
  * calls can be quiet: an older adapter's agents carry no such stamp, and their last update says nothing.
  * @param {Agent} a
  */
-export const agentQuiet = (a) => (a.state === "working" && a.activityAt ? quietMinutes(a.activityAt) : 0);
-/** Two failed calls in a row is a retry; three is a pattern. @param {Agent | Session} x */
-export const failing = (x) => recentFailures(x.failedAt) >= 3;
-/** A working session none of whose own calls nor working agents' has moved for a while: minutes, or 0. @param {Session} s */
+export const agentQuiet = (a) => (a.state === "working" && a.activityAt && !onItsJob(a) ? quietMinutes(a.activityAt) : 0);
+/** Its tool calls that failed in a row: any successful call ends the streak. @param {Agent | Session} x */
+export const failedInARow = (x) => x.failedAt?.length ?? 0;
+/** At work and its calls keep failing: two in a row is a retry, three is a pattern. @param {Agent | Session} x */
+export const failing = (x) => x.state === "working" && failedInARow(x) >= 3;
+/** The call that keeps failing, kept for a tooltip: it is not printed in the line. @param {Agent | Session} x */
+export const failingTip = (x) => (x.failedWhat ? TEXT.lastFailed(x.failedWhat) : undefined);
+/**
+ * A working session none of whose own calls nor working agents' has moved for a while: minutes, or 0.
+ * Never while it, or one of its working agents, waits on a job of its own. @param {Session} s
+ */
 export function sessionQuiet(s) {
-  if (s.state !== "working" || !s.activityAt) return 0;
+  if (s.state !== "working" || !s.activityAt || onItsJob(s)) return 0;
   const working = sessionAgents(s.id).filter((a) => a.state === "working");
-  if (working.some((a) => !a.activityAt)) return 0; // an agent that cannot be timed may well be busy
+  if (working.some((a) => !a.activityAt || onItsJob(a))) return 0; // an agent that cannot be timed may well be busy
   const last = [s.activityAt, ...working.map((a) => a.activityAt ?? "")].sort().at(-1);
   return last ? quietMinutes(last) : 0;
 }
@@ -172,7 +180,7 @@ export function agentRows(rows, axis) {
           a.summary ? h("span", { class: "asummary" }, a.summary) : null,
           agentDoing(a) ? h("span", { class: "adoing" }, a.state === "working" && a.activity ? TEXT.now_(agentDoing(a)) : agentDoing(a)) : null,
           agentQuiet(a) || failing(a)
-            ? h("span", { class: "astuck" }, [agentQuiet(a) ? TEXT.quietFor(agentQuiet(a)) : "", failing(a) ? TEXT.failingCalls(recentFailures(a.failedAt)) : ""].filter(Boolean).join(" · "))
+            ? h("span", { class: "astuck", title: failing(a) ? failingTip(a) : undefined }, [agentQuiet(a) ? TEXT.quietFor(agentQuiet(a)) : "", failing(a) ? TEXT.failingCalls(failedInARow(a)) : ""].filter(Boolean).join(" · "))
             : null,
         ),
         axis ? agentBar(a, axis) : null,

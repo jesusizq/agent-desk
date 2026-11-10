@@ -205,6 +205,103 @@ describe("Claude Code hooks", () => {
     assert.ok(agent?.activityAt);
   });
 
+  it("counts only the calls that fail in a row: a successful call ends the streak", () => {
+    const store = testStore();
+    const marker = path.join(store.paths.home, ".failing");
+    handleHook(event("UserPromptSubmit", { prompt: "fix the rounding" }), ctx(store));
+    handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: "t1", tool_input: { description: "fix:adapter-identity", subagent_type: "general-purpose", prompt: "…" } }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a-1", agent_type: "general-purpose" }), ctx(store));
+    const call = (ok: boolean, command: string, agent_id?: string) =>
+      handleHook(event(ok ? "PostToolUse" : "PostToolUseFailure", { tool_name: "Bash", tool_input: { command }, ...(agent_id ? { agent_id } : {}) }), ctx(store));
+    // Tests failing while they are fixed, and a search that finds nothing: never three in a row.
+    for (const agentId of [undefined, "a-1"]) {
+      call(false, "npm test", agentId);
+      call(true, "sed -i s/a/b/ src/round.ts", agentId);
+      call(false, "npm test", agentId);
+      call(true, "npm run check", agentId);
+      call(false, "grep -rn nothing src", agentId);
+    }
+    const agent = () => store.listAgents("cc-1")[0];
+    assert.equal(store.getSession("cc-1")?.failedAt?.length, 1);
+    assert.equal(agent()?.failedAt?.length, 1);
+    assert.equal(agent()?.failedWhat, "Bash: grep -rn nothing src");
+    assert.ok(fs.existsSync(marker), "while a streak is open, every successful call runs the adapter");
+    call(true, "ls", "a-1");
+    assert.equal(agent()?.failedAt, undefined, "the streak ends");
+    assert.equal(agent()?.failedWhat, undefined);
+    assert.ok(fs.existsSync(marker), "the session's own streak is still open");
+    call(true, "ls");
+    assert.equal(store.getSession("cc-1")?.failedAt, undefined);
+    assert.equal(fs.existsSync(marker), false, "no streak open anywhere: tool calls are sampled again");
+    for (let i = 0; i < 3; i++) call(false, "npm test", "a-1");
+    assert.equal(agent()?.failedAt?.length, 3, "three failures in a row");
+    assert.ok(fs.existsSync(marker));
+    handleHook(event("SubagentStop", { agent_id: "a-1", last_assistant_message: "Gave up." }), ctx(store));
+    call(true, "ls");
+    assert.equal(fs.existsSync(marker), false, "a stopped agent keeps no streak open");
+    for (let i = 0; i < 3; i++) call(false, "npm test");
+    handleHook(event("Stop", { last_assistant_message: "The tests still fail." }), ctx(store));
+    assert.equal(store.getSession("cc-1")?.failedAt, undefined, "a turn's streak ends with the turn");
+  });
+
+  it("records that the latest call started or awaits a job of its own, until the next call", () => {
+    const store = testStore();
+    handleHook(event("UserPromptSubmit", { prompt: "run the e2e suite" }), ctx(store));
+    handleHook(event("PreToolUse", { tool_name: "Agent", tool_use_id: "t1", tool_input: { description: "design:state-marks", subagent_type: "general-purpose", prompt: "…" } }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a-1", agent_type: "general-purpose" }), ctx(store));
+    const call = (tool_name: string, tool_input: object, extra: object = {}) => handleHook(event("PostToolUse", { tool_name, tool_input, ...extra }), ctx(store));
+    const agentWaits = () => store.listAgents("cc-1")[0]?.waitsForJob;
+    const jobs: [string, object][] = [
+      ["Bash", { command: "npx playwright test", run_in_background: true, description: "e2e" }],
+      ["TaskOutput", { task_id: "b1", block: true, timeout: 600000 }],
+      ["BashOutput", { bash_id: "b1" }],
+      ["Monitor", { command: "tail -f e2e.log", description: "e2e log" }],
+      ["Agent", { description: "Seal", prompt: "…", subagent_type: "general-purpose", run_in_background: true }],
+      ["Bash", { command: "sleep 240 && tail -5 e2e.log" }],
+      ["Bash", { command: "until test -e done.flag; do sleep 10; done" }],
+    ];
+    for (const [tool, input] of jobs) {
+      call("Read", { file_path: "/work/shop/README.md" }, { agent_id: "a-1" });
+      assert.equal(agentWaits(), undefined, "an ordinary call waits on nothing");
+      call(tool, input, { agent_id: "a-1" });
+      assert.equal(agentWaits(), true, `${tool} ${JSON.stringify(input)}`);
+    }
+    for (const command of ["npm test", "echo sleepy", "git log --oneline -5"]) {
+      call("Bash", { command }, { agent_id: "a-1" });
+      assert.equal(agentWaits(), undefined, command);
+    }
+    handleHook(event("PostToolUseFailure", { tool_name: "Bash", tool_input: { command: "npx playwright test", run_in_background: true }, agent_id: "a-1" }), ctx(store));
+    assert.equal(agentWaits(), undefined, "a launch that failed started nothing");
+    call("Bash", { command: "npm run dev", run_in_background: true });
+    assert.equal(store.getSession("cc-1")?.waitsForJob, true, "the session's own calls count too");
+    assert.equal(agentWaits(), undefined, "and only for the session");
+    handleHook(event("Stop", { last_assistant_message: "The dev server is up on :5173." }), ctx(store));
+    assert.equal(store.getSession("cc-1")?.waitsForJob, undefined, "the turn ended: the session waits for the developer");
+  });
+
+  it("starts the adapter after a tool call that may change what the desk shows, and samples the rest", () => {
+    const home = tempHome();
+    const bin = tempHome();
+    const got = path.join(home, "got");
+    fs.writeFileSync(path.join(bin, "agent-desk-claude"), `#!/bin/sh\ncat >> "${got}"\n`, { mode: 0o755 });
+    const hooks = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "adapters", "claude-code", "hooks", "hooks.json"), "utf8")) as { hooks: { PostToolUse: { hooks: { command: string }[] }[] } };
+    const command = hooks.hooks.PostToolUse[0]?.hooks[0]?.command ?? "";
+    const runs = (input: object) => {
+      fs.rmSync(got, { force: true });
+      fs.writeFileSync(path.join(home, ".activity"), ""); // a call was sampled just now
+      const out = spawnSync("sh", ["-c", command], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, AGENT_DESK_HOME: home }, input: JSON.stringify(input) });
+      assert.equal(out.status, 0, String(out.stderr));
+      return fs.existsSync(got) ? JSON.parse(fs.readFileSync(got, "utf8")) : undefined;
+    };
+    const call = (tool_name: string, tool_input: object) => ({ session_id: "cc-1", hook_event_name: "PostToolUse", tool_name, tool_input, tool_response: { stdout: "«ok»\n" } });
+    assert.equal(runs(call("Read", { file_path: "a.ts" })), undefined, "sampled: an ordinary call so soon after another starts nothing");
+    assert.deepEqual(runs(call("Bash", { command: "npm run e2e", run_in_background: true })), call("Bash", { command: "npm run e2e", run_in_background: true }), "a background launch is never skipped, its input passed whole");
+    for (const tool of ["Monitor", "TaskOutput", "BashOutput"]) assert.ok(runs(call(tool, {})), tool);
+    assert.ok(runs(call("Bash", { command: "sleep 120 && tail run.log" })));
+    fs.writeFileSync(path.join(home, ".failing"), "");
+    assert.ok(runs(call("Read", { file_path: "a.ts" })), "while a streak of failures is open, every call counts");
+  });
+
   it("keeps what the developer writes while the session works, until the turn that took it in ends", () => {
     const store = testStore();
     handleHook(event("SessionStart", { source: "startup" }), ctx(store));

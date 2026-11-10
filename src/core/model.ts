@@ -59,6 +59,7 @@ export function readSession(value: unknown, where = "session"): Session {
     activityAt: optional(f.activityAt, `${where}.activityAt`, isoTime),
     failedAt: optional(f.failedAt, `${where}.failedAt`, (v, w) => list(v, w, isoTime, FAILURES_KEPT)),
     failedWhat: optional(f.failedWhat, `${where}.failedWhat`, line),
+    waitsForJob: optional(f.waitsForJob, `${where}.waitsForJob`, bool),
     lastMessage: optional(f.lastMessage, `${where}.lastMessage`, readMessage),
     messageCount: optional(f.messageCount, `${where}.messageCount`, int),
     readAt: optional(f.readAt, `${where}.readAt`, isoTime),
@@ -135,7 +136,7 @@ function readAnswer(value: unknown, where: string): Answer {
   });
 }
 
-/** How many of the latest failed tool calls a session or an agent keeps. */
+/** How many failed tool calls in a row a session or an agent keeps. */
 export const FAILURES_KEPT = 10;
 
 /** Ids of images attached on the desk. */
@@ -158,6 +159,7 @@ export function readAgent(value: unknown, where = "agent"): Agent {
     activityAt: optional(f.activityAt, `${where}.activityAt`, isoTime),
     failedAt: optional(f.failedAt, `${where}.failedAt`, (v, w) => list(v, w, isoTime, FAILURES_KEPT)),
     failedWhat: optional(f.failedWhat, `${where}.failedWhat`, line),
+    waitsForJob: optional(f.waitsForJob, `${where}.waitsForJob`, bool),
     branch: optional(f.branch, `${where}.branch`, label),
     commit: optional(f.commit, `${where}.commit`, label),
     after: list(f.after ?? [], `${where}.after`, id, 50),

@@ -64,7 +64,9 @@ export const TEXT = {
     agents: (working, done) => [working && `${working} agent${working === 1 ? "" : "s"} working`, done && `${done} done`].filter(Boolean).join(" · "),
   },
   /** @param {number} n */
-  failingCalls: (n) => `${n} failed calls in 10 min`,
+  failingCalls: (n) => `${n} failed calls in a row`,
+  /** @param {string} call */
+  lastFailed: (call) => `Last failed: ${call}`,
   /** @param {string} where */
   reminder: (where) => `Still waiting for you: ${where}`,
   /** @param {string} what @param {string} where */

@@ -51,7 +51,8 @@ export type Snapshot = {
   problems: string[];
 };
 
-export type AgentFields = Partial<Omit<Agent, "sessionId" | "name">>;
+/** Fields to merge into an agent; one given as undefined is removed from it. */
+export type AgentFields = { [K in keyof Omit<Agent, "sessionId" | "name">]?: Agent[K] | undefined };
 
 export type NewSession = Pick<Session, "id" | "provider" | "project"> & Partial<Omit<Session, "id" | "provider" | "project">>;
 

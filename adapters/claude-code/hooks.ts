@@ -239,7 +239,8 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   syncPermissionMarker(store, problems);
   const message = text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000).trim();
   const at = new Date().toISOString();
-  store.updateSession(sid, (s) =>
+  // The turn is over: what its calls were doing, failing in a row or waiting on, ends with it.
+  store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, ...s }) =>
     compact({
       ...s,
       state: "waiting" as const,
@@ -417,14 +418,23 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   const what = describeTool(input.raw.tool_name, input.raw.tool_input, workDir(input, ctx));
   const agentId = typeof input.raw.agent_id === "string" ? input.raw.agent_id : "";
   const at = new Date().toISOString();
-  // A failed call is kept with its time: several in a row show an agent stuck or looping.
+  // Failed calls are kept only while they come in a row: any successful call ends the streak, so a
+  // test failing while it is fixed, or a search that finds nothing, does not read as stuck.
   const fails = input.event === "PostToolUseFailure";
-  const failed = (before: string[] | undefined) => (fails ? [...(before ?? []), at].slice(-FAILURES_KEPT) : before);
-  const failedWhat = (before: string | undefined) => (fails ? bounded(what, 200) : before);
+  const call = {
+    activity: bounded(what, 200),
+    activityAt: at,
+    failedWhat: fails ? bounded(what, 200) : undefined,
+    waitsForJob: (!fails && waitsOnJob(input.raw.tool_name, input.raw.tool_input)) || undefined,
+  };
+  const streak = (before: string[] | undefined) => (fails ? [...(before ?? []), at].slice(-FAILURES_KEPT) : undefined);
   if (agentId === "") {
-    ctx.store.updateSession(input.sessionId, (s) =>
-      s.state === "ended" ? s : compact({ ...s, activity: bounded(what, 200), activityAt: at, failedAt: failed(s.failedAt), failedWhat: failedWhat(s.failedWhat) }),
-    );
+    ctx.store.updateSession(input.sessionId, (s) => {
+      if (s.state === "ended") return s;
+      const { failedAt, failedWhat: _what, waitsForJob: _waits, ...rest } = s;
+      return compact({ ...rest, ...call, failedAt: streak(failedAt) });
+    });
+    syncFailingMarker(ctx.store, fails, problems);
     recordTurnTexts(input, ctx.store);
     return;
   }
@@ -432,10 +442,48 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   settleLabel(input, ctx, agentId, label);
   // A workflow's agent whose notes were not written when it started gets its label now.
   updateByRef(ctx.store, input.sessionId, agentId, (agent) =>
-    agent.state === "working"
-      ? compact({ goal: agent.goal ? undefined : label, activity: bounded(what, 200), activityAt: at, failedAt: failed(agent.failedAt), failedWhat: failedWhat(agent.failedWhat) })
-      : undefined,
+    agent.state === "working" ? { ...compact({ goal: agent.goal ? undefined : label }), ...call, failedAt: streak(agent.failedAt) } : undefined,
   );
+  syncFailingMarker(ctx.store, fails, problems);
+}
+
+/** Tools that wait on work running apart from the call: a monitor, a background task's output, a wake-up. */
+const JOB_TOOLS = new Set(["Monitor", "TaskOutput", "BashOutput", "ScheduleWakeup"]);
+/** A shell command that waits: `sleep 60 && tail run.log`, `until …; do sleep 5; done`, `wait`. */
+const WAIT_COMMAND = /(?:^|[;&|(]\s*|\bdo\s+)(?:sleep\s+\d|wait\b)/;
+
+/** Whether a call started work that runs on after it (in the background), or waited for such work. */
+function waitsOnJob(tool: unknown, input: unknown): boolean {
+  if (typeof tool !== "string") return false;
+  if (JOB_TOOLS.has(tool)) return true;
+  if (typeof input !== "object" || input === null) return false;
+  const f = input as Fields;
+  if (f.run_in_background === true) return true; // Bash, Agent and Task take it
+  return tool === "Bash" && typeof f.command === "string" && WAIT_COMMAND.test(f.command.trim());
+}
+
+/**
+ * hooks.json runs this adapter after every tool call while this marker exists, instead of sampling
+ * them every few seconds: the successful call that ends a streak of failures must not be missed.
+ */
+export const FAILING_MARKER = ".failing";
+
+function syncFailingMarker(store: Store, failed: boolean, problems: string[]): void {
+  const marker = path.join(store.paths.home, FAILING_MARKER);
+  if (!failed && !fs.existsSync(marker)) return;
+  // Under a lock, so a call that ends one streak cannot remove the marker a failure elsewhere just needed.
+  withLock(marker, () => {
+    if (failed || streakOpen(store, problems)) fs.writeFileSync(marker, "", { mode: 0o600 });
+    else fs.rmSync(marker, { force: true });
+  });
+}
+
+/** Whether a session at work, or a working agent of a live session, has failed calls in a row. */
+function streakOpen(store: Store, problems: string[]): boolean {
+  return store
+    .listSessions(problems)
+    .filter((s) => s.state !== "ended")
+    .some((s) => (s.state === "working" && (s.failedAt?.length ?? 0) > 0) || store.listAgents(s.id, problems).some((a) => a.state === "working" && (a.failedAt?.length ?? 0) > 0));
 }
 
 /**

@@ -2,7 +2,7 @@
 // The desk: the inbox, the sessions and what to review, side by side, or one per tab on a phone.
 import { h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
-import { agentQuiet, failing, recentFailures, sessionAgents, sessionDot, sessionQuiet, troubleText } from "./agents.js";
+import { agentQuiet, failedInARow, failing, failingTip, sessionAgents, sessionDot, sessionQuiet, troubleText } from "./agents.js";
 import { askBody, decisionOf } from "./answer.js";
 import { forgetButton } from "./control.js";
 import { ago, color, firstLine, headline, heat, hm, stamp } from "./format.js";
@@ -214,14 +214,14 @@ function sessionCard(s) {
       ),
     );
   }
-  /** One line of trouble; the failed call, when known, on one line below it. @param {DotState} st @param {string} what @param {string} [call] */
-  const troubleLine = (st, what, call) => h("div", { class: `s-bad${st === "idle" ? " s-warn" : ""}` }, dot(st), h("span", {}, what, call ? h("code", {}, call) : null));
+  /** One line of trouble: red only for a failed agent, amber for one that may be stuck. @param {DotState} st @param {string} what @param {string} [tip] */
+  const troubleLine = (st, what, tip) => h("div", { class: `s-bad${st === "failed" ? "" : " s-warn"}`, title: tip }, dot(st), h("span", {}, what));
   if (s.state !== "ended" && !isLive(s)) matters.push(troubleLine("idle", TEXT.goneAsking));
-  /** @param {Agent | Session} x @param {string} who */
-  const failLine = (x, who) => troubleLine("failed", [who, TEXT.failingCalls(recentFailures(x.failedAt))].filter(Boolean).join(" · "), x.failedWhat);
+  /** Calls failing in a row warn; the call itself waits in the tooltip and the session's agent rows. @param {Agent | Session} x @param {string} who */
+  const failLine = (x, who) => troubleLine("idle", [who, TEXT.failingCalls(failedInARow(x))].filter(Boolean).join(" · "), failingTip(x));
+  for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a)}`));
   if (failing(s)) matters.push(failLine(s, ""));
   for (const a of as.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
-  for (const a of as.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a)}`));
   const quiet = sessionQuiet(s);
   if (quiet) matters.push(troubleLine("idle", TEXT.trouble.sessionQuiet(quiet)));
   else for (const a of as.filter(agentQuiet)) matters.push(troubleLine("idle", `${a.goal ?? a.name} · ${TEXT.quietFor(agentQuiet(a))}`));
@@ -242,7 +242,7 @@ function sessionCard(s) {
     h(
       "div",
       { class: "s-l1" },
-      asking ? dot("needs") : s.state === "working" || working ? sessionDot() : dot("done"),
+      asking ? dot("needs") : s.state === "working" || working ? sessionDot(s) : dot("done"),
       // The project names the session only while every project is shown; its colour stays.
       h("span", { class: "sname", title: label(s) }, ui.project === null ? [projectMark(s.project.name, "pname sproj"), h("span", { class: "sep" }, "›")] : tagIcon(color(s.project.name)), h("b", {}, sessionName(s))),
       h("span", { class: "s-meta num" }, [ctx !== undefined ? `${Math.round(ctx)}%` : "", ago(since)].filter(Boolean).join(" · ")),
