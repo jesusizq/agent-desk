@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import * as fs from "node:fs";
+import type { AddressInfo } from "node:net";
+import * as os from "node:os";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { Push } from "../src/server/push.ts";
+import { createDeskServer } from "../src/server/server.ts";
 import type { Store } from "../src/store/store.ts";
 import { addSession, PNG, serve, tempHome, testStore } from "./helpers.ts";
 
@@ -259,6 +263,107 @@ describe("remote access through Tailscale Serve", () => {
       assert.equal(await call("POST", "/api/seen", { ...write, Origin: `https://${remote.host}` }, "{}"), 200);
       assert.equal(await call("POST", "/api/seen", { ...write, Origin: `http://${remote.host}` }, "{}"), 403);
     } finally {
+      server.close();
+    }
+  });
+});
+
+describe("a request through a proxy is never local", () => {
+  const remote = { host: "laptop.tail1234.ts.net:8443", user: "dev@example.com" };
+  /** A raw request, so the Host and proxy headers are exactly the ones given. */
+  const call = async (port: number, method: string, path: string, headers: Record<string, string>, body?: string, address = "127.0.0.1") => {
+    const http = await import("node:http");
+    return new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = http.request({ host: address, port, method, path, headers }, (res) => {
+        let text = "";
+        res.on("data", (d: Buffer) => (text += d));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: text }));
+      });
+      req.on("error", reject);
+      req.end(body);
+    });
+  };
+  // What a port forward, a portproxy, a reverse proxy or Tailscale Serve adds to a request it passes on.
+  const PROXY_HEADERS: Record<string, string>[] = [
+    { "Tailscale-User-Login": remote.user },
+    { "Tailscale-User-Name": "Dev" },
+    { "Tailscale-Headers-Info": "https://tailscale.com/s/serve-headers" },
+    { "X-Forwarded-For": "192.168.1.20" },
+    { "X-Forwarded-Host": "127.0.0.1" },
+    { "X-Forwarded-Proto": "http" },
+    { Forwarded: "for=192.168.1.20" },
+    { Via: "1.1 proxy" },
+    { "X-Real-IP": "192.168.1.20" },
+  ];
+
+  for (const configured of [undefined, remote]) {
+    it(`refuses a local Host carrying any proxy header, and never hands it the secret (${configured ? "remote configured" : "no remote"})`, async () => {
+      const store = testStore();
+      addSession(store);
+      const server = await serve(store, configured);
+      try {
+        const local = `127.0.0.1:${server.port}`;
+        const real = await call(server.port, "GET", "/", { Host: local });
+        assert.ok(real.status === 200 && real.body.includes(store.secret()), "a request from this machine is local");
+        for (const proxy of PROXY_HEADERS) {
+          for (const host of [local, `localhost:${server.port}`]) {
+            const page = await call(server.port, "GET", "/", { Host: host, ...proxy });
+            assert.equal(page.status, 421, `${host} with ${Object.keys(proxy)[0]} is refused`);
+            assert.ok(!page.body.includes(store.secret()), `${host} with ${Object.keys(proxy)[0]} never gets the secret`);
+            const write = await call(server.port, "POST", "/api/seen", { Host: host, ...proxy, Origin: `http://${local}`, "X-Agent-Desk-Secret": store.secret(), "Content-Type": "application/json" }, "{}");
+            assert.equal(write.status, 421, `${host} with ${Object.keys(proxy)[0]} cannot write even with the secret`);
+          }
+        }
+      } finally {
+        await server.close();
+      }
+    });
+  }
+
+  it("lets Tailscale Serve's own request in only as the configured remote, behind the PIN and its https origin", async () => {
+    const store = testStore();
+    addSession(store);
+    const server = await serve(store, remote);
+    // Tailscale Serve passes the tailnet Host and adds the caller's identity and the X-Forwarded headers.
+    const fromServe = { Host: remote.host, "Tailscale-User-Login": remote.user, "Tailscale-User-Name": "Dev", "X-Forwarded-For": "100.64.0.2", "X-Forwarded-Host": remote.host, "X-Forwarded-Proto": "https" };
+    try {
+      const page = await call(server.port, "GET", "/", fromServe);
+      assert.equal(page.status, 200);
+      assert.ok(page.body.includes("unlock.js") && !page.body.includes(store.secret()), "the PIN page, without the secret");
+      assert.equal((await call(server.port, "GET", "/api/state", fromServe)).status, 401, "locked until the PIN");
+      assert.equal((await call(server.port, "GET", "/api/state", { ...fromServe, "Tailscale-User-Login": "someone@else.com" })).status, 421, "another Tailscale user is refused");
+      const { "Tailscale-User-Login": _login, ...anonymous } = fromServe;
+      assert.equal((await call(server.port, "GET", "/api/state", anonymous)).status, 421, "no Tailscale user is refused");
+
+      const { RemoteUnlock, setPin } = await import("../src/server/remote-unlock.ts");
+      setPin(store.paths.pin, "424242");
+      const cookie = new RemoteUnlock(store.paths.pin, store.secret()).unlock("424242").split(";")[0] ?? "";
+      const write = { ...fromServe, Cookie: cookie, "X-Agent-Desk-Secret": store.secret(), "Content-Type": "application/json" };
+      assert.equal((await call(server.port, "POST", "/api/seen", { ...write, Origin: `https://${remote.host}` }, "{}")).status, 200);
+      assert.equal((await call(server.port, "POST", "/api/seen", { ...write, Origin: `http://127.0.0.1:${server.port}` }, "{}")).status, 403, "a remote write needs the remote origin, not this machine's");
+    } finally {
+      await server.close();
+    }
+  });
+
+  const lan = Object.values(os.networkInterfaces()).flat().find((i) => i?.family === "IPv4" && !i.internal)?.address;
+  it("refuses a connection that does not come from a loopback address, whatever its Host", { skip: lan === undefined ? "no non-loopback IPv4 address on this machine" : false }, async () => {
+    const address = lan ?? "";
+    const store = testStore();
+    addSession(store);
+    // Listening on the LAN address stands for a server reached from elsewhere (bound 0.0.0.0, or forwarded).
+    const probe = createDeskServer(store, 0).listen(0, address);
+    await once(probe, "listening");
+    const port = (probe.address() as AddressInfo).port;
+    probe.close();
+    const server = createDeskServer(store, port).listen(port, address);
+    await once(server, "listening");
+    try {
+      const page = await call(port, "GET", "/", { Host: `127.0.0.1:${port}` }, undefined, address);
+      assert.equal(page.status, 421);
+      assert.ok(!page.body.includes(store.secret()));
+    } finally {
+      server.closeAllConnections();
       server.close();
     }
   });

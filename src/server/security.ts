@@ -38,17 +38,33 @@ function localHosts(port: number): string[] {
   return [`127.0.0.1:${port}`, `localhost:${port}`];
 }
 
-/** True when the request came through the tailnet rather than from this machine. */
-export function isRemote(req: IncomingMessage, access: Access): boolean {
-  return access.remote !== undefined && req.headers.host?.toLowerCase() === access.remote.host;
+/** Where a request comes from: this machine, the configured Tailscale user, or refused with the reason. */
+export type Reach = { from: "local" | "remote" } | { refused: string };
+
+/** Headers only a proxy adds; a browser on this machine never sends them. */
+function proxied(req: IncomingMessage): boolean {
+  return Object.keys(req.headers).some((name) => name.startsWith("tailscale-") || name.startsWith("x-forwarded-") || name === "forwarded" || name === "via" || name === "x-real-ip");
 }
 
-/** Whether a request is local, remote from the configured Tailscale user, or neither (DNS rebinding, strangers). */
-export function hostAllowed(req: IncomingMessage, access: Access): boolean {
+function loopback(address: string | undefined): boolean {
+  return address !== undefined && (address === "::1" || /^(::ffff:)?127\./.test(address));
+}
+
+/**
+ * Local means a loopback socket, a local Host and no proxy header: a proxy (port forward,
+ * portproxy, reverse proxy) can send a local Host for a request from anywhere. A proxied request
+ * is let in only as the configured Tailscale host and login, which Tailscale Serve sets.
+ */
+export function reachOf(req: IncomingMessage, access: Access): Reach {
   const host = req.headers.host?.toLowerCase();
-  if (host === undefined) return false;
-  if (localHosts(access.port).includes(host)) return true;
-  return access.remote !== undefined && host === access.remote.host && req.headers["tailscale-user-login"] === access.remote.user;
+  if (host === undefined) return { refused: "no Host header" };
+  if (!loopback(req.socket.remoteAddress)) return { refused: `connection from ${req.socket.remoteAddress ?? "an unknown address"}, not from this machine` };
+  if (access.remote !== undefined && host === access.remote.host) {
+    return req.headers["tailscale-user-login"] === access.remote.user ? { from: "remote" } : { refused: "unknown Tailscale user" };
+  }
+  if (!localHosts(access.port).includes(host)) return { refused: "unknown Host" };
+  if (proxied(req)) return { refused: "a request through a proxy is never local; reach the desk from another device only through Tailscale Serve (AGENT_DESK_REMOTE_HOST)" };
+  return { from: "local" };
 }
 
 /** Exact Origin only: for the one write a remote device makes before it has the secret (unlocking). */
@@ -56,10 +72,10 @@ export function originAllowed(req: IncomingMessage, access: Access): boolean {
   return access.remote !== undefined && req.headers.origin === `https://${access.remote.host}`;
 }
 
-/** A state-changing request must come from the desk's own page: exact Origin and the secret. */
-export function writeAllowed(req: IncomingMessage, access: Access, secret: string): boolean {
+/** A state-changing request must come from the desk's own page: the exact Origin of where it comes from, and the secret. */
+export function writeAllowed(req: IncomingMessage, access: Access, from: "local" | "remote", secret: string): boolean {
   const origin = req.headers.origin;
-  const origins = [...localHosts(access.port).map((h) => `http://${h}`), ...(access.remote ? [`https://${access.remote.host}`] : [])];
+  const origins = from === "local" ? localHosts(access.port).map((h) => `http://${h}`) : access.remote ? [`https://${access.remote.host}`] : [];
   if (origin === undefined || !origins.includes(origin)) return false;
   const given = req.headers["x-agent-desk-secret"];
   if (typeof given !== "string") return false;

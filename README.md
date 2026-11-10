@@ -134,6 +134,14 @@ Sessions opened in those terminals from then on can receive keys.
 The desk stays on 127.0.0.1. Tailscale Serve publishes it on your tailnet only, never on the
 internet, and the desk lets in only your Tailscale login, after a PIN.
 
+Tailscale Serve is the only way in from another device. Never use Tailscale Funnel, a port forward
+(SSH, router), a WSL portproxy, socat, a reverse proxy, or bind the desk to 0.0.0.0: each makes a
+request from elsewhere look like one from this computer, which needs no PIN and gets the secret that
+sends keys to sessions and ends them. The desk refuses a request that carries a proxy's headers
+(`Tailscale-*`, `X-Forwarded-*`, `Forwarded`, `Via`, `X-Real-IP`) or comes from an address other
+than loopback, unless it is the configured Tailscale host and login; a plain TCP forward running on
+this computer adds neither, so the desk cannot tell it apart.
+
 1. Install Tailscale on the computer and the phone, signed in to the same account. In the admin
    console, under DNS, enable **HTTPS Certificates**.
 2. Publish the desk on the tailnet. It needs root, or `sudo tailscale set --operator=$USER` once.

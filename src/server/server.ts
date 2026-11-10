@@ -14,7 +14,7 @@ import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
 import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
-import { type Access, hostAllowed, IMAGE_HEADERS, isRemote, originAllowed, remoteFromEnv, send, sendJson, writeAllowed } from "./security.ts";
+import { type Access, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, send, sendJson, writeAllowed } from "./security.ts";
 
 const WEB_DIR = path.join(import.meta.dirname, "..", "web");
 const STATIC: Record<string, string> = {
@@ -156,14 +156,16 @@ export function createDeskServer(store: Store, port: number, remote: Access["rem
 }
 
 async function handle(store: Store, access: Access, secret: string, unlock: RemoteUnlock, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (!hostAllowed(req, access)) {
+  const reach = reachOf(req, access);
+  if ("refused" in reach) {
     // Opened directly, a sentence for the person; the page's own requests read the status.
     if (req.url === "/") return send(res, 421, REFUSED_PAGE, "text/plain; charset=utf-8");
-    return sendJson(res, 421, { error: "unknown Host or Tailscale user" });
+    return sendJson(res, 421, { error: `refused: ${reach.refused}` });
   }
+  const remote = reach.from === "remote";
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${access.port}`);
   const route = url.pathname;
-  if (isRemote(req, access) && !unlock.unlocked(req)) return locked(route, access, unlock, req, res);
+  if (remote && !unlock.unlocked(req)) return locked(route, access, unlock, req, res);
 
   if (req.method === "GET" || req.method === "HEAD") {
     if (route === "/") return page(res, secret);
@@ -183,15 +185,15 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
 
   if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
   // A device already unlocked may still show an old PIN page (a phone restoring a tab): nothing to do.
-  if (route === "/api/unlock" && isRemote(req, access)) return sendJson(res, 200, { unlocked: true });
-  if (!writeAllowed(req, access, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
+  if (route === "/api/unlock" && remote) return sendJson(res, 200, { unlocked: true });
+  if (!writeAllowed(req, access, reach.from, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
   if (route === "/api/seen") return sendJson(res, 200, store.markAllSeen());
   if (route === "/api/images") return attachImage(store, req, res);
   if (route === "/api/push/subscribe" || route === "/api/push/unsubscribe") {
     try {
       const body = await readBody(req);
       const push = new Push(store.paths.push);
-      if (route === "/api/push/subscribe") push.subscribe(subscription(body), isRemote(req, access) ? (unlock.unlockedUntil(req) ?? 0) : NO_PIN);
+      if (route === "/api/push/subscribe") push.subscribe(subscription(body), remote ? (unlock.unlockedUntil(req) ?? 0) : NO_PIN);
       else push.unsubscribe(text(fields(body, "body").endpoint, "endpoint", 2048));
       return sendJson(res, 200, { ok: true });
     } catch (error) {

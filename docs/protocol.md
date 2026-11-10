@@ -113,7 +113,9 @@ Exit code 2 means the input was wrong (the message says which part and why); 1 m
 ## HTTP
 
 The server binds 127.0.0.1 and refuses any request whose `Host` is not `127.0.0.1:<port>` or
-`localhost:<port>`.
+`localhost:<port>`, that comes from an address other than loopback, or that carries a proxy's
+headers (`Tailscale-*`, `X-Forwarded-*`, `Forwarded`, `Via`, `X-Real-IP`), except the configured
+Tailscale host and login (`SECURITY.md`).
 
 | Request | Purpose |
 | --- | --- |
