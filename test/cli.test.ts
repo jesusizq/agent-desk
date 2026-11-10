@@ -136,6 +136,19 @@ describe("cli decisions", () => {
     assert.deepEqual(parsed.problems, []);
   });
 
+  it("marks an answer that was only what the developer typed next, in the text and in JSON", async () => {
+    const store = sessionOfThisProcess();
+    decide(store, "Keep the old table?", "Keep it");
+    const q = store.ask({ sessionId: "me", kind: "waiting", text: "¿Añado esa línea?" });
+    store.closeOpen("me", { answer: "esas frases en rojo…", probable: true, which: (x) => x.id === q.id });
+    const out = await cli(store.paths.home, "decisions");
+    assert.equal(out.code, 0, out.stderr);
+    assert.match(out.stdout, /Asked: ¿Añado esa línea\?\n {2}Answer \(next message in the terminal\): esas frases en rojo…/);
+    assert.match(out.stdout, /Asked: Keep the old table\?\n {2}Answer: Keep it/, "a certain answer is unmarked");
+    const json = JSON.parse((await cli(store.paths.home, "decisions", "--json")).stdout) as { decisions: { question: { text: string; answer: { probable?: boolean } } }[] };
+    assert.deepEqual(json.decisions.map((d) => [d.question.text, d.question.answer.probable]), [["¿Añado esa línea?", true], ["Keep the old table?", undefined]]);
+  });
+
   it("outside a session, lists the project of the current folder, or the one named, and reports unreadable records", async () => {
     const home = tempHome();
     const store = new Store(home);
@@ -172,5 +185,57 @@ describe("cli decisions", () => {
     const outside = await cli(tempHome(), "decisions");
     assert.equal(outside.code, 2);
     assert.match(outside.stderr, /does not run inside a registered session, and no session in the store ran in .*; pass --project/);
+  });
+});
+
+describe("cli unanswered", () => {
+  it("opens again the question the developer's reply did not answer, and keeps it out of the decisions", async () => {
+    const store = sessionOfThisProcess();
+    const q = store.ask({ sessionId: "me", kind: "waiting", text: "¿Añado esa línea?" });
+    store.closeOpen("me", { answer: "esas frases en rojo…", probable: true });
+    const out = await cli(store.paths.home, "unanswered");
+    assert.equal(out.code, 0, out.stderr);
+    assert.equal(out.stdout, `open again on the desk, its reply set aside: ${q.id} "¿Añado esa línea?"\n`);
+    assert.deepEqual(store.openQuestions("me").map((x) => x.id), [q.id]);
+    assert.match((await cli(store.paths.home, "decisions")).stdout, /^No decisions recorded/);
+    const again = await cli(store.paths.home, "unanswered");
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(again.stdout, `already open on the desk: ${q.id} "¿Añado esa línea?"\n`);
+  });
+
+  it("refuses to set aside an answer given on the desk unless the question is named, and explains bad input", async () => {
+    const store = sessionOfThisProcess();
+    const q = store.ask({ sessionId: "me", kind: "question", text: "Keep the table?" });
+    const stop = store.listen("me");
+    store.answerFromDesk(q.id, "yes");
+    stop();
+    const refused = await cli(store.paths.home, "unanswered");
+    assert.equal(refused.code, 2);
+    assert.match(refused.stderr, new RegExp(`given to that very question on the desk, so it stays; .*--question ${q.id}`));
+    assert.equal(store.getQuestion(q.id)?.status, "answered");
+    const named = await cli(store.paths.home, "unanswered", "--question", q.id);
+    assert.equal(named.code, 0, named.stderr);
+    assert.equal(store.getQuestion(q.id)?.status, "open");
+    const cases: [string[], RegExp][] = [
+      [["unanswered", "--question", "../q"], /--question: expected an id/],
+      [["unanswered", "--question", "q-none"], /no question q-none of session me/],
+      [["unanswered", "now"], /unexpected argument "now"/],
+    ];
+    for (const [args, message] of cases) {
+      const out = await cli(store.paths.home, ...args);
+      assert.equal(out.code, 2, args.join(" "));
+      assert.match(out.stderr, message, args.join(" "));
+    }
+  });
+
+  it("records an interpretation only for an answer of the turn now running", async () => {
+    const store = sessionOfThisProcess();
+    const q = store.ask({ sessionId: "me", kind: "waiting", text: "Ship it?" });
+    store.closeOpen("me", { answer: "yes", probable: true });
+    store.updateSession("me", (s) => ({ ...s, turnEndedAt: new Date(Date.now() + 1000).toISOString() }));
+    const out = await cli(store.paths.home, "interpret", "Ship today");
+    assert.equal(out.code, 2);
+    assert.match(out.stderr, /agent-desk interpret: no question was answered this turn: the latest answer, to "Ship it\?", was given before this turn began/);
+    assert.equal(store.getQuestion(q.id)?.interpretation, undefined);
   });
 });

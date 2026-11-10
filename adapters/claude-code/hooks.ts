@@ -97,7 +97,8 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // An answer given on the page but not yet delivered is overtaken by what was typed; a message
       // sent from the page while the session works still reaches it, at its next step.
       if (!wasWorking) store.withdrawInbox(sid, prompt);
-      store.closeOpen(sid, { answer: prompt, problems });
+      // What was typed next may be about something else: probable, never a certain answer.
+      store.closeOpen(sid, { answer: prompt, probable: true, problems });
       syncPermissionMarker(store, problems);
       settleAgents(input, ctx, problems);
       return { code: 0 };
@@ -246,6 +247,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
       state: "waiting" as const,
       activity: undefined,
       activityIsCall: undefined,
+      turnEndedAt: at,
       lastMessage: message ? { text: bounded(message, MESSAGE_MAX), at } : undefined,
       sentWhileWorking: s.sentWhileWorking?.map((m) => (m.turnEndedAt ? m : { ...m, turnEndedAt: at })),
     }),
@@ -261,12 +263,16 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   // A question still open here was not answered: this turn started without a typed prompt (e.g. a
   // background task finishing). A turn that asks again replaces it; a report that asks nothing
   // ("still waiting for your answer") leaves it open, or the developer would lose the question.
-  const replaced = () => store.closeOpen(sid, { kinds: ["waiting"], status: "dismissed", problems });
-  const asked = store.openQuestions(sid, problems).filter((q) => q.kind === "question");
+  // One the session opened again (the reply did not answer it) stays until it is answered or asked again.
+  const replaced = () => store.closeOpen(sid, { kinds: ["waiting"], which: (q) => q.setAside === undefined, status: "dismissed", problems });
+  const open = store.openQuestions(sid, problems);
+  const reopened = open.filter((q) => q.setAside !== undefined);
+  const asked = open.filter((q) => q.kind === "question" && q.setAside === undefined);
   if (asked.length > 0) {
     // The model asked through the CLI: the message it ended the turn with explains the question.
     // Its last paragraph is left out only when it repeats the question; anything more it says stays.
     replaced();
+    for (const r of reopened) if (asked.some((q) => sameWords(q.text, r.text))) store.dismiss(r.id);
     const whole = [before, last].filter(Boolean).join("\n\n");
     for (const q of asked) store.addContext(q.id, sameWords(last, q.text) ? before : whole);
     return;
@@ -276,6 +282,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   replaced();
   // The sentences that ask are the question; what the paragraph says around them reads first under it.
   const { question, rest } = splitQuestion(last);
+  if (reopened.some((r) => sameWords(r.text, question))) return;
   store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: question, context: [rest, before].filter(Boolean).join("\n\n") || undefined }));
 }
 

@@ -331,6 +331,166 @@ describe("questions", () => {
     const store = testStore();
     assert.throws(() => store.ask({ sessionId: "ghost", kind: "question", text: "?" }), /no session ghost/);
   });
+
+  it("marks an answer taken from what was typed next as probable, and one given to that very question as certain", () => {
+    const store = testStore();
+    addSession(store);
+    const typed = store.ask({ sessionId: "s1", kind: "waiting", text: "Add that line?" });
+    store.closeOpen("s1", { answer: "the red sentences are odd", probable: true });
+    assert.deepEqual(store.getQuestion(typed.id)?.answer, { text: "the red sentences are odd", at: store.getQuestion(typed.id)?.closedAt, via: "terminal", probable: true });
+    const dialog = store.ask({ sessionId: "s1", kind: "question", text: "Which size?", dialog: true });
+    store.closeOpen("s1", { answer: "M", which: (q) => q.id === dialog.id });
+    assert.equal(store.getQuestion(dialog.id)?.answer?.probable, undefined, "a dialog's own answer is certain");
+    const desk = store.ask({ sessionId: "s1", kind: "question", text: "Keep it?" });
+    const stop = store.listen("s1");
+    store.answerFromDesk(desk.id, "yes");
+    stop();
+    assert.equal(store.getQuestion(desk.id)?.answer?.probable, undefined);
+    const [withdrawn] = store.withdrawInbox("s1", "no, wait");
+    assert.deepEqual([withdrawn?.answer?.text, withdrawn?.answer?.probable], ["no, wait", true], "typed instead of the desk's answer: probable");
+  });
+
+  it("gives every question one reply closes the same time", () => {
+    const store = testStore();
+    addSession(store);
+    store.ask({ sessionId: "s1", kind: "question", text: "One?" });
+    store.ask({ sessionId: "s1", kind: "waiting", text: "Two?" });
+    const closed = store.closeOpen("s1", { answer: "x", probable: true });
+    assert.equal(new Set(closed.map((q) => q.answer?.at)).size, 1);
+  });
+});
+
+describe("a reply that did not answer", () => {
+  /** A question of s1 closed by what the developer typed next, as the adapter records it. */
+  const typedNext = (store: Store, text: string, reply: string) => {
+    const q = store.ask({ sessionId: "s1", kind: "waiting", text });
+    store.addMessage({ sessionId: "s1", from: "developer", text: reply, via: "terminal" });
+    store.closeOpen("s1", { answer: reply, probable: true, which: (x) => x.id === q.id });
+    return q;
+  };
+  const project = { dir: "/work/shop" };
+  const decided = (store: Store) => store.decisions({ project, limit: 50 }).decisions.map((d) => (d.source === "question" ? d.question.text : d.result.title));
+
+  it("opens the question again in its place, sets the reply aside as a message, and keeps it out of the decisions", () => {
+    const store = testStore();
+    addSession(store);
+    const first = store.ask({ sessionId: "s1", kind: "question", text: "Asked first?" });
+    const q = typedNext(store, "¿Añado esa línea?", "esas frases en rojo…");
+    store.interpret("s1", "Add the line");
+    const later = store.ask({ sessionId: "s1", kind: "question", text: "Asked later?" });
+    assert.deepEqual(decided(store), ["¿Añado esa línea?"]);
+
+    const { reopened, alreadyOpen } = store.unanswered("s1");
+    assert.deepEqual([reopened.map((x) => x.id), alreadyOpen], [[q.id], []]);
+    const now = store.getQuestion(q.id);
+    assert.equal(now?.status, "open");
+    assert.deepEqual([now?.answer, now?.closedAt, now?.interpretation], [undefined, undefined, undefined]);
+    assert.deepEqual(now?.setAside?.map((a) => [a.text, a.via, a.probable]), [["esas frases en rojo…", "terminal", true]]);
+    assert.equal(now?.askedAt, q.askedAt);
+    assert.deepEqual(store.openQuestions("s1").map((x) => x.id), [first.id, q.id, later.id], "oldest first, by when it was asked");
+    assert.deepEqual(fs.readdirSync(store.paths.questionDir("closed")), [], "no copy left among the closed ones");
+    assert.deepEqual(decided(store), []);
+    assert.deepEqual(store.decisions({ project, limit: 50, unanswered: true }).decisions, [], "not a question closed without an answer either: it is open");
+    assert.deepEqual(store.listMessages("s1").map((m) => [m.from, m.text]), [["developer", "esas frases en rojo…"]], "the reply stays in the conversation");
+  });
+
+  it("changes nothing when run again, until another answer comes", () => {
+    const store = testStore();
+    addSession(store);
+    const older = typedNext(store, "Older?", "an answer");
+    const q = typedNext(store, "Add that line?", "something else");
+    store.unanswered("s1");
+    const before = store.getQuestion(q.id);
+    const again = store.unanswered("s1");
+    assert.deepEqual([again.reopened, again.alreadyOpen.map((x) => x.id)], [[], [q.id]]);
+    assert.deepEqual(store.getQuestion(q.id), before);
+    assert.equal(store.getQuestion(older.id)?.status, "answered", "an older answer is never taken for it");
+    assert.deepEqual(store.unanswered("s1", q.id).alreadyOpen.map((x) => x.id), [q.id]);
+
+    store.closeOpen("s1", { answer: "yes, add it", probable: true });
+    assert.deepEqual(decided(store), ["Add that line?", "Older?"], "answered at last, it is a decision again");
+    assert.equal(store.getQuestion(q.id)?.answer?.text, "yes, add it");
+    assert.deepEqual(store.getQuestion(q.id)?.setAside?.map((a) => a.text), ["something else"]);
+  });
+
+  it("opens again every question the same reply closed", () => {
+    const store = testStore();
+    addSession(store);
+    const a = store.ask({ sessionId: "s1", kind: "question", text: "Bars or line?" });
+    const b = store.ask({ sessionId: "s1", kind: "waiting", text: "Deploy?" });
+    store.closeOpen("s1", { answer: "unrelated", probable: true });
+    assert.deepEqual(store.unanswered("s1").reopened.map((q) => q.id).sort(), [a.id, b.id].sort());
+  });
+
+  it("refuses when the latest answer was given to that very question, unless it is named", () => {
+    const store = testStore();
+    addSession(store);
+    typedNext(store, "Older?", "typed");
+    const q = store.ask({ sessionId: "s1", kind: "question", text: "Keep the table?" });
+    const stop = store.listen("s1");
+    store.answerFromDesk(q.id, "yes");
+    stop();
+    assert.throws(() => store.unanswered("s1"), (e: Error) => e instanceof InputError && /given to that very question on the desk.*--question q-/.test(e.message));
+    assert.equal(store.getQuestion(q.id)?.status, "answered");
+    assert.deepEqual(store.unanswered("s1", q.id).reopened.map((x) => x.id), [q.id]);
+    assert.deepEqual(store.getQuestion(q.id)?.setAside?.map((a) => [a.text, a.via]), [["yes", "desk"]]);
+
+    const dialog = store.ask({ sessionId: "s1", kind: "question", text: "Which size?", dialog: true });
+    store.closeOpen("s1", { answer: "M", which: (x) => x.id === dialog.id });
+    assert.throws(() => store.unanswered("s1"), /in the session's own dialog/);
+  });
+
+  it("refuses what it cannot set aside: another session's question, a permission prompt, one closed without an answer", () => {
+    const store = testStore();
+    addSession(store);
+    addSession(store, "s2");
+    assert.throws(() => store.unanswered("s1"), /no answered question to open again/);
+    const other = store.ask({ sessionId: "s2", kind: "question", text: "Theirs?" });
+    store.closeOpen("s2", { answer: "x", probable: true });
+    assert.throws(() => store.unanswered("s1", other.id), /no question .* of session s1/);
+    const prompt = store.ask({ sessionId: "s1", kind: "permission", text: "Run rm?" });
+    store.closeOpen("s1", { kinds: ["permission"] });
+    assert.throws(() => store.unanswered("s1", prompt.id), /permission prompt/);
+    const gone = store.ask({ sessionId: "s1", kind: "question", text: "Gone?" });
+    store.dismiss(gone.id);
+    assert.throws(() => store.unanswered("s1", gone.id), /closed without an answer \(dismissed\)/);
+    assert.throws(() => store.unanswered("ghost"), /no session ghost/);
+  });
+
+  it("opens a question once while processes run it at the same time", async () => {
+    const store = testStore();
+    addSession(store);
+    const q = typedNext(store, "Add that line?", "something else");
+    const outputs = await workers(store.paths.home, "unanswered", 3, 4);
+    const runs = outputs.flatMap((o) => JSON.parse(o.stdout) as { reopened: number; alreadyOpen: number }[]);
+    assert.equal(runs.reduce((n, r) => n + r.reopened, 0), 1, "one run opened it, every other found it open");
+    assert.equal(runs.reduce((n, r) => n + r.alreadyOpen, 0), runs.length - 1);
+    assert.deepEqual(store.getQuestion(q.id)?.setAside?.map((a) => a.text), ["something else"]);
+    assert.deepEqual(store.listQuestions().map((x) => x.status), ["open"]);
+  });
+
+  it("attaches an interpretation only to the answer of the turn now running", () => {
+    const store = testStore();
+    addSession(store);
+    const old = typedNext(store, "Older?", "yes");
+    const turnEnded = new Date(Date.parse(store.getQuestion(old.id)?.answer?.at ?? "") + 500).toISOString();
+    store.updateSession("s1", (s) => ({ ...s, turnEndedAt: turnEnded }));
+    assert.throws(() => store.interpret("s1", "Yes to the older one"), (e: Error) => e instanceof InputError && /^no question was answered this turn: the latest answer, to "Older\?", was given before this turn began/.test(e.message));
+    assert.equal(store.getQuestion(old.id)?.interpretation, undefined, "never attached to an older one");
+
+    const q = typedNext(store, "Add that line?", "add it under the title");
+    store.interpret("s1", "The line goes under the title");
+    assert.equal(store.getQuestion(q.id)?.interpretation, "The line goes under the title");
+    store.unanswered("s1");
+    assert.throws(() => store.interpret("s1", "x"), /no question was answered this turn/, "a reply set aside is no answer");
+
+    const desk = store.ask({ sessionId: "s1", kind: "question", text: "Keep it?" });
+    const stop = store.listen("s1");
+    store.answerFromDesk(desk.id, "keep");
+    stop();
+    store.interpret("s1", "Keep the table as it is");
+    assert.equal(store.getQuestion(desk.id)?.interpretation, "Keep the table as it is", "answered on the desk in this turn");
+  });
 });
 
 describe("archive", () => {

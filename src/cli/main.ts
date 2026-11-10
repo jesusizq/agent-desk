@@ -27,10 +27,16 @@ Posting (from a session; the session is found from the calling process, or --ses
   agent-desk agent "<name or description>" [--summary "<what it must deliver>"] [--goal "<text>"] [--state ${AGENT_STATES.join("|")}]
                     [--activity "<text>"] [--branch <name>] [--commit <sha>] [--after "<name>"]...
   agent-desk service <name> <http://localhost:PORT/...>    agent-desk service <name> --stop
-  agent-desk interpret "<how the latest answer was understood>"
+  agent-desk interpret "<how the answer given this turn was understood>"
+                    refused when no question was answered in this turn
+  agent-desk unanswered [--question <id>]
+                    the developer's reply did not answer the question: it opens again on the desk and is no
+                    decision. Default: the questions the latest answer closed, unless it was given to that very
+                    question (on the desk, or in a dialog); --question opens that one whatever its answer
   agent-desk decisions [--search "<words>"] [--project <folder or name>] [--limit N] [--permissions] [--dismissed] [--json]
                     what the session's project already decided, newest first (${DECISIONS_SHOWN} by default): each
-                    answer verbatim with how it was understood, and the decisions reported with results
+                    answer verbatim with how it was understood ("next message in the terminal" when it was only
+                    what the developer typed next), and the decisions reported with results
 
 Reading and serving:
   agent-desk needs            open questions, oldest first
@@ -138,6 +144,14 @@ const COMMANDS: Record<string, Command> = {
     const { values, positionals } = parse(args, {}, 1);
     const q = store.interpret(resolveSession(store, values.session), nonEmpty(positionals[0], "interpretation"));
     print(`interpretation recorded on ${q.id}`);
+  },
+
+  unanswered(args, store) {
+    const { values } = parse(args, { question: { type: "string" } }, 0);
+    const sessionId = resolveSession(store, values.session);
+    const { reopened, alreadyOpen } = store.unanswered(sessionId, values.question === undefined ? undefined : id(values.question, "--question"));
+    for (const q of reopened) print(`open again on the desk, its reply set aside: ${q.id} ${JSON.stringify(headline(q.text))}`);
+    for (const q of alreadyOpen) print(`already open on the desk: ${q.id} ${JSON.stringify(headline(q.text))}`);
   },
 
   decisions(args, store) {
@@ -289,7 +303,7 @@ function describeDecisions(found: { decisions: Decision[]; total: number; projec
     const q = d.question;
     const lines = [`${when} · ${who}${q.kind === "permission" ? " · permission prompt" : ""}`, `  Asked: ${headline(q.text)}`];
     if (q.options.length > 0) lines.push(`  Options: ${q.options.join(" | ")}`);
-    lines.push(q.answer === undefined ? `  Answer: none (${q.status === "dismissed" ? "dismissed" : "closed without an answer"})` : `  Answer: ${indented(cut(q.answer.text))}`);
+    lines.push(q.answer === undefined ? `  Answer: none (${q.status === "dismissed" ? "dismissed" : "closed without an answer"})` : `  Answer${q.answer.probable ? " (next message in the terminal)" : ""}: ${indented(cut(q.answer.text))}`);
     if (q.interpretation !== undefined) lines.push(`  Understood as: ${indented(q.interpretation)}`);
     return lines.join("\n");
   });

@@ -40,6 +40,13 @@ if (task === "increment") {
   const [result] = store.listResults();
   if (!result) throw new Error("no result to mark");
   for (let i = 0; i < Number(count); i++) (task === "seen-result" ? store.markResultSeen(result.id) : store.dismissResult(result.id));
+} else if (task === "unanswered") {
+  const runs: { reopened: number; alreadyOpen: number }[] = [];
+  for (let i = 0; i < Number(count); i++) {
+    const { reopened, alreadyOpen } = store.unanswered("s1");
+    runs.push({ reopened: reopened.length, alreadyOpen: alreadyOpen.length });
+  }
+  process.stdout.write(JSON.stringify(runs));
 } else if (task === "forget") {
   for (let i = 0; i < Number(count); i++) store.forgetSession("s1");
 } else {

@@ -22,6 +22,7 @@ command (Bash) only for what hooks cannot know, and keep it to one call each:
   `--state blocked --activity "<why>"` when one is stuck.
 - A local server worth opening: `agent-desk service <name> http://localhost:PORT` (`--stop` when it stops).
 - When a short answer could be read more than one way: `agent-desk interpret "<how you understood it>"`.
+- If the developer's reply does not answer the question you asked (they wrote about something else): run `agent-desk unanswered`, so the question stays open on the desk and is not kept as a decision.
 
 If the developer wrote to you while you were working, say how you applied it within your usual
 summary of the turn: no separate list of their messages, and nothing about messages when there were

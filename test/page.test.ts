@@ -620,6 +620,28 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("!document.querySelector('.col-needs')?.textContent.includes('Told by the stream?')");
   });
 
+  it("shows a question the session opened again in Needs you, in its place by when it was asked", async () => {
+    const reopened = store.ask({ sessionId: "demo-iva", kind: "waiting", text: "Opened again in its place?" });
+    const later = store.ask({ sessionId: "demo-iva", kind: "question", text: "Asked after it?" });
+    store.closeOpen("demo-iva", { answer: "something else entirely", probable: true, which: (q) => q.id === reopened.id });
+    // What waits, in order: the large card, then the rows.
+    const waits = "[...document.querySelectorAll('.col-needs .next .qtext, .col-needs .qrow .qt')].map((e) => e.textContent)";
+    const shows = (text: string) => `${waits}.some((t) => t.includes(${JSON.stringify(text)}))`;
+    try {
+      const page = await open();
+      await page.waitFor(shows("Asked after it?"));
+      assert.equal(await page.eval<boolean>(shows("Opened again in its place?")), false, "answered, it left Needs you");
+      store.unanswered("demo-iva", reopened.id);
+      await page.waitFor(shows("Opened again in its place?"));
+      const order = await page.eval<string[]>(waits);
+      const at = (text: string) => order.findIndex((t) => t.includes(text));
+      assert.ok(at("Opened again in its place?") < at("Asked after it?"), `before the question asked after it: ${JSON.stringify(order)}`);
+    } finally {
+      store.dismiss(reopened.id);
+      store.dismiss(later.id);
+    }
+  });
+
   it("shares one event stream among the tabs of a browser, handed to another tab when its tab closes", async () => {
     const noPoll = "const every = window.setInterval; window.setInterval = (fn, ms, ...rest) => (ms === 1500 ? 0 : every(fn, ms, ...rest));";
     const tab = async () => {

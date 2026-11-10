@@ -32,6 +32,7 @@ import {
   readSeen,
   readService,
   readSession,
+  SET_ASIDE_KEPT,
 } from "../core/model.ts";
 import { ensureDir, isCode, listJson, readJson, withLock, writeAtomic, writeJson } from "./fsx.ts";
 import { StorePaths } from "./paths.ts";
@@ -290,23 +291,27 @@ export class Store {
 
   /**
    * The session moved on (the developer typed in its terminal, a tool ran, the session ended):
-   * every open item of that session is closed. `answer` is recorded on questions it answers.
+   * every open item of that session is closed. `answer` is recorded on questions it answers, marked
+   * `probable` when it is only what the developer wrote next.
    */
   closeOpen(
     sessionId: string,
-    how: { answer?: string; kinds?: readonly QuestionKind[]; which?: (q: Question) => boolean; status?: "answered" | "dismissed"; problems?: string[] },
+    how: { answer?: string; probable?: boolean; kinds?: readonly QuestionKind[]; which?: (q: Question) => boolean; status?: "answered" | "dismissed"; problems?: string[] },
   ): Question[] {
     const closed: Question[] = [];
+    // One time for all one event closes, so the questions one reply closed are told by it.
+    const at = this.stamp();
     for (const q of this.openQuestions(sessionId, how.problems)) {
       if (how.kinds && !how.kinds.includes(q.kind)) continue;
       if (how.which && !how.which(q)) continue;
       closed.push(
         this.changeQuestion(q.id, (cur) => {
           if (cur.status !== "open") return cur;
-          const at = this.stamp();
           const status = how.status ?? "answered";
           const answer: Answer | undefined =
-            status === "answered" && how.answer !== undefined && cur.kind !== "permission" ? { text: bounded(how.answer), at, via: "terminal" } : undefined;
+            status === "answered" && how.answer !== undefined && cur.kind !== "permission"
+              ? compact({ text: bounded(how.answer), at, via: "terminal" as const, probable: how.probable || undefined })
+              : undefined;
           return compact({ ...cur, status, closedAt: at, answer });
         }),
       );
@@ -323,12 +328,84 @@ export class Store {
     return this.changeQuestion(questionId, (q) => (q.status === "open" ? { ...q, status: "dismissed", closedAt: this.stamp() } : q));
   }
 
-  /** Records how the session understood its latest answer. */
+  /**
+   * Records how the session understood the answer of the turn now running: the latest one given
+   * since its previous turn ended. An older answer is never taken for it.
+   */
   interpret(sessionId: string, interpretation: string): Question {
-    const answered = this.readAll(this.paths.questionDir("closed"), readQuestion).filter((q) => q.sessionId === sessionId && q.answer !== undefined);
-    const latest = answered.sort((a, b) => (a.answer?.at ?? "").localeCompare(b.answer?.at ?? "")).at(-1);
-    if (!latest) throw new InputError(`session ${sessionId} has no answered question to attach an interpretation to`);
+    const session = this.getSession(sessionId);
+    if (!session) throw new InputError(`no session ${sessionId} in the store; it registers when its first hook runs`);
+    const since = session.turnEndedAt ?? session.lastMessage?.at ?? session.startedAt;
+    const answered = this.readAll(this.paths.questionDir("closed"), readQuestion)
+      .filter((q) => q.sessionId === sessionId && q.answer !== undefined)
+      .sort((a, b) => (a.answer?.at ?? "").localeCompare(b.answer?.at ?? ""));
+    const latest = answered.at(-1);
+    if (!latest?.answer || latest.answer.at <= since) {
+      const before = latest ? `: the latest answer, to ${JSON.stringify(headline(latest.text))}, was given before this turn began` : "";
+      throw new InputError(`no question was answered this turn${before}; the interpretation was not recorded`);
+    }
     return this.changeQuestion(latest.id, (q) => ({ ...q, interpretation }));
+  }
+
+  /**
+   * The session says the developer's reply did not answer what it asked: the question opens again, in
+   * its place among the open ones (by when it was asked), and the reply is set aside (it stays in the
+   * conversation, and in `setAside`), never kept as its answer, so it is no decision. Without
+   * `questionId`: the questions the session's latest answer closed, refused when that answer is
+   * certain. A question already open is left as it is, so running it again changes nothing.
+   */
+  unanswered(sessionId: string, questionId?: string): { reopened: Question[]; alreadyOpen: Question[] } {
+    this.requireSession(sessionId);
+    const targets = questionId === undefined ? this.lastReplied(sessionId) : [this.replied(sessionId, questionId)];
+    const reopened: Question[] = [];
+    const alreadyOpen: Question[] = [];
+    for (const target of targets) {
+      if (target.status === "open") {
+        alreadyOpen.push(target);
+        continue;
+      }
+      const reply = target.answer;
+      let opened = false;
+      const now = this.changeQuestion(target.id, (cur) => {
+        if (cur.status === "open") return cur; // opened again meanwhile, or never closed
+        if (cur.answer === undefined || cur.answer.at !== reply?.at) {
+          throw new InputError(`question ${cur.id} was ${cur.answer === undefined ? cur.status : "answered again"} while this ran, so nothing changed; run it again if its answer now is not one either`);
+        }
+        opened = true;
+        const { answer, closedAt: _closed, interpretation: _understood, ...rest } = cur;
+        return { ...rest, status: "open", setAside: [...(cur.setAside ?? []), answer].slice(-SET_ASIDE_KEPT) };
+      });
+      (opened ? reopened : alreadyOpen).push(now);
+    }
+    return { reopened, alreadyOpen };
+  }
+
+  /** A question of the session named to be opened again: any answer it has, certain or not, is set aside. */
+  private replied(sessionId: string, questionId: string): Question {
+    const q = this.getQuestion(questionId);
+    if (!q || q.sessionId !== sessionId) throw new InputError(`no question ${questionId} of session ${sessionId} in the store`);
+    if (q.status === "open") return q;
+    if (q.kind === "permission") throw new InputError(`question ${questionId} is a permission prompt: its answer is whether the tool ran, and cannot be set aside`);
+    if (q.answer === undefined) throw new InputError(`question ${questionId} was closed without an answer (${q.status}); there is no reply to set aside`);
+    return q;
+  }
+
+  /**
+   * The questions the session's latest answer closed, while that answer is probable; the question set
+   * aside last instead, when no answer came since (it is open already).
+   */
+  private lastReplied(sessionId: string): Question[] {
+    const replyAt = (q: Question) => (q.status === "open" ? q.setAside?.at(-1)?.at : q.answer?.at);
+    const mine = this.listQuestions().filter((q) => q.sessionId === sessionId && q.kind !== "permission" && replyAt(q) !== undefined);
+    const latest = mine.sort((a, b) => (replyAt(a) ?? "").localeCompare(replyAt(b) ?? "")).at(-1);
+    if (!latest) throw new InputError(`session ${sessionId} has no answered question to open again`);
+    const answer = latest.answer;
+    if (latest.status === "open" || answer === undefined) return [latest];
+    if (!answer.probable) {
+      const where = answer.via === "desk" ? "on the desk" : "in the session's own dialog";
+      throw new InputError(`the latest answer, to question ${latest.id} (${JSON.stringify(headline(latest.text))}), was given to that very question ${where}, so it stays; to open it again all the same, name it: --question ${latest.id}`);
+    }
+    return mine.filter((q) => q.status === "answered" && q.answer?.probable && q.answer.at === answer.at && q.answer.text === answer.text);
   }
 
   // ── Answers from the desk ───────────────────────────────────────────────
@@ -454,7 +531,7 @@ export class Store {
         const at = this.stamp();
         return replacement === undefined
           ? compact({ ...q, status: "dismissed" as const, closedAt: at, answer: undefined })
-          : { ...q, status: "answered", closedAt: at, answer: { text: bounded(replacement), at, via: "terminal" } };
+          : { ...q, status: "answered", closedAt: at, answer: { text: bounded(replacement), at, via: "terminal", probable: true } };
       }),
     );
   }
@@ -891,7 +968,7 @@ export class Store {
   private archiveUnshownImages(cutoff: Date): number {
     const shown = new Set([
       ...this.listResults().flatMap((r) => r.images.map((i) => i.id)),
-      ...(["open", "closed"] as const).flatMap((status) => this.readAll(this.paths.questionDir(status), readQuestion)).flatMap((q) => q.answer?.images ?? []),
+      ...(["open", "closed"] as const).flatMap((status) => this.readAll(this.paths.questionDir(status), readQuestion)).flatMap((q) => [q.answer, ...(q.setAside ?? [])].flatMap((a) => a?.images ?? [])),
       ...this.subdirs(this.paths.messagesDir).flatMap((dir) => this.readAll(dir, readConversationEntry)).flatMap((m) => m.images ?? []),
     ]);
     let names: string[];
@@ -1060,6 +1137,12 @@ export class Store {
 const ANSWER_MAX = 20_000;
 const MESSAGES_KEPT = 500;
 /** A prompt can be a pasted log; the history keeps a bounded copy of it. */
+/** A question's first line, at most 200 characters, to name it in a message. */
+function headline(value: string): string {
+  const first = value.trim().split("\n")[0] ?? "";
+  return first.length > 200 ? `${first.slice(0, 199)}…` : first;
+}
+
 function bounded(answer: string): string {
   return answer.length > ANSWER_MAX ? `${answer.slice(0, ANSWER_MAX - 1)}…` : answer;
 }

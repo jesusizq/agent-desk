@@ -61,6 +61,8 @@ export type Session = {
    * a monitor, a wait): it is waiting on its own job, not quiet, until its next call.
    */
   waitsForJob?: boolean;
+  /** When its latest turn ended: an answer given after it belongs to the turn now running. */
+  turnEndedAt?: string;
   /** The session's last message at the end of a turn: shown quietly unless it asks something. */
   lastMessage?: { text: string; at: string };
   /** How many messages its conversation has received, so a reader sees one added mid-turn. */
@@ -84,8 +86,12 @@ export const ANSWER_CHANNELS = ["terminal", "desk"] as const;
 /** Images the developer can attach to one answer or message from the desk. */
 export const ATTACHED_IMAGES_MAX = 10;
 
-/** `images`: ids of images in the store the developer attached on the desk. */
-export type Answer = { text: string; at: string; via: (typeof ANSWER_CHANNELS)[number]; images?: string[] };
+/**
+ * `images`: ids of images in the store the developer attached on the desk. `probable`: taken from
+ * the developer's next message in the terminal, which may be about something else; an answer given
+ * to that very question (on the desk, or in the provider's own dialog) is certain and has none.
+ */
+export type Answer = { text: string; at: string; via: (typeof ANSWER_CHANNELS)[number]; images?: string[]; probable?: boolean };
 
 /** The questions asked together: `index` is this one's place among `size` of them, from 0. */
 export type QuestionGroup = { id: string; index: number; size: number };
@@ -107,6 +113,11 @@ export type Question = {
   /** How the session understood the answer, when it reports it. */
   interpretation?: string;
   closedAt?: string;
+  /**
+   * Replies that closed it without answering it, as the session said (oldest first): the question
+   * opened again, and they stay in the conversation as messages, never as its answer.
+   */
+  setAside?: Answer[];
   /**
    * A dialog of the provider shown on the desk (a tool asking the developer to choose): its answer
    * goes only to the provider hook that waits for it, as a permission answer does.

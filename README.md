@@ -125,13 +125,23 @@ agent-desk decisions --project invoices-api    # another project, by name or by 
 ```
 
 ```text
-Decisions in invoices-api (/home/demo/Projects/invoices-api), newest first: 1 of 1.
+Decisions in invoices-api (/home/demo/Projects/invoices-api), newest first: 2 of 2.
+
+2026-11-10 09:05Z · session "VAT rounding" (demo-iva)
+  Asked: Round the VAT per line?
+  Answer (next message in the terminal): Per line, like the PDF
 
 2026-11-10 08:32Z · session "VAT rounding" (demo-iva)
   Asked: Number invoices with one series per year?
   Answer: Yes, one series per year
   Understood as: Format 2026-0001; the counter restarts at 1 every 1 January.
 ```
+
+An answer given on the desk to that very question, or in the session's own dialog, is certain. One
+taken from the next message you typed in the terminal is marked as such: you may have written about
+something else. When you did, the session runs `agent-desk unanswered`: the question opens again in
+Needs you, in its place, and your message stays in the conversation, not as a decision. An
+interpretation (`agent-desk interpret`) goes only on an answer given in the session's current turn.
 
 It also lists the decisions sessions reported with their results, and the ones archived after 60
 days. `--json` gives the whole records; details in [docs/protocol.md](docs/protocol.md#cli).

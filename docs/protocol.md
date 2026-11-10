@@ -10,8 +10,8 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 
 | Path | Record | Written by |
 | --- | --- | --- |
-| `sessions/<session>.json` | `Session`: provider label, project (`name`, `dir`, and `worktree` when the session works in a linked git worktree of it; see below), title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded (`activityIsCall` when that activity is the tool call its adapter recorded, "Bash: npm test", rather than words the session or the adapter wrote: the page leaves calls off its session cards), when its latest tool calls failed in a row and the latest of them (`failedAt`, `failedWhat`: a successful call or the end of the turn empties them; the page warns at three), whether its latest call started or awaits a job of its own (`waitsForJob`: a background command or agent, a monitor, a wait; the page then shows it waiting on its job, never quiet), last message of the turn, how many messages its conversation has received (`messageCount`, counted by the store as each is added, so a page showing the conversation sees one added mid-turn), whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
-| `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer and how it was given (`terminal`, `desk`), interpretation, `dialog` when it is a provider dialog whose answer only the hook waiting for it takes, `several` when more than one option can be picked (the answer names them, separated by `, `), `group` (`id`, `index` from 0, `size` from 2 to 10) shared by questions asked together, which the session waits for all of | hooks, `agent-desk ask`, the page |
+| `sessions/<session>.json` | `Session`: provider label, project (`name`, `dir`, and `worktree` when the session works in a linked git worktree of it; see below), title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded (`activityIsCall` when that activity is the tool call its adapter recorded, "Bash: npm test", rather than words the session or the adapter wrote: the page leaves calls off its session cards), when its latest tool calls failed in a row and the latest of them (`failedAt`, `failedWhat`: a successful call or the end of the turn empties them; the page warns at three), whether its latest call started or awaits a job of its own (`waitsForJob`: a background command or agent, a monitor, a wait; the page then shows it waiting on its job, never quiet), when its latest turn ended (`turnEndedAt`: an answer given after it belongs to the turn now running), last message of the turn, how many messages its conversation has received (`messageCount`, counted by the store as each is added, so a page showing the conversation sees one added mid-turn), whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
+| `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer, how it was given (`via`: `terminal`, `desk`) and whether it is only `probable` (see below), interpretation, `setAside`: the replies that closed it without answering it (see below), `dialog` when it is a provider dialog whose answer only the hook waiting for it takes, `several` when more than one option can be picked (the answer names them, separated by `, `), `group` (`id`, `index` from 0, `size` from 2 to 10) shared by questions asked together, which the session waits for all of | hooks, `agent-desk ask`, the page |
 | `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded (`activityIsCall` as on `Session`; the store drops the mark whenever an activity is written without it, so `agent-desk agent --activity` always reads as the session's words), when its latest tool calls failed in a row and the latest of them, and whether its latest call started or awaits a job of its own (as on `Session`), branch, commit, `after` (agents it builds on), times, `ref`, the provider's id of the agent an adapter follows (none on a record only the session reported), and `launch`, the provider's id of the call that launched it, when the adapter follows launches. An adapter that learns an agent's name late renames its record (`Store.renameAgent`); a record already under that name without `ref` is merged into it, keeping its goal, summary, branch, commit and `after` | hooks, `agent-desk agent` |
 | `results/<result>.json` | `Result`: title, summary, status, local URL, image ids, before/after pair, assumptions, taste decisions, checks, when it was seen (`seenAt`) and when it was taken off the desk's list of results already seen (`dismissedAt`; it stays in History) | `agent-desk result` |
 | `images/<image>.<png\|jpg\|webp\|gif>` | a copy of each reported image, and each image the developer attaches to an answer or message on the page; type checked by its first bytes, 20 MB at most. One that no live result, answer or message shows is archived with the rest | `agent-desk result`, the page |
@@ -90,6 +90,39 @@ title whole. A turn that ends with a report is kept as the session's last messag
 on its card ("Finished · waiting for your next instruction"); the session panel always shows it in full, also after its item was dismissed, and can
 reply to it while the session takes messages (see below).
 
+### How sure an answer is
+
+| The answer came from | `via` | `probable` |
+| --- | --- | --- |
+| the desk, given to that very question (an option, its own box, Allow or Deny) | `desk` | absent |
+| the provider's dialog, answered in the terminal (Claude Code's AskUserQuestion) | `terminal` | absent |
+| the developer's next message in the terminal, which closes every open question of the session | `terminal` | `true` |
+| a message typed in the terminal over a desk answer still in the inbox | `terminal` | `true` |
+
+A probable answer may be about something else. A session that sees its question was not answered
+runs `agent-desk unanswered`: the question opens again, keeps its `askedAt` (so its place among the
+open ones, oldest first), loses its `answer`, `closedAt` and `interpretation`, and the reply goes to
+`setAside` (the last 20). The reply stays in the conversation as the developer's message, never as an
+answer, so `decisions` leaves the question out until it is answered again.
+
+- **Which question:** without `--question`, every question the session's latest answer closed (one
+  reply closes them all at one `at`). When that answer is certain (no `probable`), it is refused,
+  naming the question; `--question <id>` opens that one whatever its answer. A permission prompt, a
+  question closed without an answer and another session's question are refused.
+- **Running it again** changes nothing: a question already open is left as it is, and its set-aside
+  reply still counts as the session's latest, so an older answer is never taken instead.
+- **Concurrent writers:** each question changes under its lock, only while its answer is still the
+  one read; if it was answered or dismissed meanwhile, nothing changes and the command says so. A
+  prompt typed at the same moment either closes the reopened question as its new probable answer or
+  arrives first and leaves it open.
+- **Through the next turn's end:** Claude Code's adapter keeps a reopened question open when the turn
+  ends asking something else, and asks no second one when the turn asks it again.
+
+`agent-desk interpret` records the interpretation on the latest answer given after the session's
+previous turn ended (`turnEndedAt`; for a record without it, its last message's time, then its start):
+the answer the prompt that started the turn gave, or one given on the desk since. With none, it exits
+2 with "no question was answered this turn" and records nothing.
+
 ## Plan limits
 
 `planForecasts` (`src/core/limits.ts`) names a plan window only when it is a real risk: it runs out
@@ -121,8 +154,8 @@ several options sends the ticked ones, joined by `, `, with Send. A digit key on
 Enter sends it.
 
 If the developer types in the terminal while the session waits, before the waiter has taken an
-answer, the adapter withdraws it from the inbox and records the typed text as the answer; typed while
-it works, both reach the session. When the session ends, the question is dismissed.
+answer, the adapter withdraws it from the inbox and records the typed text as its probable answer;
+typed while it works, both reach the session. When the session ends, the question is dismissed.
 
 1. The page posts the text, with the ids of the images attached (`POST /api/images` first; not for
    a permission prompt or a dialog, which take text only); the server closes the question with
@@ -146,7 +179,8 @@ it works, both reach the session. When the session ends, the question is dismiss
 | `result "<title>" --summary S --image <path>[::caption] [--compare 0,1] [--url U] [--failed] [--assumption A] [--decision D] [--check "<criterion> => <verification>"]` | a result; images are copied; refused without `--image` or `--url`, unless `--failed` |
 | `agent "<description>" [--summary] [--goal] [--state] [--activity] [--branch] [--commit] [--after "<description>"]` | creates or updates the agent named after the description (the same name the hooks give it) |
 | `service <name> <url>` / `service <name> --stop` | a local server of the session |
-| `interpret "<text>"` | how the session understood its latest answer |
+| `interpret "<text>"` | how the session understood the answer of the turn now running (see below) |
+| `unanswered [--question <id>]` | the developer's reply did not answer the question: it opens again (see below) |
 | `scan <project dir> [--if-older-than S]` | measures the project's checkouts with read-only git and a file walk; sizes are re-measured at most hourly |
 
 What a session reads: `decisions [--search "<words>"] [--project <folder or name>] [--limit N]
@@ -155,8 +189,9 @@ not ask the developer again. It writes nothing.
 
 - **A decision** is a closed question with an answer (`question` and `waiting` kinds), with its
   interpretation, or the `--decision` lines a session reported with a result, marked as decided by
-  the session. Permission prompts come with `--permissions`; questions closed without an answer
-  (dismissed, or the session moved on) with `--dismissed`.
+  the session. A question opened again with `unanswered` is none until it is answered again.
+  Permission prompts come with `--permissions`; questions closed without an answer (dismissed, or the
+  session moved on) with `--dismissed`.
 - **The project** is `--project`, where a value with a `/` (or `.`, `..`) is a folder and any other
   a project name; without it, the calling session's project folder, or, outside a session, the
   current folder. A folder stands for the deepest recorded project folder holding it, with the
@@ -170,9 +205,10 @@ not ask the developer again. It writes nothing.
   is found in the second. A file that fails to read is skipped and named on stderr (in `problems`
   with `--json`).
 - **Output:** 20 decisions by default (`--limit` 1–500), each with its date (UTC), session, question
-  headline, options, the answer verbatim (cut at 1000 characters, with the count of the rest) and the
-  interpretation; then how many were left out. `--json` gives `{ decisions, total, projects,
-  problems }` with the whole records.
+  headline, options, the answer verbatim (cut at 1000 characters, with the count of the rest; a
+  probable one as `Answer (next message in the terminal):`) and the interpretation; then how many
+  were left out. `--json` gives `{ decisions, total, projects, problems }` with the whole records
+  (`answer.probable`).
 
 Exit code 2 means the input was wrong (the message says which part and why); 1 means anything else.
 

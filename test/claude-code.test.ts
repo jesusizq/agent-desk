@@ -93,7 +93,46 @@ describe("Claude Code hooks", () => {
     handleHook(event("UserPromptSubmit", { prompt: "yes, all of them" }), ctx(store));
     assert.deepEqual(store.openQuestions("cc-1"), []);
     assert.equal(store.getQuestion(q?.id ?? "")?.answer?.text, "yes, all of them");
+    assert.equal(store.getQuestion(q?.id ?? "")?.answer?.probable, true, "what was typed next may be about something else");
     assert.equal(store.getSession("cc-1")?.state, "working");
+  });
+
+  it("keeps a question the session opened again until it is answered, also past a turn that asks something else", () => {
+    const store = testStore();
+    handleHook(event("Stop", { last_assistant_message: "¿Añado esa línea?" }), ctx(store));
+    const [q] = store.openQuestions("cc-1");
+    handleHook(event("UserPromptSubmit", { prompt: "esas frases en rojo, ¿por qué?" }), ctx(store));
+    const turnEnded = store.getSession("cc-1")?.turnEndedAt;
+    assert.ok(turnEnded, "the end of the turn is recorded");
+    store.unanswered("cc-1");
+    handleHook(event("Stop", { last_assistant_message: "Son avisos del linter. ¿Los quito?" }), ctx(store));
+    assert.ok((store.getSession("cc-1")?.turnEndedAt ?? "") > turnEnded);
+    assert.deepEqual(store.openQuestions("cc-1").map((x) => x.text), ["¿Añado esa línea?", "¿Los quito?"]);
+    handleHook(event("Stop", { last_assistant_message: "Hecho.\n\n¿Añado esa línea?" }), ctx(store));
+    assert.deepEqual(store.openQuestions("cc-1").map((x) => x.id), [q?.id], "asked again, it is the same question, still in its place");
+    handleHook(event("UserPromptSubmit", { prompt: "sí, añádela" }), ctx(store));
+    assert.deepEqual([store.getQuestion(q?.id ?? "")?.answer?.text, store.getQuestion(q?.id ?? "")?.setAside?.map((a) => a.text)], ["sí, añádela", ["esas frases en rojo, ¿por qué?"]]);
+  });
+
+  it("opens a question again exactly once while the developer types the next prompt at the same time", async () => {
+    const transcript = path.join(tempHome(), "cc-c.jsonl");
+    for (let round = 0; round < 6; round++) {
+      const home = tempHome();
+      const { run, hook, all } = hookProcesses(home, transcript);
+      await all([hook({ hook_event_name: "Stop", last_assistant_message: "Add that line?" })]);
+      await all([hook({ hook_event_name: "UserPromptSubmit", prompt: "the red sentences, why?" })]);
+      await all([hook({ hook_event_name: "UserPromptSubmit", prompt: "and the title too" }), run([CLI, "unanswered", "--session", "cc-c"])]);
+      const { Store } = await import("../src/store/store.ts");
+      const store = new Store(home);
+      const [q, ...more] = store.listQuestions();
+      assert.deepEqual(more, [], "one question");
+      assert.deepEqual(q?.setAside?.map((a) => a.text), ["the red sentences, why?"], "the reply that did not answer is set aside, once");
+      const files = ["open", "closed"].flatMap((where) => fs.readdirSync(store.paths.questionDir(where as "open" | "closed")));
+      assert.equal(files.length, 1, "in one folder only");
+      // Opened before the new prompt, the prompt closes it as its probable answer; after it, it waits open.
+      if (q?.status === "answered") assert.deepEqual([q.answer?.text, q.answer?.probable], ["and the title too", true]);
+      else assert.equal(q?.status, "open");
+    }
   });
 
   it("closes questions even when the typed prompt is a huge paste", () => {
@@ -1010,7 +1049,7 @@ describe("answers from the desk", () => {
     handleHook(event("PostToolUse", { tool_name: "AskUserQuestion", tool_input: { questions }, tool_response: { questions, answers: { "Which size?": "M" } } }), ctx(store));
     assert.deepEqual(await waiting, { code: 0 }, "the hook gives up: the terminal decided");
     const [q] = store.listQuestions();
-    assert.deepEqual([q?.status, q?.answer?.text, q?.answer?.via], ["answered", "M", "terminal"]);
+    assert.deepEqual([q?.status, q?.answer?.text, q?.answer?.via, q?.answer?.probable], ["answered", "M", "terminal", undefined], "the dialog's own answer is certain");
     assert.equal(q?.group, undefined, "a dialog of one question is no group");
   });
 
