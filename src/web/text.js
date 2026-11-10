@@ -283,8 +283,6 @@ export const TEXT = {
     refused: "This device is not allowed on this desk: sign in to Tailscale with the owner's account.",
     computer: "Can't reach the computer: it may be off or asleep, or Tailscale may be off on this device.",
   },
-  /** @param {number} n */
-  doneCount: (n) => `${n} done`,
   /** @param {string} m */
   pageError: (m) => `Page error: ${m}`,
   backToConversation: "← Conversation",
