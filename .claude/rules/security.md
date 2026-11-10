@@ -38,6 +38,11 @@ command.
 ## Data
 
 - Store files 0600, directories 0700, under `~/.cache/agent-desk/` only.
+- A device that reached the desk through the tailnet keeps what it saved of the desk (the service
+  worker's copy, images in its browser cache, drafts and unsent messages) only while its PIN unlock
+  lasts: every answer to it carries the unlock's end (`X-Agent-Desk-Unlock-Ends`), and the device
+  deletes all of it at a locked answer, at the push saying the PIN ended, or once that end has
+  passed, never showing it after, even offline; only this computer keeps its copy without an end.
 - Ids used in paths are validated against a strict pattern; resolved paths must stay inside the
   store (no traversal through project, session or image names).
 - Images are copied into the store and served from it by id; never served from the path a session
