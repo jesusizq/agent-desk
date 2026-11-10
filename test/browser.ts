@@ -201,6 +201,12 @@ export class Page {
     await this.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   }
 
+  /** The viewport as a PNG, at the device scale emulated. */
+  async screenshot(): Promise<Buffer> {
+    const { data } = await this.send<{ data: string }>("Page.captureScreenshot", { format: "png" });
+    return Buffer.from(data, "base64");
+  }
+
   /** Types text into the focused element, as a keyboard would. */
   async type(text: string): Promise<void> {
     await this.send("Input.insertText", { text });

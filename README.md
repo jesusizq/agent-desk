@@ -248,12 +248,27 @@ For anything the desk cannot do, open the session's terminal from an SSH app suc
 ```sh
 npm ci          # type-checking tools only
 npm run check   # strict type checks: Node code, the page (JSDoc), the VS Code extension
-npm test        # node --test: store, server, CLI, Claude Code adapter, the page in headless Chrome
+npm test        # node --test: store, server, CLI, Claude Code adapter, the page in headless Chrome, its looks
 ```
 
 The page tests drive Chrome through its DevTools protocol, with no test dependency. They use
 `google-chrome` or `chromium` from `PATH`, or the browser in `AGENT_DESK_CHROME`; without one they
 are skipped, except in CI, where they fail.
+
+`test/visual.test.ts` compares 14 screens (the desk with questions and quiet, a session's agents, a
+result's before and after, a History search, each light and dark at 1440 × 900; four phone screens
+at 390 × 844) with the PNGs in `test/visual/<platform>/`. A screen fails when more than 16 pixels
+differ by more than 8 of 255 in a channel: a box moved by 1 px or a colour nudged by 4% fails. The
+failure prints the capture and a copy with the changed pixels in magenta, both under
+`$TMPDIR/agent-desk-visual/`. When a change is intended, look at those, then accept it:
+
+```sh
+npm run visual:update   # draws the baselines again; commit the PNGs that changed
+```
+
+Text is drawn with the machine's fonts, so the baselines hold only on a machine with the fonts in
+`test/visual/<platform>/renderer.json`: elsewhere, and in CI, the test is skipped and says why. A
+Chrome update can shift anti-aliasing; the failure then names both versions.
 
 `git config core.hooksPath .githooks` turns on the repository's hooks, once per clone: `pre-commit`
 runs `npm run check`, `pre-push` runs `npm run check` and `npm test`. Commits and pushes that touch

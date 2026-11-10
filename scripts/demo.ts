@@ -1,17 +1,21 @@
-// Fills a store with realistic demo content to try the page: `node scripts/demo.ts <empty dir>`,
-// then `AGENT_DESK_HOME=<dir> node src/cli/main.ts serve`. Never point it at the real store.
+// Fills a store with realistic demo content to try the page: `node scripts/demo.ts <empty dir> [<ISO time>]`,
+// then `AGENT_DESK_HOME=<dir> node src/cli/main.ts serve`. Never point it at the real store. The time,
+// when given, stands for now: the visual test needs the same store on every run.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Store } from "../src/store/store.ts";
 
 const home = process.argv[2];
-if (!home || !path.isAbsolute(home)) throw new Error("usage: node scripts/demo.ts <absolute path of an empty directory>");
+if (!home || !path.isAbsolute(home)) throw new Error("usage: node scripts/demo.ts <absolute path of an empty directory> [<ISO time standing for now>]");
 if (fs.existsSync(home) && fs.readdirSync(home).length > 0) throw new Error(`${home} is not empty; the demo only writes into a new store`);
+const at = process.argv[3] === undefined ? undefined : Date.parse(process.argv[3]);
+if (at !== undefined && !Number.isFinite(at)) throw new Error(`${process.argv[3]} is not a time; give an ISO time such as 2026-11-10T10:30:00Z, or none for now`);
+const now = () => at ?? Date.now();
 
 // A clock that never repeats a millisecond, so what the demo adds first is always the oldest.
 let last = 0;
-const store = new Store(home, () => new Date((last = Math.max(Date.now(), last + 1))));
-const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+const store = new Store(home, () => new Date((last = Math.max(now(), last + 1))));
+const ago = (min: number) => new Date(now() - min * 60_000).toISOString();
 // Real screenshots of a sample shop page, kept with this script.
 const IMAGES = path.join(import.meta.dirname, "demo-images");
 const image = (name: string) => path.join(IMAGES, name);
@@ -24,7 +28,7 @@ const sessions = [
 for (const s of sessions) {
   store.upsertSession({ id: s.id, provider: "Claude Code", project: { name: s.project, dir: s.dir }, title: s.title, terminal: "vscode", startedAt: ago(s.started) });
 }
-store.mergeMetrics({ sessionId: "demo-checkout", model: "Opus 5.5", effort: "high", branch: "feat/checkout-mobile", contextPercent: 71, planWindows: [{ label: "5 h", percent: 42, resetsAt: new Date(Date.now() + 80 * 60_000).toISOString() }], permissionMode: "auto", cacheExpiresAt: new Date(Date.now() + 3 * 60_000).toISOString(), costUsd: 4.12 });
+store.mergeMetrics({ sessionId: "demo-checkout", model: "Opus 5.5", effort: "high", branch: "feat/checkout-mobile", contextPercent: 71, planWindows: [{ label: "5 h", percent: 42, resetsAt: new Date(now() + 80 * 60_000).toISOString() }], permissionMode: "auto", cacheExpiresAt: new Date(now() + 3 * 60_000).toISOString(), costUsd: 4.12 });
 store.mergeMetrics({ sessionId: "demo-pagos", model: "Sonnet 5.5", effort: "medium", branch: "feat/stripe-webhooks", contextPercent: 34, permissionMode: "default" });
 store.mergeMetrics({ sessionId: "demo-iva", model: "Opus 5.5", effort: "xhigh", branch: "fix/vat-rounding", contextPercent: 86, suggestion: { reason: "context-full", command: "/compact" } });
 
