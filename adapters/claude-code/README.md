@@ -8,7 +8,7 @@ answers given on the page back to the session that asked.
 
 | Event | Effect on the desk |
 | --- | --- |
-| `SessionStart` | registers the session (project, terminal program, process ancestry); adds `instructions.md` to the session's context |
+| `SessionStart` | registers the session (project, the repository's main checkout when it starts in a linked git worktree, see `docs/protocol.md`; terminal program, process ancestry); adds `instructions.md` to the session's context |
 | `UserPromptSubmit` | closes the session's open items; the typed prompt is recorded as the answer, also replacing an answer given on the page that had not been delivered yet; the first prompt names the session until Claude Code gives it a title; a prompt typed while the session works is kept until the turn that took it in ends (the instructions ask the session to say how it applied each one) |
 | `Stop` (synchronous) | the turn ended: the last message is kept on the session, shown quietly, and what Claude wrote between its tool calls (read from the end of the session's transcript) joins the conversation, as it also does after the session's tool calls; only when its last paragraph asks something (`?`) does it wait in "Needs you" (replacing a question still open from an earlier turn; a turn that asks nothing leaves that one open), unless the model already asked with `agent-desk ask`, whose question then gets the message as its context (without a last paragraph that only repeats it) |
 | `Stop` (synchronous, also) | starts `agent-desk scan <project>` detached, at low priority: branches and merge state at most every 10 minutes, sizes at most every hour |
@@ -75,3 +75,7 @@ button in the session panel.
   session or the end of a turn until the developer types in the terminal or the session ends (at
   most 23 h). The page shows the answer box only then.
 - Finding the session's process and its terminal reads `/proc`, so it works on Linux only.
+- A session in a worktree of a bare repository, or of one whose git folder lives elsewhere
+  (`--separate-git-dir`), stays a project of its own: there is no main checkout to group it under.
+  A main checkout reached through a symlink is grouped under its real path, while sessions started
+  in it keep the symlinked one: two projects.

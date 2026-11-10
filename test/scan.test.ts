@@ -3,7 +3,8 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { parseWorktreeList, scanProject } from "../src/project/scan.ts";
+import { locateProject } from "../src/project/locate.ts";
+import { parseWorktreeList, projectId, scanProject } from "../src/project/scan.ts";
 import { tempHome } from "./helpers.ts";
 
 const git = (dir: string, ...args: string[]) =>
@@ -45,5 +46,85 @@ describe("project scan", () => {
     const hourLater = await scanProject(repo, later, new Date("2026-10-28T11:30:00.000Z"));
     assert.ok(hourLater.totalBytes >= scan.totalBytes + 100_000, "and measured again after it");
     assert.deepEqual(hourLater.dayStart, scan.dayStart, "the day's starting total is kept");
+  });
+});
+
+describe("project of a folder", () => {
+  /** A repository with one commit, in a fresh temp folder (real path, so comparisons hold). */
+  const repoIn = (name: string) => {
+    const root = fs.realpathSync(tempHome());
+    const repo = path.join(root, name);
+    fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+    git(repo, "init", "-q", "-b", "main");
+    fs.writeFileSync(path.join(repo, "src", "a.txt"), "a");
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "first");
+    return { root, repo };
+  };
+
+  it("is the folder itself in a plain checkout, at its root or below, with the path as given", () => {
+    const { repo } = repoIn("shop");
+    assert.deepEqual(locateProject(repo), { name: "shop", dir: repo });
+    assert.deepEqual(locateProject(path.join(repo, "src")), { name: "src", dir: path.join(repo, "src") });
+    assert.deepEqual(locateProject(`${repo}/`), { name: "shop", dir: `${repo}/` }, "the project id stays the one it had");
+    const outside = fs.realpathSync(tempHome());
+    assert.deepEqual(locateProject(outside), { name: path.basename(outside), dir: outside });
+  });
+
+  it("groups a linked worktree, nested or beside it, under the main checkout, keeping where the session works", () => {
+    const { root, repo } = repoIn("shop");
+    const nested = path.join(repo, ".claude", "worktrees", "agent-1");
+    const beside = path.join(root, "shop-wt-feature");
+    git(repo, "worktree", "add", "-q", "-b", "agent-1", nested);
+    git(repo, "worktree", "add", "-q", "-b", "feature", beside);
+    for (const wt of [nested, beside]) {
+      assert.deepEqual(locateProject(wt), { name: "shop", dir: repo, worktree: wt });
+      assert.equal(projectId(locateProject(wt).dir), projectId(repo), "the same project, under the id it already had");
+      assert.deepEqual(locateProject(path.join(wt, "src")), { name: "src", dir: path.join(repo, "src"), worktree: path.join(wt, "src") });
+    }
+    // Reached through a symlink, it is the same worktree.
+    const link = path.join(root, "link-to-feature");
+    fs.symlinkSync(beside, link);
+    assert.deepEqual(locateProject(link), { name: "shop", dir: repo, worktree: link });
+  });
+
+  it("keeps a submodule its own project, apart from its superproject", () => {
+    const { repo: lib } = repoIn("lib");
+    const { repo: app } = repoIn("app");
+    git(app, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "vendor/lib");
+    const sub = path.join(app, "vendor", "lib");
+    assert.ok(fs.statSync(path.join(sub, ".git")).isFile(), "a submodule's .git is a file, as a worktree's is");
+    assert.deepEqual(locateProject(sub), { name: "lib", dir: sub });
+  });
+
+  it("keeps each worktree of a bare repository its own project: there is no main checkout", () => {
+    const { root, repo } = repoIn("shop");
+    const bare = path.join(root, "shop.git");
+    git(root, "clone", "-q", "--bare", repo, bare);
+    const wt = path.join(root, "shop-main");
+    git(bare, "worktree", "add", "-q", wt, "main");
+    assert.deepEqual(locateProject(wt), { name: "shop-main", dir: wt });
+  });
+
+  it("falls back to the folder itself when git's files are missing, corrupt or point elsewhere", () => {
+    const { root, repo } = repoIn("shop");
+    const wt = path.join(root, "shop-wt");
+    git(repo, "worktree", "add", "-q", "-b", "wt", wt);
+    const dotGit = path.join(wt, ".git");
+    const good = fs.readFileSync(dotGit, "utf8");
+    const gitdir = good.replace(/^gitdir: /, "").trim();
+    const cases: [string, () => void, () => void][] = [
+      ["garbage instead of a gitdir line", () => fs.writeFileSync(dotGit, "\0\0 not git"), () => fs.writeFileSync(dotGit, good)],
+      ["a gitdir that does not exist", () => fs.writeFileSync(dotGit, "gitdir: /nowhere/.git/worktrees/x\n"), () => fs.writeFileSync(dotGit, good)],
+      ["no commondir", () => fs.renameSync(path.join(gitdir, "commondir"), path.join(gitdir, "commondir.off")), () => fs.renameSync(path.join(gitdir, "commondir.off"), path.join(gitdir, "commondir"))],
+      ["a back-link to another worktree", () => fs.writeFileSync(path.join(gitdir, "gitdir"), `${path.join(root, "other", ".git")}\n`), () => fs.writeFileSync(path.join(gitdir, "gitdir"), `${dotGit}\n`)],
+      ["a commondir that is not the main checkout's .git", () => fs.writeFileSync(path.join(gitdir, "commondir"), `${root}\n`), () => fs.writeFileSync(path.join(gitdir, "commondir"), "../..\n")],
+    ];
+    for (const [what, breakIt, repair] of cases) {
+      breakIt();
+      assert.deepEqual(locateProject(wt), { name: "shop-wt", dir: wt }, what);
+      repair();
+      assert.equal(locateProject(wt).dir, repo, `${what}, repaired`);
+    }
   });
 });

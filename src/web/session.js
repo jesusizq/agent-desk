@@ -368,7 +368,7 @@ function morePart(s, m) {
       { class: "rsec" },
       h("h4", {}, TEXT.details),
       sessionDetails(s, m),
-      h("div", { class: "faint mono" }, [s.project.dir, s.terminal && (TERMINAL_NAMES[s.terminal] ?? s.terminal), TEXT.running(ago(s.startedAt))].filter(Boolean).join(" · ")),
+      h("div", { class: "faint mono" }, [s.project.worktree ?? s.project.dir, s.terminal && (TERMINAL_NAMES[s.terminal] ?? s.terminal), TEXT.running(ago(s.startedAt))].filter(Boolean).join(" · ")),
     ),
   ];
 }

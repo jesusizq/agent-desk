@@ -41,7 +41,11 @@ export function readSession(value: unknown, where = "session"): Session {
   return compact({
     id: id(f.id, `${where}.id`),
     provider: label(f.provider, `${where}.provider`),
-    project: { name: label(project.name, `${where}.project.name`), dir: nonEmpty(project.dir, `${where}.project.dir`, 4096) },
+    project: compact({
+      name: label(project.name, `${where}.project.name`),
+      dir: nonEmpty(project.dir, `${where}.project.dir`, 4096),
+      worktree: optional(project.worktree, `${where}.project.worktree`, (v, w) => nonEmpty(v, w, 4096)),
+    }),
     title: optional(f.title, `${where}.title`, line),
     state: oneOf(SESSION_STATES)(f.state, `${where}.state`),
     startedAt: isoTime(f.startedAt, `${where}.startedAt`),

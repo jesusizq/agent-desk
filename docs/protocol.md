@@ -10,7 +10,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 
 | Path | Record | Written by |
 | --- | --- | --- |
-| `sessions/<session>.json` | `Session`: provider label, project, title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded, when its latest tool calls failed and the latest of them, last message of the turn, how many messages its conversation has received (`messageCount`, counted by the store as each is added, so a page showing the conversation sees one added mid-turn), whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
+| `sessions/<session>.json` | `Session`: provider label, project (`name`, `dir`, and `worktree` when the session works in a linked git worktree of it; see below), title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded, when its latest tool calls failed and the latest of them, last message of the turn, how many messages its conversation has received (`messageCount`, counted by the store as each is added, so a page showing the conversation sees one added mid-turn), whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
 | `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer and how it was given (`terminal`, `desk`), interpretation, `dialog` when it is a provider dialog whose answer only the hook waiting for it takes, `several` when more than one option can be picked (the answer names them, separated by `, `), `group` (`id`, `index` from 0, `size` from 2 to 10) shared by questions asked together, which the session waits for all of | hooks, `agent-desk ask`, the page |
 | `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded, when its latest tool calls failed and the latest of them, branch, commit, `after` (agents it builds on), times, and `ref`, the provider's id of the agent an adapter follows (none on a record only the session reported). An adapter that learns an agent's name late renames its record (`Store.renameAgent`); a record already under that name without `ref` is merged into it, keeping its goal, summary, branch, commit and `after` | hooks, `agent-desk agent` |
 | `results/<result>.json` | `Result`: title, summary, status, local URL, image ids, before/after pair, assumptions, taste decisions, checks | `agent-desk result` |
@@ -56,6 +56,25 @@ The adapter records the session's own process (`process.pid` with its start time
   terminal whose shell process is one of the session's ancestors.
 - **Liveness:** a session still marked running whose process is gone (or whose pid now belongs to
   another process, by start time) is shown as such.
+
+## Projects
+
+A session's project is the folder it was started in, as given, with one exception
+(`src/project/locate.ts`, used by adapters and `agent-desk scan`): a folder inside a linked git
+worktree belongs to the repository's main checkout, so `~/shop/.claude/worktrees/x` and
+`~/shop-feature` are both `~/shop` (`project.dir`, and so the same `ProjectScan` id), with the folder
+the session works in kept as `project.worktree`. A subfolder maps to the same subfolder of the main
+checkout. The rule reads git's files and runs no git command:
+
+- the nearest `.git` above the folder is a file `gitdir: <common>/worktrees/<name>`, that folder
+  holds `commondir` (naming `<common>`) and a `gitdir` file pointing back at this `.git`;
+- `<common>` is a folder named `.git` whose parent's `.git` is that same folder: the parent is the
+  main checkout (symlinks resolved).
+
+Anything else keeps the folder as its own project: a main checkout, a submodule (its gitdir, under
+`.git/modules/`, has no `commondir`), a worktree of a bare repository or of a repository whose git
+folder lives elsewhere (`--separate-git-dir`), and git files that are missing, unreadable or
+inconsistent.
 
 ## What needs the developer
 

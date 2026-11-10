@@ -16,7 +16,11 @@ export type Session = {
   id: string;
   /** Display label of the AI tool, e.g. "Claude Code". The core never branches on it. */
   provider: string;
-  project: { name: string; dir: string };
+  /**
+   * The project it works on. Inside a linked git worktree, `dir` is the repository's main checkout
+   * (so its worktrees group under one project) and `worktree` the folder the session works in.
+   */
+  project: { name: string; dir: string; worktree?: string };
   title?: string;
   state: SessionState;
   startedAt: string;

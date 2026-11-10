@@ -5,6 +5,7 @@ import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optiona
 import { id, newId, slug } from "../../src/core/ids.ts";
 import { type Agent, FAILURES_KEPT, type SessionProcess } from "../../src/core/model.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
+import { locateProject } from "../../src/project/locate.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { AgentFields, Store } from "../../src/store/store.ts";
 
@@ -149,7 +150,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       retireContinued(input, ctx, problems);
       endTurn(input, ctx, problems);
       store.releaseQuestions(sid, problems); // last: with the turn's message already on them
-      ctx.startScan?.(ctx.env.CLAUDE_PROJECT_DIR || input.cwd);
+      ctx.startScan?.(locateProject(workDir(input, ctx)).dir);
       return { code: 0 };
 
     case "SessionEnd":
@@ -174,9 +175,9 @@ function retireContinued(input: Common, ctx: HookContext, problems: string[]): v
   const { store } = ctx;
   const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
   if (!transcript) return;
-  const dir = ctx.env.CLAUDE_PROJECT_DIR || input.cwd;
+  const dir = workDir(input, ctx);
   for (const s of store.listSessions(problems)) {
-    if (s.id === input.sessionId || s.state === "ended" || s.project.dir !== dir) continue;
+    if (s.id === input.sessionId || s.state === "ended" || (s.project.worktree ?? s.project.dir) !== dir) continue;
     if (!continuedElsewhere(path.join(path.dirname(transcript), `${s.id}.jsonl`))) continue;
     store.withdrawInbox(s.id);
     store.closeOpen(s.id, { status: "dismissed", problems });
@@ -202,9 +203,11 @@ function continuedElsewhere(transcript: string): boolean {
   return false;
 }
 
+/** The folder the session was started in. */
+const workDir = (input: Common, ctx: HookContext) => ctx.env.CLAUDE_PROJECT_DIR || input.cwd;
+
 /** Every event refreshes who and where the session is: it may have been resumed in another terminal. */
 function register(input: Common, ctx: HookContext): void {
-  const dir = ctx.env.CLAUDE_PROJECT_DIR || input.cwd;
   const title = optional(input.raw.session_title, "hook input.session_title", (v, w) => text(v, w, 200));
   const proc = ctx.sessionProcess();
   const terminal = ctx.env.TERM_PROGRAM;
@@ -214,7 +217,7 @@ function register(input: Common, ctx: HookContext): void {
     compact({
       id: input.sessionId,
       provider: PROVIDER,
-      project: { name: path.basename(dir) || dir, dir },
+      project: locateProject(workDir(input, ctx)),
       title: title || undefined,
       process: proc,
       takesMessagesWhileWorking: true, // deliverWhileWorking, after each tool call
@@ -406,7 +409,7 @@ export function turnTexts(transcript: string): string[] {
 
 /** What a tool call says about the session or sub-agent that made it. */
 function recordActivity(input: Common, ctx: HookContext, problems: string[]): void {
-  const what = describeTool(input.raw.tool_name, input.raw.tool_input, ctx.env.CLAUDE_PROJECT_DIR || input.cwd);
+  const what = describeTool(input.raw.tool_name, input.raw.tool_input, workDir(input, ctx));
   const agentId = typeof input.raw.agent_id === "string" ? input.raw.agent_id : "";
   const at = new Date().toISOString();
   // A failed call is kept with its time: several in a row show an agent stuck or looping.

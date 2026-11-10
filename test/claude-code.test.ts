@@ -508,6 +508,28 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(scanned, ["/work/shop"]);
   });
 
+  it("puts a session started in a linked worktree under the repository's main checkout, and scans that one", () => {
+    const root = fs.realpathSync(tempHome());
+    const repo = path.join(root, "shop");
+    const wt = path.join(repo, ".claude", "worktrees", "agent-1");
+    const git = (...args: string[]) => {
+      const r = spawnSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...args], { encoding: "utf8" });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    fs.mkdirSync(repo);
+    git("init", "-q", "-b", "main");
+    git("commit", "-q", "--allow-empty", "-m", "first");
+    git("worktree", "add", "-q", "-b", "agent-1", wt);
+    const store = testStore();
+    const scanned: string[] = [];
+    handleHook(event("SessionStart", { source: "startup", cwd: wt }), ctx(store, { CLAUDE_PROJECT_DIR: wt }));
+    handleHook(event("Stop", { last_assistant_message: "Done.", cwd: wt }), { ...ctx(store, { CLAUDE_PROJECT_DIR: wt }), startScan: (dir) => scanned.push(dir) });
+    assert.deepEqual(store.getSession("cc-1")?.project, { name: "shop", dir: repo, worktree: wt });
+    assert.deepEqual(scanned, [repo]);
+    handleHook(event("PostToolUse", { tool_name: "Edit", tool_input: { file_path: path.join(wt, "src", "a.ts") }, cwd: wt }), ctx(store, { CLAUDE_PROJECT_DIR: wt }));
+    assert.equal(store.getSession("cc-1")?.activity, "Edit: src/a.ts", "paths read from the folder it works in");
+  });
+
   it("ends the session and dismisses what was left open", () => {
     const store = testStore();
     handleHook(event("Stop", { last_assistant_message: "Next?" }), ctx(store));

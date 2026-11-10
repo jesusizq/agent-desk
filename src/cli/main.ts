@@ -187,7 +187,9 @@ const COMMANDS: Record<string, Command> = {
 
   async scan(args, store) {
     const { values, positionals } = parse(args, { "if-older-than": { type: "string" } }, 1);
-    const dir = path.resolve(nonEmpty(positionals[0], "project dir", 4096));
+    const { locateProject } = await import("../project/locate.ts");
+    // A worktree's folder measures its repository: the scan is the main checkout's.
+    const dir = locateProject(path.resolve(nonEmpty(positionals[0], "project dir", 4096))).dir;
     const { projectId, scanProject } = await import("../project/scan.ts");
     const previous = store.getProjectScan(projectId(dir));
     const maxAge = values["if-older-than"] === undefined ? 0 : Number(values["if-older-than"]);
