@@ -245,6 +245,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
       ...s,
       state: "waiting" as const,
       activity: undefined,
+      activityIsCall: undefined,
       lastMessage: message ? { text: bounded(message, MESSAGE_MAX), at } : undefined,
       sentWhileWorking: s.sentWhileWorking?.map((m) => (m.turnEndedAt ? m : { ...m, turnEndedAt: at })),
     }),
@@ -496,6 +497,7 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   const fails = input.event === "PostToolUseFailure";
   const call = {
     activity: bounded(what, 200),
+    activityIsCall: true,
     activityAt: at,
     failedWhat: fails ? bounded(what, 200) : undefined,
     waitsForJob: (!fails && waitsOnJob(input.raw.tool_name, input.raw.tool_input)) || undefined,
@@ -662,7 +664,7 @@ const claimed = (launch: Agent, agentId: string): AgentFields => compact({ ref: 
  */
 function trade(store: Store, sessionId: string, a: Agent, b: Agent): void {
   const given = (from: Agent, to: Agent) =>
-    compact({ ref: from.ref?.startsWith(PENDING) && to.launch !== undefined ? `${PENDING}${to.launch}` : from.ref, state: from.state, activity: from.activity });
+    compact({ ref: from.ref?.startsWith(PENDING) && to.launch !== undefined ? `${PENDING}${to.launch}` : from.ref, state: from.state, activity: from.activity, activityIsCall: from.activityIsCall });
   store.updateAgent(sessionId, b.name, given(a, b));
   store.updateAgent(sessionId, a.name, given(b, a));
 }

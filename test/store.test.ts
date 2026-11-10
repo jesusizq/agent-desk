@@ -512,6 +512,15 @@ describe("agents and results", () => {
     assert.equal(store.upsertAgent("s1", "pay-button", { activity: "x" }).endedAt, done.endedAt);
   });
 
+  it("keeps an activity's tool-call mark only with the activity it was written with", () => {
+    const store = testStore();
+    addSession(store);
+    assert.equal(store.upsertAgent("s1", "lint", { activity: "Bash: npm run lint", activityIsCall: true }).activityIsCall, true);
+    assert.equal(store.upsertAgent("s1", "lint", { branch: "agent/lint" }).activityIsCall, true, "another field leaves it");
+    const said = store.upsertAgent("s1", "lint", { activity: "Fixing 3 lint errors (1/3)" });
+    assert.deepEqual([said.activity, said.activityIsCall], ["Fixing 3 lint errors (1/3)", undefined], "words written over a call are no call");
+  });
+
   it("renames an agent with its history, and merges it into a record reported under the new name", () => {
     const store = testStore();
     addSession(store);

@@ -42,6 +42,11 @@ export type Session = {
   takesMessagesWhileWorking?: boolean;
   /** What the session is doing now, sampled from its tool calls (e.g. "Edit: src/app.ts"). */
   activity?: string;
+  /**
+   * Its activity is the tool call its adapter recorded ("Bash: npm test"), not words the session or
+   * the adapter wrote: a page shows such a line only where the call itself helps.
+   */
+  activityIsCall?: boolean;
   /** When its last tool call was recorded. */
   activityAt?: string;
   /**
@@ -139,6 +144,11 @@ export type Agent = {
   summary?: string;
   state: AgentState;
   activity?: string;
+  /**
+   * Its activity is the tool call its adapter recorded ("Bash: npm test"), not words the session or
+   * the adapter wrote: a page shows such a line only where the call itself helps.
+   */
+  activityIsCall?: boolean;
   /** When its last tool call was recorded. */
   activityAt?: string;
   /**

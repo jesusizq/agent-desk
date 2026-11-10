@@ -185,8 +185,11 @@ describe("Claude Code hooks", () => {
     assert.equal(agent?.goal, "Sand room swap");
     assert.equal(agent?.activity, "Edit: src/room.ts", "paths are shown relative to the project");
     assert.equal(store.getSession("cc-1")?.activity, "Bash: npm test", "a sub-agent's call does not change the session's line");
+    assert.deepEqual([store.getSession("cc-1")?.activityIsCall, agent?.activityIsCall], [true, true], "both lines are marked as tool calls, not the session's words");
+    handleHook(event("SubagentStop", { agent_id: "a-1", last_assistant_message: "Swapped the sand room." }), ctx(store));
+    assert.deepEqual([store.listAgents("cc-1")[0]?.activity, store.listAgents("cc-1")[0]?.activityIsCall], ["Swapped the sand room.", undefined], "its own last words are no call");
     handleHook(event("Stop", { last_assistant_message: "Done." }), ctx(store));
-    assert.equal(store.getSession("cc-1")?.activity, undefined);
+    assert.deepEqual([store.getSession("cc-1")?.activity, store.getSession("cc-1")?.activityIsCall], [undefined, undefined]);
   });
 
   it("stamps each recorded tool call and keeps when the latest ones failed", () => {

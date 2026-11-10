@@ -584,7 +584,9 @@ export class Store {
   private writeAgent(sessionId: string, name: string, current: Agent | undefined, fields: AgentFields): Agent {
     const file = this.paths.agent(sessionId, name);
     const at = this.stamp();
-    const merged = compact({ ...current, ...fields, sessionId, name, updatedAt: at });
+    // The mark goes with the activity it was written with: a new activity without it is someone's words.
+    const activityIsCall = "activity" in fields ? fields.activityIsCall : (fields.activityIsCall ?? current?.activityIsCall);
+    const merged = compact({ ...current, ...fields, activityIsCall, sessionId, name, updatedAt: at });
     const state = merged.state ?? "working";
     const ended = state === "done" || state === "failed";
     const next = readAgent(
