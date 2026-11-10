@@ -2228,6 +2228,34 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  describe("a window's first focus", () => {
+    const focus = (page: Page) => page.eval<{ active: string; ring: boolean }>("({ active: document.activeElement?.tagName + ' ' + (document.activeElement?.textContent ?? ''), ring: document.activeElement?.matches(':focus-visible') ?? false })");
+
+    it("is its title: no ring after a click or a tap, one for the keyboard", async () => {
+      const titles = ["Focus by click", "Focus by key", "Focus by tap"];
+      for (const title of titles) store.addResult({ sessionId: "demo-iva", title, url: "http://localhost:5173/focus" });
+      const page = await open();
+      await page.click(".rtile", "Focus by click");
+      await page.waitFor(arrived("result"));
+      assert.deepEqual(await focus(page), { active: "H3 Focus by click", ring: false }, "not Open live, and no ring");
+      await page.press("Escape");
+      await page.waitFor("!document.getElementById('result').open");
+      await page.eval("[...document.querySelectorAll('.rtile')].find((t) => t.textContent.includes('Focus by key')).focus()");
+      // A button acts on the Enter that types (its "char"), not on the bare key press.
+      for (const type of ["keyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: type === "keyDown" ? "\r" : undefined });
+      await page.waitFor(arrived("result"));
+      assert.deepEqual(await focus(page), { active: "H3 Focus by key", ring: true }, "the keyboard sees where it is");
+      await page.press("Escape");
+      const phone = await openPhone();
+      await phone.tap(".tabbar button", "To review");
+      await phone.tap(".rtile", "Focus by tap");
+      await phone.waitFor(arrived("result"));
+      assert.deepEqual(await focus(phone), { active: "H3 Focus by tap", ring: false });
+      assert.equal(await phone.eval<boolean>("!!document.querySelector('#result :focus-visible')"), false);
+      await phone.press("Escape");
+    });
+  });
+
   it("knows every window of the page by one list", async () => {
     const page = await open();
     assert.deepEqual(await page.eval<string[]>("import('/dom.js').then((m) => [...m.WINDOWS])"), await page.eval<string[]>("[...document.querySelectorAll('dialog')].map((d) => d.id)"));

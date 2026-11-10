@@ -114,13 +114,15 @@ export function goLink(s, cls, ...content) {
 
 /**
  * A window's head, the same in every window (style.css lays it out by its parts): where it comes from
- * and its title, then its actions and Close. @param {HTMLDialogElement} d @param {Child} meta @param {Child} title @param {Child[]} actions
+ * and its title, then its actions and Close. Opened, the window focuses its title rather than its first
+ * button: a tap shows no ring on a button nothing touched, and a keyboard starts from the top.
+ * @param {HTMLDialogElement} d @param {Child} meta @param {Child} title @param {Child[]} actions
  */
 export function dialogHead(d, meta, title, ...actions) {
   return h(
     "div",
     { class: "dhead" },
-    h("div", {}, h("div", { class: "meta" }, meta), h("h3", {}, title)),
+    h("div", {}, h("div", { class: "meta" }, meta), h("h3", { tabindex: "-1", autofocus: true }, title)),
     h("span", { class: "spacer" }),
     ...actions,
     h("button", { class: "icon-btn", "aria-label": TEXT.close, onclick: () => d.close() }, icon("x")),
