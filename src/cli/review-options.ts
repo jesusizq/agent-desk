@@ -4,13 +4,13 @@
 // shim adds; the page has no script of its own and holds the session's text only as escaped text.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { bool, CONTROL, fields, InputError, list, nonEmpty, optional, text } from "../core/check.ts";
+import { bool, CONTROL, fields, InputError, list, localUrl, nonEmpty, optional, text } from "../core/check.ts";
 import { imageDataUri } from "./review-page.ts";
 
 export const OPTIONS_FILE_MAX = 1024 * 1024;
 export const OPTIONS_LIMITS = { questions: 20, options: 12, images: 6, label: 40, title: 200, text: 4000 } as const;
 
-type Option = { label: string; title: string; text?: string; images: string[]; recommended: boolean };
+type Option = { label: string; title: string; text?: string; images: string[]; recommended: boolean; url?: string };
 type Question = { title: string; text?: string; options: Option[] };
 export type OptionsReview = { intro?: string; questions: Question[] };
 
@@ -42,13 +42,15 @@ export function readOptionsReview(value: unknown, where: string): OptionsReview 
         `${qw}.options`,
         (o, ow): Option => {
           const of = fields(o, ow);
-          only(of, ["label", "title", "text", "images", "recommended"], ow);
+          only(of, ["label", "title", "text", "images", "recommended", "url"], ow);
           const t = optional(of.text, `${ow}.text`, prose);
+          const url = optional(of.url, `${ow}.url`, localUrl);
           const option: Option = {
             label: line(of.label, `${ow}.label`, OPTIONS_LIMITS.label),
             title: line(of.title, `${ow}.title`, OPTIONS_LIMITS.title),
             images: list(of.images ?? [], `${ow}.images`, (p, pw) => nonEmpty(p, pw, 4096), OPTIONS_LIMITS.images),
             recommended: optional(of.recommended, `${ow}.recommended`, bool) ?? false,
+            ...(url === undefined ? {} : { url }),
           };
           return t === undefined || t.trim() === "" ? option : { ...option, text: t };
         },
@@ -129,6 +131,9 @@ h1 { font-size: 22px; line-height: 1.25; margin: 0; }
 .label { flex: none; min-width: 28px; padding: 2px 8px; border-radius: 6px; text-align: center; font-weight: 700; font-size: 13px;
   background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--accent); }
 .rec-badge { flex: none; font-size: 12px; font-weight: 700; color: var(--done); }
+.live { margin: 0; }
+.live a { color: var(--accent); font-weight: 600; text-decoration: none; }
+.live a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .shot { display: flex; justify-content: center; cursor: zoom-in; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px; }
 .shot input { position: absolute; opacity: 0; pointer-events: none; }
@@ -158,6 +163,7 @@ export function renderOptionsPage(title: string, review: OptionsReview, folder: 
         `<article class="opt${o.recommended ? " rec" : ""}" data-agent-desk-option="${esc(o.label)}">`,
         `<header><span class="label">${esc(o.label)}</span><h3>${esc(o.title)}</h3>${o.recommended ? '<span class="rec-badge">Recommended</span>' : ""}</header>`,
         said(o.text),
+        o.url === undefined ? "" : `<p class="live"><a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">Open live ↗</a></p>`,
         shots.length ? `<div class="shots">${shots.join("")}</div>` : "",
         "</article>",
       ].join("");

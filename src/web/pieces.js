@@ -97,8 +97,10 @@ export const LOCAL_URL = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?=[:/]|$)/;
  */
 export function localLink(url, content, cls) {
   if (ON_THIS_MACHINE || !LOCAL_URL.test(url)) return h("a", { class: cls, href: url, target: "_blank", rel: "noopener noreferrer" }, content);
-  return h("span", { class: "faint", title: url }, TEXT.onComputer(url.replace(/^https?:\/\//, "").replace(/\/$/, "")));
+  return h("span", { class: "faint", title: url }, TEXT.onComputer(shortUrl(url)));
 }
+/** A local preview's address as the developer reads it: no scheme, no last slash. @param {string} url */
+export const shortUrl = (url) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
 /** The link that brings a session's terminal to the front, or why there is none. @param {Session | undefined} s */
 export function sessionLink(s) {

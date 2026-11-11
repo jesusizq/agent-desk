@@ -638,6 +638,47 @@ describe("the shim in a browser", { skip: chrome ? false : "no Chrome found (set
     }
   });
 
+  it("hands the desk the links the developer clicks instead of following them, and window.open only within a click", async () => {
+    const html = `<!doctype html><html><head><title>links</title></head><body>
+<a id="live" href="http://localhost:8790/r3/desk4.html" target="_blank">Open live →</a>
+<a id="same" href="http://127.0.0.1:8791/proto">In this frame</a>
+<a id="far" href="https://example.com/x">Elsewhere</a>
+<a id="part" href="#below">Below</a>
+<button id="win">Open in a window</button>
+<p id="below">below</p>
+<script>document.getElementById("win").addEventListener("click", () => { window.opened = window.open("http://localhost:8792/w"); });</script>
+</body></html>`;
+    const review = store.publishReview({ sessionId: "demo-checkout", title: "Links out", html });
+    const page = await browser.newPage(1000, 700);
+    try {
+      await page.goto(`${server.base}/review/${review.id}`);
+      await page.eval(`(window.seen = [], addEventListener("message", (e) => e.data?.agentDesk && seen.push(e.data)), true)`);
+      const here = await page.eval<string>("location.href");
+      const opened = () => page.eval<string[]>("seen.filter((m) => m.type === 'open').map((m) => m.url)");
+      // A click the page makes itself is no developer's: the shim leaves it (the desk closes a frame that navigates away).
+      const made = `(() => { const e = new MouseEvent("click", { bubbles: true, cancelable: true }); document.addEventListener("click", (c) => c.preventDefault(), { once: true }); document.getElementById("same").dispatchEvent(e); return true; })()`;
+      assert.equal(await page.eval(`window.open('http://localhost:8793/') === null && ${made}`), true);
+      await page.eval("new Promise((r) => setTimeout(r, 200))");
+      assert.equal((await opened()).length, 0, "nothing the page does by itself, without a click, reaches the desk");
+      await page.click("#live");
+      await page.click("#same");
+      await page.click("#far");
+      await page.waitFor("seen.filter((m) => m.type === 'open').length === 3");
+      assert.deepEqual(await opened(), ["http://localhost:8790/r3/desk4.html", "http://127.0.0.1:8791/proto", "https://example.com/x"], "every web address goes to the desk, which decides");
+      await page.click("#part");
+      await page.click("#win");
+      await page.waitFor("seen.filter((m) => m.type === 'open').length === 4");
+      assert.equal((await opened()).at(-1), "http://localhost:8792/w", "window.open within the developer's click");
+      assert.equal(await page.eval("window.opened"), null);
+      assert.equal(await page.eval("location.href"), `${here}#below`, "a link to a part of the page stays the page's");
+      const { targetInfos } = await browser.send<{ targetInfos: { type: string; url: string }[] }>("Target.getTargets");
+      assert.deepEqual(targetInfos.filter((t) => t.type === "page" && /:879\d|example\.com/.test(t.url)), [], "and no window opened from the page");
+      assert.deepEqual(page.errors, []);
+    } finally {
+      await page.close();
+    }
+  });
+
   it("can be framed by the desk, and restores the scroll fraction it is opened at", async () => {
     const page = await browser.newPage(1000, 700);
     try {

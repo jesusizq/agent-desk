@@ -77,7 +77,33 @@
     send({ type: "notice", text: String(message ?? "") });
     return false;
   };
-  window.open = () => null;
+  // The sandbox opens no window and the frame must not leave the page: a link out is the desk's to
+  // open, in a tab of its own, and only for a local preview (it checks).
+  /** Where a link takes the developer away from the page, or null when it stays in it (or is no web address). @param {string} href */
+  const away = (href) => {
+    const url = URL.parse(href, location.href);
+    if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return null;
+    const here = new URL(location.href);
+    if (url.hash && url.origin === here.origin && url.pathname === here.pathname && url.search === here.search) return null;
+    return url.href;
+  };
+  /** @param {MouseEvent} e */
+  const follow = (e) => {
+    if (!e.isTrusted || (e.type === "auxclick" && e.button !== 1)) return;
+    const link = e.composedPath().find((n) => n instanceof HTMLAnchorElement || n instanceof HTMLAreaElement);
+    const url = link?.hasAttribute("href") ? away(link.href) : null;
+    if (!url) return;
+    e.preventDefault();
+    send({ type: "open", url });
+  };
+  addEventListener("click", follow, true);
+  addEventListener("auxclick", follow, true);
+  window.open = (url) => {
+    // Only within the developer's click, as a browser opens a window only then.
+    const to = url !== undefined && navigator.userActivation?.isActive ? away(String(url)) : null;
+    if (to) send({ type: "open", url: to });
+    return null;
+  };
 
   addEventListener("message", (e) => {
     if (e.source !== parent || typeof e.data !== "object" || e.data === null || e.data.type !== "collect") return;

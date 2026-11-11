@@ -570,7 +570,7 @@ describe("cli reviews", () => {
   const CHOICE = {
     intro: "Two questions.\nAnswer either.",
     questions: [
-      { title: "Which pay button?", text: "Line one\nline <two> & \"three\"", options: [{ label: "A", title: "Solid <b>green</b>", images: ["shots/a.png"], recommended: true }, { label: "B", title: "Outline", text: "<script>alert(1)</script>" }] },
+      { title: "Which pay button?", text: "Line one\nline <two> & \"three\"", options: [{ label: "A", title: "Solid <b>green</b>", images: ["shots/a.png"], recommended: true }, { label: "B", title: "Outline", text: "<script>alert(1)</script>", url: "http://localhost:8790/r3/b.html?x=1&y=\"2\"" }] },
       { title: "Copy", options: [{ label: "1", title: "Pay now" }] },
     ],
   };
@@ -591,6 +591,7 @@ describe("cli reviews", () => {
     assert.deepEqual([...html.matchAll(/data-agent-desk-group="([^"]*)"/g)].map((m) => m[1]), ["Which pay button?", "Copy"]);
     assert.deepEqual([...html.matchAll(/data-agent-desk-option="([^"]*)"/g)].map((m) => m[1]), ["A", "B", "1"]);
     assert.ok(html.includes('<span class="rec-badge">Recommended</span>'));
+    assert.deepEqual([...html.matchAll(/<a [^>]*>[^<]*<\/a>/g)].map((m) => m[0]), ['<a href="http://localhost:8790/r3/b.html?x=1&amp;y=&quot;2&quot;" target="_blank" rel="noopener noreferrer">Open live ↗</a>'], "the option's live preview, its address escaped; none for an option without one");
     assert.ok(!html.includes("data-agent-desk-progress"), "progress is the questions decided, counted by the shim");
     // The same title again: its next round, the marks kept where the labels match.
     const marks = JSON.stringify({ groups: [{ name: "Which pay button?", options: [{ label: "A", pick: "choose" }] }] });
@@ -621,6 +622,10 @@ describe("cli reviews", () => {
       [{ questions: Array.from({ length: 21 }, (_, i) => ({ title: `Q${i}`, options: [o()] })) }, /questions: more than 20/],
       [q([o({ images: Array.from({ length: 7 }, () => "shots/a.png") })]), /images: more than 6/],
       [q([o({ recommended: "yes" })]), /recommended: expected/],
+      [q([o({ url: "https://example.com/proto" })]), /options\[0\]\.url: only local URLs/],
+      [q([o({ url: "javascript:alert(1)" })]), /options\[0\]\.url: only local URLs/],
+      [q([o({ url: "http://localhost:8790/a b" })]), /options\[0\]\.url: only local URLs/],
+      [q([o({ url: 8790 })]), /options\[0\]\.url: expected/],
       [q([o({ images: ["../outside.png"] })]), /images\[0\]: "\.\.\/outside\.png" is not inlined: outside/],
       [q([o({ images: ["fake.png"] })]), /images\[0\]: "fake\.png" is not inlined: not a PNG/],
       [q([o({ images: ["missing.png"] })]), /no such file/],

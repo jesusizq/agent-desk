@@ -637,19 +637,39 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.waitFor("!document.querySelector('#strip .offline')");
   });
 
-  it("a hidden page notifies on the computer, and on a phone leaves it to the push, which carries no text", async () => {
-    // Forwards to the desk under the Host it accepts, so the page runs at an address that is not this machine's.
+  /**
+   * The desk at an address that is not this machine's, as a phone reaches it: forwarded under the Host
+   * and Origin the desk accepts, with a review's frame ancestor named as the address reached, as the desk
+   * names its tailnet host. Its pages close before it does: cut under an open page, the event stream reads
+   * as a load error.
+   */
+  async function elsewhere(): Promise<{ url: string; close: () => Promise<void> }> {
     const target = new URL(base);
+    let url = "";
     const proxy = http.createServer((req, res) => {
-      const out = http.request({ host: target.hostname, port: target.port, path: req.url, method: req.method, headers: { ...req.headers, host: target.host } }, (up) => {
-        res.writeHead(up.statusCode ?? 502, up.headers);
+      const headers = { ...req.headers, host: target.host, ...(req.headers.origin ? { origin: target.origin } : {}) };
+      const out = http.request({ host: target.hostname, port: target.port, path: req.url, method: req.method, headers }, (up) => {
+        const csp = up.headers["content-security-policy"];
+        res.writeHead(up.statusCode ?? 502, { ...up.headers, ...(typeof csp === "string" ? { "content-security-policy": csp.replace(`frame-ancestors ${target.origin}`, `frame-ancestors ${new URL(url).origin}`) } : {}) });
         up.pipe(res);
       });
       out.on("error", (error) => res.writeHead(502).end(error.message));
       req.pipe(out);
     });
     await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
-    const remote = `http://desk.localhost:${(proxy.address() as AddressInfo).port}/`;
+    url = `http://desk.localhost:${(proxy.address() as AddressInfo).port}/`;
+    return {
+      url,
+      close: async () => {
+        proxy.closeAllConnections();
+        await new Promise((r) => proxy.close(r));
+      },
+    };
+  }
+
+  it("a hidden page notifies on the computer, and on a phone leaves it to the push, which carries no text", async () => {
+    const away = await elsewhere();
+    const remote = away.url;
     /** The titles of the page's own notifications when a question opens while it is hidden. @param url where the page runs */
     const notified = async (url: string, text: string) => {
       const page = await browser.newPage(390, 800);
@@ -670,11 +690,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.match((await notified(base + "/", "Asked on the computer?")).join(), /New question/);
       assert.deepEqual(await notified(remote, "Asked on the phone?"), []);
     } finally {
-      // Its pages close before the proxy: cut under an open page, the event stream reads as a load error.
       const opened = pages.splice(0);
       await Promise.all(opened.map((page) => page.close()));
-      proxy.closeAllConnections();
-      await new Promise((r) => proxy.close(r));
+      await away.close();
       for (const page of opened) assert.deepEqual(page.errors, [], "the page reports no errors");
     }
   });
@@ -3466,6 +3484,109 @@ if (!localStorage.getItem("left")) { localStorage.setItem("left", "1"); setTimeo
       assert.equal(await page.eval<boolean>("!!document.querySelector('.rv-close-bar')"), false);
       await page.click(".rv-back");
       await page.waitFor("!document.getElementById('review').open");
+    });
+
+    describe("links out of a review", () => {
+      /** A local preview, as a session's static server of prototypes: what it was asked, with the referrer sent. */
+      let live: http.Server;
+      let liveBase = "";
+      const asked: { url: string; referer: string | undefined }[] = [];
+      before(async () => {
+        live = http.createServer((req, res) => {
+          asked.push({ url: req.url ?? "", referer: req.headers.referer });
+          res.writeHead(200, { "content-type": "text/html" }).end("<!doctype html><title>live</title>live");
+        });
+        await new Promise<void>((r) => live.listen(0, "127.0.0.1", r));
+        liveBase = `http://127.0.0.1:${(live.address() as AddressInfo).port}`;
+      });
+      after(async () => {
+        live.closeAllConnections();
+        await new Promise((r) => live.close(r));
+      });
+      const linksHtml = () => `<!doctype html><html><head><title>links</title></head><body>
+<a id="live" href="${liveBase}/r3/desk4.html" target="_blank">Open live →</a>
+<a id="far" href="https://example.com/x">Elsewhere</a>
+<button id="win">Open in a window</button>
+<script>document.getElementById("win").addEventListener("click", () => window.open("${liveBase}/w"));</script>
+</body></html>`;
+      type Tab = { targetId: string; type: string; url: string; canAccessOpener: boolean };
+      const tabs = async () => (await browser.send<{ targetInfos: Tab[] }>("Target.getTargets")).targetInfos.filter((t) => t.type === "page");
+      /** The tab opened at `url`, once it is there; closed, so the next test starts without it. */
+      async function tabAt(url: string): Promise<Tab> {
+        const end = Date.now() + 5000;
+        for (;;) {
+          const tab = (await tabs()).find((t) => t.url === url);
+          if (tab) {
+            await browser.send("Target.closeTarget", { targetId: tab.targetId });
+            return tab;
+          }
+          if (Date.now() > end) throw new Error(`no tab opened at ${url}`);
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
+      /** A real click on an element of the review's page, inside its frame: the developer's, with its user activation. */
+      async function clickInFrame(page: Page, selector: string): Promise<void> {
+        const frame = await page.eval<{ x: number; y: number }>("(() => { const f = document.querySelector('#review iframe'); const r = f.getBoundingClientRect(); return { x: r.x + f.clientLeft, y: r.y + f.clientTop }; })()");
+        const at = await page.inFrame<{ x: number; y: number }>("/review/", `(() => { const el = document.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: "center" }); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+        const [x, y] = [frame.x + at.x, frame.y + at.y];
+        await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+        for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+      }
+      const toasted = (text: string) => `[...document.querySelectorAll('#toasts .toast')].some((t) => t.textContent === ${JSON.stringify(text)})`;
+
+      it("opens a local preview the developer clicks in a tab of its own, and names any other address without opening it", async () => {
+        const r = publish("rv-links", "Desk prototypes", {}, linksHtml());
+        const page = await openReview("Desk prototypes");
+        await clickInFrame(page, "#live");
+        const tab = await tabAt(`${liveBase}/r3/desk4.html`);
+        assert.equal(tab.canAccessOpener, false, "opened without an opener");
+        assert.deepEqual(asked.find((a) => a.url === "/r3/desk4.html"), { url: "/r3/desk4.html", referer: undefined }, "nor a referrer");
+        await clickInFrame(page, "#win");
+        await tabAt(`${liveBase}/w`);
+        await clickInFrame(page, "#far");
+        await page.waitFor(toasted("This page links outside this computer; the desk opens only local previews: https://example.com/x"));
+        assert.deepEqual((await tabs()).filter((t) => t.url.includes("example.com")), [], "nothing opened");
+        assert.equal(await page.eval<boolean>("!document.querySelector('.rv-strayed') && !document.querySelector('.rv-link')"), true, "the page stays, and the bar offers nothing to open");
+        assert.equal(await page.inFrame<string>("/review/", "document.title"), "links", "the frame never left the page");
+        store.closeReview(r.id);
+      });
+
+      it("offers the preview in the bar when the browser keeps the click in the frame from the desk, as Safari does", async () => {
+        const data = { questions: [{ title: "Which desk?", options: [{ label: "A", title: "Dense", images: [], recommended: false, url: `${liveBase}/r3/desk4.html` }] }] };
+        const r = store.publishReview({ sessionId: "rv-links", title: "Drawn prototypes", html: renderOptionsPage("Drawn prototypes", data, import.meta.dirname).html });
+        const page = await openReview("Drawn prototypes");
+        await page.eval(`Object.defineProperty(navigator, "userActivation", { value: { isActive: false, hasBeenActive: true }, configurable: true })`);
+        const already = (await tabs()).length;
+        await clickInFrame(page, ".live a");
+        await page.waitFor("document.querySelector('.rv-link a.chip')");
+        const chip = await page.eval<string[]>("['href', 'target', 'rel'].map((a) => document.querySelector('.rv-link a.chip').getAttribute(a)).concat(document.querySelector('.rv-link').textContent)");
+        assert.deepEqual(chip, [`${liveBase}/r3/desk4.html`, "_blank", "noopener noreferrer", `Open ${liveBase.slice("http://".length)}/r3/desk4.html`]);
+        assert.equal((await tabs()).length, already, "nothing opened without the click");
+        await page.click(".rv-link a.chip");
+        assert.equal((await tabAt(`${liveBase}/r3/desk4.html`)).canAccessOpener, false, "one click on it opens it, without an opener");
+        store.closeReview(r.id);
+      });
+
+      it("on a phone, says a local preview is on the computer instead of opening it", async () => {
+        const r = publish("rv-links", "Phone prototypes", {}, linksHtml());
+        const away = await elsewhere();
+        const page = await browser.newPage(1000, 800);
+        try {
+          await page.goto(away.url);
+          await page.waitFor("document.querySelector('.rv-tile')");
+          await openReview("Phone prototypes", page);
+          const already = (await tabs()).length;
+          await clickInFrame(page, "#live");
+          await page.waitFor(toasted(`Live at ${liveBase.slice("http://".length)}/r3/desk4.html (on the computer)`));
+          assert.equal((await tabs()).length, already, "no tab to the phone's own localhost");
+          assert.equal(await page.eval<boolean>("!document.querySelector('.rv-link')"), true);
+          assert.deepEqual(page.errors, []);
+        } finally {
+          await page.close();
+          await away.close();
+          store.closeReview(r.id);
+        }
+      });
     });
 
     it("fills a phone's screen under a slim bar, counts reviews on its tab, and sends from a sheet at the bottom", async () => {

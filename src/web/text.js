@@ -494,6 +494,11 @@ export const TEXT = {
     frameTitle: "The review page",
     strayed: "This page tried to open another address, so the desk closed it.",
     reopen: "Open the review again",
+    /** @param {string} where */
+    openLink: (where) => `Open ${where}`,
+    linkTitle: "The browser did not let the page open it: open it from here",
+    /** @param {string} url */
+    outside: (url) => `This page links outside this computer; the desk opens only local previews: ${url}`,
     saved: "Saved",
     /** On this computer, what is saved reaches the phone too: said where the bar has the room. */
     savedEverywhere: " · on your phone too",

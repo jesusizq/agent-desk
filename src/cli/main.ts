@@ -55,11 +55,13 @@ Posting (from a session; the session is found from the calling process, or --ses
                     Choose, Iterate and Discard on each option and None of these on each question:
                     { "intro"?: "<text>", "questions": [{ "title": "<one line>", "text"?: "<text>", "options": [
                       { "label": "A", "title": "<one line>", "text"?: "<text>", "images"?: ["<path>", ...],
-                        "recommended"?: true }, ...] }, ...] }
+                        "recommended"?: true, "url"?: "http://localhost:PORT/..." }, ...] }, ...] }
                     up to ${OPTIONS_LIMITS.questions} questions of ${OPTIONS_LIMITS.options} options, labels of ${OPTIONS_LIMITS.label} characters and titles of ${OPTIONS_LIMITS.title} (one line,
                     unique in their question), texts of ${OPTIONS_LIMITS.text} (line breaks kept, shown as plain text), ${OPTIONS_LIMITS.images} images
-                    an option, named relative to the JSON file and inside its folder. The same title again is
-                    its next round, keeping what was marked on options of the same label
+                    an option, named relative to the JSON file and inside its folder; url, a local preview
+                    (localhost or 127.0.0.1) to try the option live, with its motion, shown as Open live and
+                    opened by the desk in a tab of its own. The same title again is its next round, keeping
+                    what was marked on options of the same label
   agent-desk review <id> [--out <new file>]
                     what the developer answered in a review, with its saved state (any session may read it);
                     the page's parts are cut at 16 KB, --out writes the whole as JSON

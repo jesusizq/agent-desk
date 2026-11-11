@@ -306,13 +306,26 @@ review, never in Needs you; nothing sounds or is pushed.
   its parent: `set`/`remove`/`clear` on each change, `copy` with what the page copies (clipboard,
   `execCommand("copy")`, `prompt(msg, text)`), `progress` with the text of
   `[data-agent-desk-progress]`, `scroll` (0..1), `notice` for an `alert` (one within 1.5 s of a copy
-  is dropped) or a `confirm` (which returns false); `window.open` returns null. On `{ type:
-  "collect" }` from its parent it clicks `[data-agent-desk-answers]`, or posts an empty copy. It
-  scrolls to `#at=<0..1>` of its URL once loaded.
+  is dropped) or a `confirm` (which returns false), and `open` with the address of a link out of the
+  page: a click of the developer's (trusted, any button or target) on an `<a href>` or `<area href>`
+  resolving to `http:` or `https:`, other than one to a part of the page itself (`#…`), which it keeps
+  from navigating the frame, or `window.open(url)` called while the frame has the click's user
+  activation; `window.open` returns null. On `{ type: "collect" }` from its parent it clicks
+  `[data-agent-desk-answers]`, or posts an empty copy. It scrolls to `#at=<0..1>` of its URL once
+  loaded.
+- **Links out.** The desk opens what `open` names only when it is a local preview (`http(s)://`
+  `127.0.0.1`, `localhost` or `[::1]`, any port and path: `isLocalPreview`, the rule of every link out
+  of the desk, `src/web/dom.js`), in a tab of its own (`noopener,noreferrer`), and only while the desk
+  has the click's user activation, as a browser opens a tab only then; without it (a browser that does
+  not pass a click in the frame to the desk, such as Safari) the review's bar shows the link as a chip
+  the developer clicks once. Any other address opens nothing: a notice names it as plain text. On a
+  tailnet device localhost is that device: a notice says the preview is on the computer.
 - **Drawn from data.** `agent-desk review "<title>" --options <file.json>` publishes a page the desk
   draws itself (`src/cli/review-options.ts`) through the same pipeline (store, rounds, CSP, shim):
   `{ "intro"?: text, "questions": [{ "title": line, "text"?: text, "options": [{ "label": line,
-  "title": line, "text"?: text, "images"?: [path, …], "recommended"?: true }] }] }`. At most 20
+  "title": line, "text"?: text, "images"?: [path, …], "recommended"?: true, "url"?: local URL }] }]
+  }`; `url`, a local preview of the option to try live (`localUrl`, as a result's), is shown as
+  Open live and opened as Links out says. At most 20
   questions of 12 options and 6 images an option; a label 40 characters, a title 200 (one line each,
   unique within its question), a text 4000 (line breaks kept); the file 1 MB; no other field. Images
   are named relative to the JSON file and inlined under the page rules below, but one that cannot be

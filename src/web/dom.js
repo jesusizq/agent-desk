@@ -215,8 +215,11 @@ function append(el, kids) {
 /** Long text goes in a block with a minimum width, which a table's column respects where a cell's own may not. @param {string} text */
 const tableCell = (text) => (text.length > 24 ? h("div", { class: "md-long" }, md(text)) : md(text));
 
+const LOCAL_PREVIEW = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?(\/|$)/;
+/** Whether a link out of the desk is to a local preview, the one kind of page it opens. @param {string} url */
+export const isLocalPreview = (url) => LOCAL_PREVIEW.test(url);
 // Links leave the desk only to local previews and session links built by the desk.
-const SAFE_HREF = /^(https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?(\/|$)|vscode:\/\/agent-desk\.agent-desk\/|#|\/(?!\/))/;
+const SAFE_HREF = new RegExp(`${LOCAL_PREVIEW.source}|^(vscode:\\/\\/agent-desk\\.agent-desk\\/|#|\\/(?!\\/))`);
 /** @param {string} href */
 function safeHref(href) {
   if (!SAFE_HREF.test(href)) throw new Error(`refusing link ${href}`);

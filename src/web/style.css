@@ -1291,6 +1291,12 @@ dialog.review:not([open]) { transform: translateY(10px) scale(.995); }
 .rv-sync button { border: 0; border-radius: 99px; padding: 4px 10px; background: var(--todo); color: #fff; font: 600 0.75rem var(--sans); }
 @media (prefers-reduced-motion: no-preference) { .rv-sync { animation: rv-rise var(--dur-3) var(--ease-out); } }
 @keyframes rv-rise { from { opacity: 0; transform: translateY(-4px); } }
+.rv-link { flex: 0 1 auto; min-width: 0; display: flex; }
+.rv-link .chip { min-width: 0; max-width: 100%; padding: 5px 10px; font-size: 0.8125rem; color: var(--accent); text-decoration: none; }
+.rv-link .chip:hover { border-color: var(--border-strong); }
+.rv-link .chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-link .chip svg.i { width: 14px; height: 14px; flex: none; }
+@media (prefers-reduced-motion: no-preference) { .rv-link { animation: rv-rise var(--dur-3) var(--ease-out); } }
 dialog.review .rv-send { flex: none; height: 36px; padding: 0 16px; border-radius: 8px; font-size: 0.875rem; gap: 7px; }
 /* Close, beside Send: quiet, a border only under the pointer; armed, in the colour of what it takes away, unlike Send. */
 dialog.review .rv-close-bar { flex: none; height: 36px; padding: 0 12px; border-radius: 8px; font-size: 0.875rem; color: var(--muted); border-color: transparent; background: transparent; }

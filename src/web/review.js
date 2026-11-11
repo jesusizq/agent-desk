@@ -2,11 +2,11 @@
 // Reviews: a page a session made for the developer to review, published to the desk. It opens filling
 // the window in a sandboxed frame, under a slim bar; what the page saves goes to the desk, so the
 // review goes on from any device, days later, and its answers are sent to the session from here.
-import { dialog, h, icon, patch, REVIEWS_KEY } from "./dom.js";
+import { dialog, h, icon, isLocalPreview, patch, REVIEWS_KEY } from "./dom.js";
 import { TEXT } from "./text.js";
 import { ago, dayLabel } from "./format.js";
 import { armedButton } from "./control.js";
-import { projectMark, toast } from "./pieces.js";
+import { localLink, projectMark, shortUrl, toast } from "./pieces.js";
 import { DeskError, getJson, OfflineError, post, postJson, refresh, run, unlockEnded } from "./server.js";
 import { data, ID, isLive, label, ON_THIS_MACHINE, page, projectColor, S, takesMessages, ui } from "./state.js";
 
@@ -25,6 +25,8 @@ const STATE_MAX = 2 * 1024 * 1024;
 const SUMMARY_MAX = 200 * 1024;
 const PROGRESS_MAX = 200;
 const NOTICE_MAX = 500;
+/** A link the page asks the desk to open (localUrl in check.ts). */
+const URL_MAX = 2000;
 /** The developer's note sent with a review (REVIEW_NOTE_MAX in protocol.ts). */
 const NOTE_MAX = 4096;
 /** The page's changes travel together, at most this often. */
@@ -182,9 +184,10 @@ export function sendKept() {
 
 /**
  * `data`: the page's saved state as this page's frame has it, once `known`: what the desk holds besides
- * is another device's change.
+ * is another device's change. `link`: a local preview the page asked to open that the browser did not let open.
  * @typedef {{ id: string, frame: HTMLIFrameElement, known: boolean, seen: string | undefined, data: Map<string, string>,
- *   summary: string, options: string, progress: { done: number, total: number } | undefined, sync: boolean, collecting: number, strayed: boolean }} Current
+ *   summary: string, options: string, progress: { done: number, total: number } | undefined, sync: boolean, collecting: number, strayed: boolean,
+ *   link: string | null }} Current
  */
 /** @type {Current | null} */
 let current = null;
@@ -248,7 +251,7 @@ export function openReview(id, { fromRoute = false } = {}) {
   if (fromRoute) history.replaceState(null, "", location.pathname + location.search);
   if (history.state?.review !== id) history.pushState({ review: id }, "", `#rv=${encodeURIComponent(id)}`);
   const frame = newFrame(id);
-  current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), summary: "", options: "", progress: r.progress, sync: false, collecting: 0, strayed: false };
+  current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), summary: "", options: "", progress: r.progress, sync: false, collecting: 0, strayed: false, link: null };
   const shown = current;
   if (unseenRound(r)) run(post(`/api/reviews/${id}/opened`));
   drawView();
@@ -335,6 +338,7 @@ function drawView() {
             h("button", { onclick: reloadPage }, t.update),
           )
         : null,
+      current.link ? h("span", { class: "rv-link", "data-key": "link", title: t.linkTitle }, localLink(current.link, [h("span", {}, t.openLink(shortUrl(current.link))), icon("go")], "chip")) : null,
       r.closedAt ? null : closeButton(r, "secondary danger rv-close-bar", [icon("archive"), h("span", { class: "lbl" }, t.close)], t.closeConfirm, drawView),
       h(
         "button",
@@ -467,10 +471,31 @@ addEventListener("message", (e) => {
     case "notice":
       if (!text(m.text, NOTICE_MAX)) return bad("a notice too long");
       return toast(/** @type {string} */ (m.text));
+    case "open":
+      if (!text(m.url, URL_MAX) || !URL.canParse(/** @type {string} */ (m.url))) return bad("a link that is not a web address");
+      return openLink(/** @type {string} */ (m.url));
     default:
       return bad(`a message of type "${String(m.type).slice(0, 40)}"`);
   }
 });
+
+/**
+ * A link the page asks to open, in a tab of its own, only to a local preview, and only on this computer: on
+ * another device localhost is that device. A browser opens a tab only within the developer's click; when
+ * the click in the frame did not reach the desk (Safari), the bar offers the link to click once.
+ * @param {string} url
+ */
+function openLink(url) {
+  if (!current) return;
+  if (!isLocalPreview(url)) return toast(TEXT.review.outside(url));
+  if (!ON_THIS_MACHINE) return toast(TEXT.onComputer(shortUrl(url)));
+  // With noopener, open() returns null even when it opens: the click's activation says whether it may.
+  if (navigator.userActivation?.isActive) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    current.link = null;
+  } else current.link = url;
+  drawView();
+}
 
 /** Send asks the page for its answers first (the button it marked), then opens the sheet, with them or without. */
 function collect() {
