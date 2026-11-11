@@ -184,7 +184,25 @@ once. A turn that ends with a question in plain text is titled with the sentence
 paragraph that ask (ending in `?` or `？`); a question mark inside quotes («…», “…”, "…", '…') or
 code (inline or fenced) asks nothing, as a line the session suggests telling another one; the rest of that paragraph opens its context, followed by
 the rest of the message. A last paragraph that is a list whose items ask, or that only asks, is the
-title whole. A turn that ends with a report is kept as the session's last message and shown quietly
+title whole.
+
+The question gets options, sent verbatim as an option clicked on the desk is, only when the message
+lists them unambiguously (`offeredQuestion`, `adapters/claude-code/hooks.ts`): a list closing the
+message right after the question, or closing the paragraph right before it (and not after another
+question), of 2 to 8 items, each one line, of one kind and indentation (bullets, or `1.`/`1)` or
+`a.`/`a)` counting from the first), none asking, none nested, no two the same; the message asks one
+question there, outside code; and something says it asks to choose: its words (`¿cuál…?`, `¿qué
+prefieres?`, `¿cómo seguimos?`, "which…?", "how should I proceed?" and the like), a line ending in
+`:` that introduces the list as options, alternatives or ways, or exactly one item marked
+`(recomendado)`/`(recomendada)`/`(recommended)`. An option's label is its item as written before a
+description after `: ` or a spaced dash (outside brackets and quotes), without bold marks, at most
+80 characters and 12 words in one sentence, its recommendation mark kept; when an item has a
+description, the list stays in the context under the question. `¿cuáles…?` and "which ones?" take
+several. Anything else (steps of a plan under "shall I go ahead?", a list of findings under "commit
+it?", two questions) leaves the question with a free answer, as before. A question asked with
+`agent-desk ask` during the turn is kept instead, with its own options.
+
+A turn that ends with a report is kept as the session's last message and shown quietly
 on its card ("Finished · waiting for your next instruction"); the session panel always shows it in full, also after its item was dismissed, and can
 reply to it while the session takes messages (see below).
 

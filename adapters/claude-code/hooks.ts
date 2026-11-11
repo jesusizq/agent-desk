@@ -287,12 +287,18 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     return;
   }
   // Only a turn that ends asking something needs the developer; a report waits quietly on the session.
-  if (!asksSomething(last)) return;
+  const offered = offeredQuestion(last, before);
+  if (offered === undefined && !asksSomething(last)) return;
   replaced();
-  // The sentences that ask are the question; what the paragraph says around them reads first under it.
-  const { question, rest } = splitQuestion(last);
+  const { question, context, options, several } = offered ?? freeQuestion(last, before);
   if (reopened.some((r) => sameWords(r.text, question))) return;
-  store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: question, context: [rest, before].filter(Boolean).join("\n\n") || undefined }));
+  store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: question, context: context || undefined, options: options.length > 0 ? options : undefined, several: several || undefined }));
+}
+
+/** A question without options: the sentences that ask; what the paragraph says around them reads first under it. */
+function freeQuestion(last: string, before: string): OfferedQuestion {
+  const { question, rest } = splitQuestion(last);
+  return { question, options: [], several: false, context: [rest, before].filter(Boolean).join("\n\n") };
 }
 
 const LIST_ITEM = /^\s*(?:[-*+•]|\d+[.)])\s+/;
@@ -413,6 +419,162 @@ export function splitQuestion(paragraph: string): { question: string; rest: stri
   }
   const rest = kept.join("\n").trim();
   return asked.length === 0 || rest === "" ? whole : { question: asked.join(" "), rest };
+}
+
+// ── Options a turn's question offers ────────────────────────────────────
+
+/** The question a turn ends with, the options its message lists for it, and what reads under it. */
+export type OfferedQuestion = { question: string; options: string[]; several: boolean; context: string };
+
+const OPTIONS_MAX = 8;
+const OPTION_LABEL_MAX = 80;
+const OPTION_LABEL_WORDS = 12;
+/** A one-line item: a bullet, or a number or letter that counts from the first. */
+const OPTION_ITEM = /^( {0,3})(?:([-*+•])|(\d{1,2})[.)]|([a-zA-Z])[.)])\s+(\S.*)$/;
+/** The developer's convention for the option the session recommends. */
+const RECOMMENDED = /\((?:recomendad[oa]|recommended)\)/i;
+/** A question that asks to choose, in its folded words (no case, no accents). */
+const CHOOSING =
+  /\b(?:cual(?:es)?|prefier\w*|prefer\w*|elig\w*|elij\w*|escog\w*|escoj\w*|opcion(?:es)?|alternativas?|como (?:sigo|seguimos|continuo|continuamos|procedo|procedemos|lo hago|lo hacemos)|que (?:hago|hacemos)|por donde (?:sigo|seguimos|empiezo|empezamos)|which|choose|choice|options?|alternatives?|how (?:should|shall|do|would) (?:i|we|you like (?:me|us) to|you want (?:me|us) to) (?:proceed|continue|go on)|how to proceed|what (?:should|shall) (?:i|we) do)\b/;
+/** A line that introduces a list of options. */
+const INTRODUCING = /\b(?:opcion(?:es)?|alternativas?|caminos|options|alternatives|choices|ways)\b/;
+/** A question that takes several of the options. */
+const SEVERAL = /\b(?:cuales|which ones)\b/;
+const folded = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/**
+ * The question a turn's message ends with and the options it offers for it, when the structure says
+ * so unambiguously: a list right after the question (closing the message) or right before it, of
+ * 2 to 8 one-line items of one kind (bullets, or numbers or letters counting from the first), none
+ * asking, each a short label with an optional description after a colon or a dash; one question,
+ * outside code; and a sign that it asks to choose (its words, the line introducing the list, or
+ * exactly one item marked recommended). A label is the item as written before its description,
+ * without bold marks. Undefined otherwise: the question, if any, takes a free answer.
+ */
+export function offeredQuestion(last: string, before: string): OfferedQuestion | undefined {
+  const earlier = before === "" ? [] : before.split(/\n\s*\n/);
+  const lines = last.split("\n");
+  const items = lines.map((l) => OPTION_ITEM.test(l));
+  const first = items.indexOf(true);
+  const end = items.lastIndexOf(true) + 1;
+  if (first < 0) {
+    // The list closes the paragraph before the question, maybe under a line introducing it.
+    const listed = earlier.pop()?.split("\n") ?? [];
+    const start = trailingItems(listed);
+    if (start === undefined) return undefined;
+    return offer({ question: last, intro: listed.slice(0, start), list: listed.slice(start), after: false, others: earlier });
+  }
+  if (items.slice(first, end).includes(false)) return undefined;
+  if (end === lines.length) {
+    // The list closes the message: the question is right before it, in its paragraph or the one before.
+    const own = lines.slice(0, first);
+    const question = own.length > 0 ? own.join("\n") : earlier.pop();
+    return question === undefined ? undefined : offer({ question, intro: [], list: lines.slice(first), after: true, others: earlier });
+  }
+  // The question follows the list in the same paragraph.
+  return offer({ question: lines.slice(end).join("\n"), intro: lines.slice(0, first), list: lines.slice(first, end), after: false, others: earlier });
+}
+
+/** Where the run of items closing `lines` starts; undefined when the last line is no item. */
+function trailingItems(lines: string[]): number | undefined {
+  let start = lines.length;
+  while (start > 0 && OPTION_ITEM.test(lines[start - 1] ?? "")) start--;
+  return start === lines.length ? undefined : start;
+}
+
+type Layout = {
+  /** The text that asks, without the list. */
+  question: string;
+  /** The lines before the list in its own paragraph, when the question follows it. */
+  intro: string[];
+  list: string[];
+  /** Whether the list follows the question. */
+  after: boolean;
+  /** The message's paragraphs before the question and the list. */
+  others: string[];
+};
+
+function offer(at: Layout): OfferedQuestion | undefined {
+  const fences = (text: string) => text.split("\n").filter((l) => FENCE.test(l)).length;
+  // A fence left open before them puts both inside a code block.
+  if (fences(at.others.join("\n")) % 2 === 1 || fences(at.question) > 0 || fences(at.intro.join("\n")) > 0) return undefined;
+  if (at.question.split("\n").some((l) => LIST_ITEM.test(l))) return undefined;
+  const asked = askingSentences(at.question);
+  if (asked.length !== 1) return undefined;
+  if (at.after && !closesWithQuestion(at.question)) return undefined;
+  // A list between two questions answers either.
+  const above = at.intro.length > 0 ? at.intro.join("\n") : (at.others.at(-1) ?? "");
+  if (!at.after && askingSentences(above).length > 0) return undefined;
+  const options = optionItems(at.list);
+  if (options === undefined) return undefined;
+  const words = folded(asked.join(" "));
+  const lastLine = (text: string | undefined) => text?.split("\n").filter((l) => l.trim() !== "").at(-1) ?? "";
+  const lead = at.after ? lastLine(at.question) : at.intro.length > 0 ? lastLine(at.intro.join("\n")) : lastLine(at.others.at(-1));
+  const introduced = /:\**$/.test(lead.trimEnd()) && INTRODUCING.test(folded(lead));
+  const recommended = at.list.filter((l) => RECOMMENDED.test(l)).length === 1;
+  if (!CHOOSING.test(words) && !introduced && !recommended) return undefined;
+  const { question, rest } = splitQuestion(at.question);
+  // Descriptions are read under the question; bare labels are the options themselves.
+  const listed = [...at.intro, ...(options.some((o) => o.described) ? at.list : [])].join("\n").trim();
+  const message = at.after ? [listed, ...at.others] : [...at.others, listed];
+  return {
+    question,
+    options: options.map((o) => o.label),
+    several: SEVERAL.test(words),
+    context: [rest, ...message].filter(Boolean).join("\n\n"),
+  };
+}
+
+/** The sentences of a paragraph that ask, outside quotes and code. */
+function askingSentences(paragraph: string): string[] {
+  return paragraph.split("\n").flatMap((line) => sentences(line).map(balanced).filter(asks));
+}
+
+/** Whether the paragraph's last sentence asks, or introduces what follows (":") right after one that does. */
+function closesWithQuestion(paragraph: string): boolean {
+  const said = sentences(paragraph.split("\n").filter((l) => l.trim() !== "").at(-1) ?? "").map(balanced);
+  const lastSaid = said.at(-1) ?? "";
+  return asks(lastSaid) || (/:\**$/.test(lastSaid) && asks(said.at(-2) ?? ""));
+}
+
+/** The options of a list, when every line is an option item of one kind and indentation, in order; undefined otherwise. */
+function optionItems(list: string[]): { label: string; described: boolean }[] | undefined {
+  if (list.length < 2 || list.length > OPTIONS_MAX) return undefined;
+  const out: { label: string; described: boolean }[] = [];
+  let shape: string | undefined;
+  for (const [i, line] of list.entries()) {
+    const m = OPTION_ITEM.exec(line.trimEnd());
+    if (!m) return undefined;
+    const [, indent, bullet, number, letter, item = ""] = m;
+    const kind = `${indent}${bullet ?? (number !== undefined ? "1" : "a")}`;
+    if ((shape ??= kind) !== kind) return undefined;
+    if (number !== undefined && Number(number) !== i + 1) return undefined;
+    if (letter !== undefined && letter.toLowerCase().charCodeAt(0) !== "a".charCodeAt(0) + i) return undefined;
+    const option = optionLabel(item);
+    if (!option) return undefined;
+    out.push(option);
+  }
+  const labels = out.map((o) => o.label.toLowerCase());
+  return new Set(labels).size === labels.length ? out : undefined;
+}
+
+/** An item's label: the item as written before its description (after ": " or a spaced dash), without bold marks. */
+function optionLabel(item: string): { label: string; described: boolean } | undefined {
+  if (/[?¿？]/.test(unquoted(item))) return undefined; // an item that asks is a question of its own
+  const spans = quotedSpans(item);
+  let cut: number | undefined;
+  let depth = 0;
+  for (let i = 0; i < item.length && cut === undefined; i++) {
+    const c = item.charAt(i);
+    if (c === "(" || c === "[") depth++;
+    else if ((c === ")" || c === "]") && depth > 0) depth--;
+    const separates = (c === ":" && /^[*_]*(?:\s|$)/.test(item.slice(i + 1))) || (c === " " && /^ [—–-] /.test(item.slice(i, i + 3)));
+    if (separates && depth === 0 && !spans.some(([from, to]) => i >= from && i < to)) cut = i;
+  }
+  const label = balanced((cut === undefined ? item : item.slice(0, cut)).trim()).replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a: string | undefined, b: string | undefined) => a ?? b ?? "").trim();
+  if (label === "" || label.length > OPTION_LABEL_MAX || label.split(/\s+/).length > OPTION_LABEL_WORDS || sentences(label).length > 1) return undefined;
+  const described = cut !== undefined && item.slice(cut).replace(/^(?::| [—–-] )/, "").replace(/\*+/g, "").trim() !== "";
+  return { label, described };
 }
 
 const MESSAGE_MAX = 8000;

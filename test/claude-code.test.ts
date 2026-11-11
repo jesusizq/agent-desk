@@ -1147,6 +1147,122 @@ describe("Claude Code hooks", () => {
   });
 });
 
+describe("options a turn's question offers", () => {
+  /** The open question a turn ending with `message` leaves: its text, options, whether several go and its context. */
+  const asked = (message: string) => {
+    const store = testStore();
+    handleHook(event("UserPromptSubmit", { prompt: "go" }), ctx(store));
+    handleHook(event("Stop", { last_assistant_message: message }), ctx(store));
+    const open = store.openQuestions("cc-1");
+    assert.ok(open.length <= 1, message);
+    return open[0] && { text: open[0].text, options: open[0].options, several: open[0].several ?? false, context: open[0].context ?? "" };
+  };
+
+  it("takes the list right after the question as its options, the recommended one's label as written", () => {
+    assert.deepEqual(asked("Refactor hecho y tests verdes.\n\n¿Cómo seguimos?\n\n1. Subirlo ya (recomendado)\n2. Revisar el diff antes\n3. Descartarlo"), {
+      text: "¿Cómo seguimos?",
+      options: ["Subirlo ya (recomendado)", "Revisar el diff antes", "Descartarlo"],
+      several: false,
+      context: "Refactor hecho y tests verdes.",
+    });
+    assert.deepEqual(asked("The two layouts render. Which one should I keep?\n- Grid\n- List (recommended)"), {
+      text: "Which one should I keep?",
+      options: ["Grid", "List (recommended)"],
+      several: false,
+      context: "The two layouts render.",
+    }, "in the same paragraph, what it says around the question reads under it");
+    assert.deepEqual(asked("¿Por dónde empiezo? Opciones:\n\na) El login\nb) El checkout\nc) Las facturas")?.options, ["El login", "El checkout", "Las facturas"], "lettered, after a line that introduces them");
+  });
+
+  it("takes the list right before the question, the labels before a colon or a dash, the descriptions kept under the question", () => {
+    const message = [
+      "He medido las dos variantes en el móvil.",
+      "",
+      "Hay dos caminos:",
+      "",
+      "- **Opción A:** mantener la caché en el cliente, más simple",
+      "- **Opción B** — moverla al servidor (recomendado)",
+      "",
+      "Yo iría con B. ¿Cuál prefieres?",
+    ].join("\n");
+    assert.deepEqual(asked(message), {
+      text: "¿Cuál prefieres?",
+      options: ["Opción A", "Opción B"],
+      several: false,
+      context: ["Yo iría con B.", "He medido las dos variantes en el móvil.", "Hay dos caminos:", "- **Opción A:** mantener la caché en el cliente, más simple\n- **Opción B** — moverla al servidor (recomendado)"].join("\n\n"),
+    });
+    assert.deepEqual(asked("Options:\n1. Rebase now - keeps the history linear\n2. Merge (safer - no force push)\nWhich one?")?.options, ["Rebase now", "Merge (safer - no force push)"], "a dash inside brackets describes nothing");
+    assert.deepEqual(asked("Encontré tres fallos:\n\n- El PIN no caduca\n- La foto no carga\n- El push llega dos veces\n\n¿Cuáles arreglo en este turno?"), {
+      text: "¿Cuáles arreglo en este turno?",
+      options: ["El PIN no caduca", "La foto no carga", "El push llega dos veces"],
+      several: true,
+      context: "Encontré tres fallos:",
+    }, "a question that takes several, its findings as what to choose from");
+  });
+
+  it("offers no options for a list that is not a choice between them", () => {
+    const free = [
+      // Steps of a plan, or what was done, under a yes-or-no question.
+      ["¿Te parece bien este plan?\n\n1. Migrar la base de datos\n2. Desplegar\n3. Verificar", undefined],
+      ["Shall I proceed with this plan?\n1. Migrate the table\n2. Deploy\n3. Verify", "Shall I proceed with this plan?"],
+      ["Cambios:\n\n- Añadido el guard en `sw.js`\n- Corregido el test del PIN\n\n¿Lo subo?", "¿Lo subo?"],
+      // Items that say more than a label: several sentences, or long.
+      ["¿Cuál prefieres?\n\n- Mantenerlo. Es lo más simple y ya funciona.\n- Cambiarlo. Cuesta un día.", undefined],
+      ["Which do you prefer?\n- Keep the current cache layer exactly as it is today, with the eviction rules we wrote last week and the extra metrics\n- Drop it", "Which do you prefer?"],
+      // Items that ask are questions of their own.
+      ["Which ones?\n- Shall I push the fix?\n- Shall I log every API error?", "Which ones?\n- Shall I push the fix?\n- Shall I log every API error?"],
+      // Two questions: which one the options answer is not clear.
+      ["¿Qué base usamos? ¿Y lo despliego hoy?\n\n1. Postgres (recomendado)\n2. SQLite", undefined],
+      // A list between two questions, that does not end the message, or that is not next to the question.
+      ["¿Qué base de datos usamos?\n\n- Postgres (recomendado)\n- SQLite\n\n¿Y lo despliego hoy?", "¿Y lo despliego hoy?"],
+      ["¿Cuál prefieres?\n\n- A\n- B\n\nDime y sigo.", undefined],
+      ["Opciones:\n\n- A\n- B\n\nLas he probado las dos.\n\n¿Cuál prefieres?", "¿Cuál prefieres?"],
+      // Numbers that do not count from 1, mixed markers, nested items, the same label twice.
+      ["Which one?\n2. Grid\n3. List", "Which one?"],
+      ["Which one?\n- Grid\n1. List", "Which one?"],
+      ["Which one?\n- Grid\n  - with gaps\n- List", "Which one?"],
+      ["Which one?\n- Grid\n- grid", "Which one?"],
+      // One item is no choice.
+      ["Which one?\n- Grid", "Which one?"],
+    ] as const;
+    for (const [message, text] of free) {
+      const q = asked(message);
+      assert.equal(q?.text, text, message);
+      assert.deepEqual(q?.options ?? [], [], message);
+    }
+  });
+
+  it("offers no options from code", () => {
+    const quiet = [
+      "Ejecuta esto:\n\n```yaml\n# ¿cuál?\n- a\n- b\n```",
+      "```md\n¿Cuál prefieres?\n\n- A\n- B\n```",
+      "The config reads:\n\n```yaml\nsteps:\n\n- build\n- test\n```",
+    ];
+    for (const message of quiet) assert.equal(asked(message), undefined, message);
+    // A list inside a block that a blank line splits is no list of the message.
+    assert.deepEqual(asked("```\nWhich one?\n\n- a\n- b\n```\n\nWhich one do you prefer?")?.options, [], "a list inside code");
+    assert.deepEqual(asked("Which one?\n```\n- a\n- b\n```")?.options ?? [], []);
+  });
+
+  it("keeps what the session asked through the CLI in that turn over the options its message lists", () => {
+    const store = testStore();
+    handleHook(event("UserPromptSubmit", { prompt: "go" }), ctx(store));
+    store.ask({ sessionId: "cc-1", kind: "question", text: "Bars or line?", options: ["Bars", "Line"] });
+    handleHook(event("Stop", { last_assistant_message: "Which chart?\n\n- Bars (recommended)\n- Line\n- Pie" }), ctx(store));
+    assert.deepEqual(store.openQuestions("cc-1").map((q) => [q.kind, q.options]), [["question", ["Bars", "Line"]]]);
+  });
+
+  it("sends an option from the desk verbatim, as the developer's answer", async () => {
+    const store = testStore();
+    handleHook(event("Stop", { last_assistant_message: "¿Cómo seguimos?\n\n1. Subirlo ya (recomendado)\n2. Revisarlo antes" }), ctx(store));
+    const [q] = store.openQuestions("cc-1");
+    const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 });
+    await new Promise((r) => setTimeout(r, 50));
+    store.answerFromDesk(q?.id ?? "", q?.options[0] ?? "");
+    assert.match((await waiting).stderr ?? "", /Their answer, verbatim:\nSubirlo ya \(recomendado\)$/);
+  });
+});
+
 describe("sub-agents, from the session's own calls and hooks", () => {
   const stop = (background_tasks?: object[], extra: Record<string, unknown> = {}) => event("Stop", { last_assistant_message: "Done.", ...(background_tasks ? { background_tasks } : {}), ...extra });
   const subagent = (id: string, description: string) => ({ id, type: "subagent", status: "running", description, agent_type: "general-purpose" });
