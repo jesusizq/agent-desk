@@ -475,6 +475,8 @@ export const TEXT = {
     lastChange: (where, t) => `Last change on ${where} · ${t}`,
     /** @param {string} t */
     published: (t) => `Published ${t} by the session`,
+    /** @param {number} n @param {string} t */
+    newRound: (n, t) => `Round ${n} published ${t} by the session`,
     /** @param {string} day */
     untouched: (day) => `Untouched since ${day}`,
     where: { thisComputer: "this computer", yourComputer: "your computer", phone: "your phone" },

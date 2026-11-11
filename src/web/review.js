@@ -250,7 +250,7 @@ export function openReview(id, { fromRoute = false } = {}) {
   const frame = newFrame(id);
   current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), summary: "", options: "", progress: r.progress, sync: false, collecting: 0, strayed: false };
   const shown = current;
-  if (!r.openedAt) run(post(`/api/reviews/${id}/opened`));
+  if (unseenRound(r)) run(post(`/api/reviews/${id}/opened`));
   drawView();
   if (!d.open) d.showModal();
   // Changes kept from before go first: the page then loads with them.
@@ -689,6 +689,9 @@ const stop = (e) => e.stopPropagation();
 
 // ---------- On the desk ----------
 
+/** Not opened on the desk since its latest round was published ("New" until then). @param {Review} r */
+const unseenRound = (r) => !r.openedAt || r.openedAt < (r.rounds.at(-1)?.at ?? "");
+
 /** Where the last change was made, from this device's side. @param {Review} r */
 function changedOn(r) {
   const w = TEXT.review.where;
@@ -708,10 +711,19 @@ function sentLine(r) {
 export function reviewTile(r) {
   const t = TEXT.review;
   const s = S(r.sessionId);
-  const fresh = !r.openedAt;
+  const fresh = unseenRound(r);
+  const latest = r.rounds.at(-1);
   const bar = h("i", {});
   bar.style.width = `${percentOf(r.progress)}%`;
-  const foot = untouched(r) ? t.untouched(dayLabel(touchedAt(r))) : r.updatedAt ? t.lastChange(changedOn(r), ago(r.updatedAt)) : t.published(ago(r.rounds.at(-1)?.at ?? r.rounds[0]?.at ?? ""));
+  // A round newer than the developer's last change replaced what they saw: the foot says so first.
+  const replaced = latest && r.rounds.length > 1 && latest.at > (r.updatedAt ?? "");
+  const foot = untouched(r)
+    ? t.untouched(dayLabel(touchedAt(r)))
+    : replaced
+      ? t.newRound(latest.n, ago(latest.at))
+      : r.updatedAt
+        ? t.lastChange(changedOn(r), ago(r.updatedAt))
+        : t.published(ago(latest?.at ?? ""));
   const open = () => openReview(r.id);
   const tile = h(
     "article",

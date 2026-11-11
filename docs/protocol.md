@@ -466,7 +466,7 @@ Tailscale host and login (`SECURITY.md`).
 | `GET /api/reviews/<id>/state` | `{ data, summary?, options?, rev }` (`options`: what the options marked in the page read as) |
 | `POST /api/reviews/<id>/state` `{ "ops": [{ "op": "set", "key", "value" } \| { "op": "remove", "key" } \| { "op": "clear" }], "progress"?: "12/97", "summary"?: "…" }` | applies the page's changes; returns `{ rev }`; 5 MB body at most |
 | `POST /api/reviews/<id>/send` `{ "to": "session" \| "other", "rev": n, "note"?: "…", "options"?: "…" }` | returns `{ line }` (the line, then the note); 409 `{ error, stale: true, rev }` when the state changed since the desk showed it at `rev`, 409 `{ error }` when the session takes no message now |
-| `POST /api/reviews/<id>/opened`, `POST /api/reviews/<id>/close` | first opened on the desk; leaves To review (stays in History) |
+| `POST /api/reviews/<id>/opened`, `POST /api/reviews/<id>/close` | opened on the desk (`openedAt`, set again when a newer round came since); leaves To review (stays in History) |
 
 Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header
 `X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most, except an image and a review's state.

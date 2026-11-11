@@ -3083,6 +3083,22 @@ paint();
       await page.waitFor(`!${tile("Hero copy")} && !${cardOf("Hero copy session")}?.querySelector('.rv-sline')`);
     });
 
+    it("marks a review New again, saying so, when a newer round replaced what the developer saw", async () => {
+      const r = publish("rv-round", "Footer copy");
+      store.changeReviewState(r.id, { ops: [{ op: "set", key: "answers", value: "{}" }] }, "local");
+      store.markReviewOpened(r.id);
+      const page = await open();
+      await page.waitFor(`${tile("Footer copy")}?.textContent.includes('Last change')`);
+      assert.equal(await page.eval<boolean>(`${tile("Footer copy")}.textContent.includes('New')`), false, "seen, and nothing newer");
+      store.publishReview({ sessionId: "rv-round", title: "Footer copy", html: reviewHtml(2) });
+      await page.waitFor(`${tile("Footer copy")}?.querySelector('.rv-foot').textContent.startsWith('Round 2 published')`);
+      assert.match(await page.eval<string>(`${tile("Footer copy")}.querySelector('.rv-badges').textContent`), /Round 2.*New/);
+      await openReview("Footer copy", page);
+      await page.click(".rv-back");
+      await page.waitFor(`!${tile("Footer copy")}.querySelector('.rv-badges').textContent.includes('New')`);
+      store.closeReview(r.id);
+    });
+
     it("says calmly when a review was left alone for two days, on its tile and in the summary of the time away", async () => {
       const before = new Store(store.paths.home, () => new Date(Date.now() - 3 * 24 * 3600_000));
       const r = publish("rv-still", "Footer links", {}, reviewHtml(3), before);

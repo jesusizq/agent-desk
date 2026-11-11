@@ -1079,9 +1079,9 @@ export class Store {
     });
   }
 
-  /** The developer opened it on the desk: it is no longer new. */
+  /** The developer opened it on the desk: it, and its latest round, are no longer new. */
   markReviewOpened(reviewId: string): Review {
-    return this.updateReview(reviewId, (r) => (r.openedAt ? r : { ...r, openedAt: this.stamp() }));
+    return this.updateReview(reviewId, (r) => (r.openedAt && r.openedAt >= (r.rounds.at(-1)?.at ?? "") ? r : { ...r, openedAt: this.stamp() }));
   }
 
   /**
