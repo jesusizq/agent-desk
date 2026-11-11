@@ -181,7 +181,8 @@ provider's own dialogs, and turns that end with a question. A question asked wit
 during a turn is held (`writing`) until the turn ends and adds its message to it, or for 5 minutes at
 most, so it never shows half written; permission prompts and dialogs stop the session and show at
 once. A turn that ends with a question in plain text is titled with the sentences of its last
-paragraph that ask (ending in `?` or `？`); the rest of that paragraph opens its context, followed by
+paragraph that ask (ending in `?` or `？`); a question mark inside quotes («…», “…”, "…", '…') or
+code (inline or fenced) asks nothing, as a line the session suggests telling another one; the rest of that paragraph opens its context, followed by
 the rest of the message. A last paragraph that is a list whose items ask, or that only asks, is the
 title whole. A turn that ends with a report is kept as the session's last message and shown quietly
 on its card ("Finished · waiting for your next instruction"); the session panel always shows it in full, also after its item was dismissed, and can

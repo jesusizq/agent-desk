@@ -283,7 +283,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     return;
   }
   // Only a turn that ends asking something needs the developer; a report waits quietly on the session.
-  if (!/[?¿？]/.test(last)) return;
+  if (!asksSomething(last)) return;
   replaced();
   // The sentences that ask are the question; what the paragraph says around them reads first under it.
   const { question, rest } = splitQuestion(last);
@@ -295,21 +295,70 @@ const LIST_ITEM = /^\s*(?:[-*+•]|\d+[.)])\s+/;
 const FENCE = /^\s*(?:```|~~~)/;
 const ENDS = ".!?…。！？";
 /** What may close a sentence after its mark: more marks, emphasis, quotes, brackets. */
-const CLOSERS = `${ENDS})]"'»”’*_`;
+const CLOSERS = `${ENDS})]"'»”’」*_`;
 /** "e.g.", "i.e.", "U.S.": a full stop inside an abbreviation does not end the sentence. */
 const ABBREVIATION = /(?:^|[\s(])(?:\p{L}\.){2,}$/u;
-const asks = (sentence: string) => /[?？]$/.test(sentence.replace(/[)\]"'»”’*_]+$/, ""));
-const outsideCode = (line: string) => line.replace(/`[^`]*`/g, "");
+/** Quote marks and inline code, each opening mark with its closing one. */
+const QUOTES: Readonly<Record<string, string>> = { "«": "»", "“": "”", "‘": "’", "「": "」", '"': '"', "'": "'", "`": "`" };
+/** Marks that also stand for an apostrophe or inches ("don't", 5"): they quote only at a word's edges. */
+const AMBIGUOUS = new Set(['"', "'", "’"]);
+const WORD = /[\p{L}\p{N}]/u;
+const opens = (line: string, i: number) => !WORD.test(line.charAt(i - 1)) && !/\s/.test(line.charAt(i + 1) || " ");
+const closes = (line: string, i: number) => !/\s/.test(line.charAt(i - 1) || " ") && !WORD.test(line.charAt(i + 1));
 
-/** A line's sentences, cut after their closing mark; a mark inside inline code or a word ("v1.2") cuts nothing. */
+/**
+ * The quoted and code spans of a line, each from its opening mark to past its closing one: what a
+ * session quotes (a line for another session, a message it read) asks the developer nothing. A mark
+ * with no closing one on its line quotes nothing.
+ */
+function quotedSpans(line: string): [number, number][] {
+  const spans: [number, number][] = [];
+  for (let i = 0; i < line.length; i++) {
+    const open = line.charAt(i);
+    const close = QUOTES[open];
+    if (close === undefined || (AMBIGUOUS.has(open) && !opens(line, i))) continue;
+    let j = i + 1;
+    while (j < line.length && (line.charAt(j) !== close || (AMBIGUOUS.has(close) && !closes(line, j)))) j++;
+    if (j === line.length) continue;
+    spans.push([i, j + 1]);
+    i = j;
+  }
+  return spans;
+}
+/** A line without what it quotes or shows as code. */
+const unquoted = (line: string) => {
+  let out = "";
+  let from = 0;
+  for (const [start, end] of quotedSpans(line)) {
+    out += line.slice(from, start);
+    from = end;
+  }
+  return out + line.slice(from);
+};
+const asks = (sentence: string) => /[?？]$/.test(unquoted(sentence).trimEnd().replace(/[)\]"'»”’」*_]+$/, ""));
+
+/** Whether a turn's last paragraph asks anything: a question mark outside quotes, inline code and fenced code. */
+export function asksSomething(paragraph: string): boolean {
+  let fenced = false;
+  for (const line of paragraph.split("\n")) {
+    if (FENCE.test(line)) fenced = !fenced;
+    else if (!fenced && /[?¿？]/.test(unquoted(line))) return true;
+  }
+  return false;
+}
+
+/**
+ * A line's sentences, cut after their closing mark; a mark inside a word ("v1.2"), inline code or a
+ * quote cuts nothing, but the one that ends a quote may end its sentence too ('He said "go." Then…').
+ */
 function sentences(line: string): string[] {
   const out: string[] = [];
+  const spans = quotedSpans(line);
   let start = 0;
-  let code = false;
   for (let i = 0; i < line.length; i++) {
     const c = line.charAt(i);
-    if (c === "`") code = !code;
-    if (code || !ENDS.includes(c) || (c === "." && ABBREVIATION.test(line.slice(0, i + 1)))) continue;
+    const within = spans.find(([from, to]) => i > from && i < to - 1);
+    if ((within && i !== within[1] - 2) || !ENDS.includes(c) || (c === "." && ABBREVIATION.test(line.slice(0, i + 1)))) continue;
     let end = i + 1;
     while (end < line.length && CLOSERS.includes(line.charAt(end))) end++;
     // Fullwidth marks end a sentence with no space after them, as Chinese and Japanese write.
@@ -332,7 +381,7 @@ function balanced(piece: string): string {
 /**
  * The asking sentences of a turn's last paragraph, in order, and the rest of it, lines kept. The
  * paragraph stays whole when it is a list whose items ask (a list of decisions, shown as a block),
- * when every sentence asks, or when nothing outside code ends in a question mark.
+ * when every sentence asks, or when nothing outside quotes and code ends in a question mark.
  */
 export function splitQuestion(paragraph: string): { question: string; rest: string } {
   const whole = { question: paragraph, rest: "" };
@@ -349,7 +398,7 @@ export function splitQuestion(paragraph: string): { question: string; rest: stri
     // An item's own lines are indented under it.
     inItem = LIST_ITEM.test(line) || (inItem && /^\s/.test(line));
     if (inItem) {
-      if (/[?？¿]/.test(outsideCode(line))) return whole;
+      if (/[?？¿]/.test(unquoted(line))) return whole;
       kept.push(line);
       continue;
     }

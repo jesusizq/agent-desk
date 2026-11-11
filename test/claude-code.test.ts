@@ -1041,6 +1041,41 @@ describe("Claude Code hooks", () => {
     ];
     for (const paragraph of whole) assert.deepEqual(splitQuestion(paragraph), { question: paragraph, rest: "" }, paragraph);
   });
+
+  it("asks nothing with a question mark inside a quote or code, and finds the real question beside one", () => {
+    /** The open question a turn ending with `message` leaves, as [text, context], or null when it asks nothing. */
+    const asked = (message: string) => {
+      const store = testStore();
+      handleHook(event("Stop", { last_assistant_message: message }), ctx(store));
+      const open = store.openQuestions("cc-1");
+      assert.ok(open.length <= 1, message);
+      return open[0] ? [open[0].text, open[0].context ?? ""] : null;
+    };
+    const quiet = [
+      // A line the developer could tell another session is not a question to the developer.
+      "He revisado los logs del orquestador.\n\nEl agente de perfil no arrancó por un permiso denegado. Si quieres, dile a la otra sesión: «el agente de perfil no arrancó, ¿lo relanzas de otra forma?»",
+      "La otra sesión preguntó “¿borro las ramas fusionadas?” y ya le contesté que sí.",
+      'The review agent asked "should I squash the commits?" and I told it to keep them.',
+      "I told it 'why not rebase?' and it rebased.",
+      "Run `curl 'localhost:8080/?q=1'` to check, or `a?.b ?? c` reads it.",
+      "The guard now reads:\n```ts\nconst name = user?.name ?? \"?\";\n```",
+    ];
+    for (const message of quiet) assert.equal(asked(message), null, message);
+    // An apostrophe opens no quote: the question after it still asks.
+    assert.deepEqual(asked("The agent's branch didn't build. Shall I relaunch it?"), ["Shall I relaunch it?", "The agent's branch didn't build."]);
+    assert.deepEqual(
+      asked("Le he dicho a la otra sesión «¿lo relanzas con otro modelo?». ¿Lanzo yo también el de perfil?"),
+      ["¿Lanzo yo también el de perfil?", "Le he dicho a la otra sesión «¿lo relanzas con otro modelo?»."],
+      "a real question after a quoted one",
+    );
+    assert.deepEqual(
+      asked('Shall I tell the other session "relaunch it with Sonnet"? It failed twice with "permission denied?".'),
+      ['Shall I tell the other session "relaunch it with Sonnet"?', 'It failed twice with "permission denied?".'],
+      "a real question holding a quote, before a quoted mark",
+    );
+    assert.deepEqual(asked("¿Le digo «relánzalo»?"), ["¿Le digo «relánzalo»?", ""]);
+    assert.deepEqual(splitQuestion('He said "go." Then shall I push?'), { question: "Then shall I push?", rest: 'He said "go."' }, "the mark that ends a quote ends its sentence");
+  });
 });
 
 describe("sub-agents, from the session's own calls and hooks", () => {
