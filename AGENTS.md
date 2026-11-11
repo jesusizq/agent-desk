@@ -28,6 +28,10 @@ agent updates, and answering means finding the right terminal and scrolling back
   developer types in its terminal mid-turn does.
 - **Results with pictures.** What finished, with its summary and its screenshots shown inline
   (not as links), and the place to see it live (a local URL) when there is one.
+- **Reviews.** A page a session made for the developer to review or choose from (proposals, design
+  variants) opens whole on the desk, on the computer and the phone; its progress is kept on the desk
+  across devices and days without holding the session, and goes back when the developer sends it, to
+  the session that asked or to any later one, with its answers kept as decisions.
 - **Work in progress.** Per session: the agents running, what each one does, its branch and commit,
   how long it has run, what it waits for, and when it stopped or failed.
 - **History.** Past decisions with their answers, past results, searchable.

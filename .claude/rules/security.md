@@ -39,20 +39,29 @@ command.
 
 - Store files 0600, directories 0700, under `~/.cache/agent-desk/` only.
 - A device that reached the desk through the tailnet keeps what it saved of the desk (the service
-  worker's copy, images in its browser cache, drafts and unsent messages) only while its PIN unlock
-  lasts: every answer to it carries the unlock's end (`X-Agent-Desk-Unlock-Ends`), and the device
+  worker's copy, images in its browser cache, review pages and their progress, drafts and unsent
+  messages) only while its PIN unlock lasts: every answer to it carries the unlock's end
+  (`X-Agent-Desk-Unlock-Ends`), and the device
   deletes all of it at a locked answer, at the push saying the PIN ended, or once that end has
   passed, never showing it after, even offline; only this computer keeps its copy without an end.
 - Ids used in paths are validated against a strict pattern; resolved paths must stay inside the
   store (no traversal through project, session or image names).
-- Images are copied into the store and served from it by id; never served from the path a session
-  reported.
+- Images and review pages are copied into the store and served from it by id; never served from the
+  path a session reported (a review page's own images, only from its folder, are inlined when it is
+  copied).
 - Writes are atomic (temp file + rename); readers survive partial and concurrent writes.
 
 ## UI
 
 - Render session text as plain text or sanitised Markdown: no raw HTML, no scripts, no `javascript:`
   links; a strict Content-Security-Policy (`default-src 'self'`).
+- A review page a session published (one HTML file, its images inlined when published) is the one
+  exception: it is served only under the `sandbox allow-scripts` Content-Security-Policy, so it has
+  no origin of its own and reaches none of the desk's data, requests or secret; it has no network
+  (`default-src 'none'`; inline scripts and styles, `data:` images and fonts), shows only inside a
+  frame of the desk, and talks to the desk only through messages the desk checks: saving its progress
+  and handing over the text it copies. What it hands over reaches a session only as the line the
+  developer sees and sends.
 - An answer is delivered exactly as shown to the user, never rewritten, and only to the session that
   asked.
 - A permission prompt is allowed or denied from the desk only while the provider's permission hook
