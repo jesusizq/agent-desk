@@ -113,7 +113,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
     case "PermissionRequest": {
       // A tool that asks the developer to choose is shown as its questions, not as a permission.
       if (f.tool_name === ASK_TOOL) {
-        const dialog = askDialog(sid, f.tool_input, store, problems);
+        const dialog = askDialog(sid, f.tool_input, store, problems, saidBefore(input));
         syncPermissionMarker(store, problems);
         return { code: 0, dialog };
       }
@@ -639,7 +639,9 @@ function runs(agent: Agent, agents: Agent[], running: RunningTasks, seen = new S
 
 /**
  * The texts Claude wrote in the session's current turn, oldest first: its assistant entries after
- * the last entry from the developer, read from the end of the transcript (sub-agents' left out).
+ * the prompt that started it, read from the end of the transcript (sub-agents' left out). What Claude
+ * Code adds within a turn (a skill's instructions, an image read) is passed over; a message from
+ * another session starts a turn like a prompt, and so does any entry after the previous turn's end.
  */
 export function turnTexts(transcript: string): string[] {
   const tail = readTail(transcript, TRANSCRIPT_TAIL);
@@ -654,10 +656,13 @@ export function turnTexts(transcript: string): string[] {
     if (typeof entry !== "object" || entry === null) continue;
     const e = entry as Fields;
     if (e.isSidechain === true) continue;
+    if (e.type === "system" && e.subtype === "turn_duration") break; // the previous turn ended here
     const content = typeof e.message === "object" && e.message !== null ? (e.message as Fields).content : undefined;
     const blocks = Array.isArray(content) ? content.filter((b): b is Fields => typeof b === "object" && b !== null) : [];
     if (e.type === "user") {
-      if (typeof content === "string" || !blocks.some((b) => b.type === "tool_result")) break; // the developer spoke: the turn starts after it
+      const origin = typeof e.origin === "object" && e.origin !== null ? (e.origin as Fields).kind : undefined;
+      if (e.isMeta === true && origin !== "peer") continue;
+      if (typeof content === "string" || !blocks.some((b) => b.type === "tool_result")) break; // a prompt: the turn starts after it
       continue;
     }
     if (e.type !== "assistant") continue;
@@ -1396,11 +1401,28 @@ function forTheTurn(store: Store): (questionId: string) => boolean {
 export const ASK_TOOL = "AskUserQuestion";
 
 /**
- * Shows an AskUserQuestion call on the desk: one question per question it asks, with its options
- * and whether several can be picked, grouped when there are more than one; the options' descriptions
- * go in the context. A question the model also asked through `agent-desk ask` with the same text is replaced.
+ * What the session wrote in its turn before the call now being made; empty for a sub-agent's call,
+ * whose turn is not in the session's transcript.
  */
-function askDialog(sessionId: string, toolInput: unknown, store: Store, problems: string[]): Dialog {
+function saidBefore(input: Common): string {
+  const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
+  if (!transcript?.endsWith(".jsonl") || input.raw.agent_id !== undefined) return "";
+  return turnTexts(transcript).join("\n\n");
+}
+
+// The store's limit on a question's context (src/core/model.ts reads it as text).
+const QUESTION_CONTEXT_MAX = 20_000;
+/** The end of `said`, at most `max` characters of it, marked where it was cut. */
+const latest = (said: string, max: number) => (said.length <= max ? said : max > 1 ? `…${said.slice(-(max - 1))}` : "");
+
+/**
+ * Shows an AskUserQuestion call on the desk: one question per question it asks, with its options
+ * and whether several can be picked, grouped when there are more than one. The context is what the
+ * session wrote in its turn before asking (`before`, on the first question, as the terminal shows
+ * it above the dialog), then the options' descriptions. A question the model also asked through
+ * `agent-desk ask` with the same text is replaced.
+ */
+function askDialog(sessionId: string, toolInput: unknown, store: Store, problems: string[], before: string): Dialog {
   const input = fields(toolInput, "tool_input");
   const asked = list(input.questions, "tool_input.questions", (v, w) => {
     const q = fields(v, w);
@@ -1416,7 +1438,9 @@ function askDialog(sessionId: string, toolInput: unknown, store: Store, problems
   const group = asked.length > 1 ? newId("dialog") : undefined;
   const questions = asked.map((q, index) => {
     store.closeOpen(sessionId, { kinds: ["question"], which: (o) => !o.dialog && o.text === q.text, status: "dismissed", problems });
-    const context = q.options.filter((o) => o.description).map((o) => `- **${o.label}**: ${o.description}`).join("\n");
+    const described = q.options.filter((o) => o.description).map((o) => `- **${o.label}**: ${o.description}`).join("\n");
+    const room = Math.min(CONTEXT_MAX, QUESTION_CONTEXT_MAX - described.length - 2);
+    const context = [index === 0 ? latest(before, room) : "", described].filter(Boolean).join("\n\n");
     const item = store.ask(
       compact({ sessionId, kind: "question" as const, text: q.text, options: q.options.map((o) => o.label), context: context || undefined, dialog: true, several: q.several || undefined, group: group ? { id: group, index, size: asked.length } : undefined }),
     );

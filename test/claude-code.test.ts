@@ -1379,6 +1379,64 @@ describe("answers from the desk", () => {
     assert.deepEqual(decided, { behavior: "allow", updatedInput: { questions, answers: { "Which layout?": "A", "Which extras?": "Player, Legend" } } });
   });
 
+  describe("a choice dialog's context: what the session wrote in its turn before asking", () => {
+    const line = (e: object) => `${JSON.stringify(e)}\n`;
+    const assistant = (...content: object[]) => line({ type: "assistant", message: { content } });
+    const say = (text: string) => ({ type: "text", text });
+    const call = (name: string) => ({ type: "tool_use", id: `toolu_${name}`, name, input: {} });
+    const result = line({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_x", content: "ok" }] } });
+    const prompt = (content: string, extra = {}) => line({ type: "user", message: { content }, ...extra });
+    const ended = line({ type: "system", subtype: "turn_duration", durationMs: 5000 });
+    const questions = [
+      { question: "¿Cómo seguimos?", options: [{ label: "Simplify", description: "One page per project" }, { label: "Keep" }] },
+      { question: "Which first?", options: [{ label: "Desk" }, { label: "Doc" }] },
+    ];
+    /** The contexts of the dialog asked at the end of `transcript`, as the desk shows them. */
+    const contexts = (transcript: string, extra: Record<string, unknown> = {}) => {
+      const store = testStore();
+      const file = path.join(tempHome(), "cc-1.jsonl");
+      fs.writeFileSync(file, transcript);
+      handleHook(event("PermissionRequest", { tool_name: "AskUserQuestion", tool_input: { questions }, transcript_path: file, ...extra }), ctx(store));
+      return store.openQuestions("cc-1").map((q) => q.context);
+    };
+
+    it("is the text written right before the call, then the options' descriptions, on the first question", () => {
+      const turn = assistant(say("From the last turn.")) + ended + prompt("review the portfolio") + assistant(say("Desk and the design doc are too complex for a recruiter.\n\nI propose one page per project."), call("AskUserQuestion"));
+      assert.deepEqual(contexts(turn), ["Desk and the design doc are too complex for a recruiter.\n\nI propose one page per project.\n\n- **Simplify**: One page per project", undefined]);
+    });
+
+    it("joins several text blocks, and text written before an earlier tool call of the same turn", () => {
+      const turn =
+        prompt("review the portfolio") +
+        assistant(say("Reading the three pages first.")) +
+        assistant(call("Read")) +
+        result +
+        line({ type: "user", isMeta: true, message: { content: [{ type: "text", text: "[Image: source: /tmp/shot.png]" }] } }) +
+        assistant(say("Problem 1: Desk is dense.")) +
+        assistant(say("Problem 2: the doc is long."), call("AskUserQuestion"));
+      assert.deepEqual(contexts(turn)[0], "Reading the three pages first.\n\nProblem 1: Desk is dense.\n\nProblem 2: the doc is long.\n\n- **Simplify**: One page per project");
+    });
+
+    it("starts at what started the turn: another session's message, or the end of the last turn", () => {
+      const peer = prompt("Another Claude session sent a message:\n<cross-session-message from-name=\"p-1\">\nlook\n</cross-session-message>", { isMeta: true, origin: { kind: "peer" } });
+      assert.deepEqual(contexts(assistant(say("Earlier.")) + peer + assistant(say("Their pages are dense."), call("AskUserQuestion")))[0], "Their pages are dense.\n\n- **Simplify**: One page per project");
+      const woken = assistant(say("Earlier.")) + ended + prompt("[Cross-session idle] nothing came", { isMeta: true }) + assistant(say("Still dense."), call("AskUserQuestion"));
+      assert.deepEqual(contexts(woken)[0], "Still dense.\n\n- **Simplify**: One page per project");
+    });
+
+    it("is only the descriptions when the session wrote nothing before asking, or a sub-agent asks", () => {
+      assert.deepEqual(contexts(prompt("review it") + assistant(call("AskUserQuestion"))), ["- **Simplify**: One page per project", undefined]);
+      assert.deepEqual(contexts(prompt("review it") + assistant(say("The session's own words."), call("AskUserQuestion")), { agent_id: "a-1" })[0], "- **Simplify**: One page per project");
+    });
+
+    it("keeps the latest of a long turn", () => {
+      const long = `${"older words ".repeat(1000)}\n\nThe point right above the dialog.`;
+      const shown = contexts(prompt("review it") + assistant(say(long), call("AskUserQuestion")))[0] ?? "";
+      assert.ok(shown.startsWith("…") && shown.length <= 8000 + "\n\n- **Simplify**: One page per project".length, `${shown.length}`);
+      assert.ok(shown.includes("The point right above the dialog.\n\n- **Simplify**"));
+    });
+  });
+
   it("closes the dialog's questions with the answer given in the terminal", async () => {
     const store = testStore();
     handleHook(event("SessionStart", { source: "startup" }), ctx(store));
