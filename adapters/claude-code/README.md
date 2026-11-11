@@ -1,7 +1,7 @@
 # Claude Code adapter
 
 Reports every Claude Code session on this machine to agent-desk through hooks, at no token cost
-except the instructions added once per session (`instructions.md`, 3 kB, roughly 750 tokens), and delivers
+except the instructions added once per session (`instructions.md`), and delivers
 answers given on the page back to the session that asked.
 
 ## What each hook does

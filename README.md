@@ -35,7 +35,7 @@ and step away. When you come back, one browser tab shows:
   them, copied, never run).
 - **From your phone,** through your own Tailscale tailnet, behind a PIN.
 
-It costs almost nothing: about 750 tokens per session for its instructions; everything else is done
+It costs almost nothing: a short set of instructions per session; everything else is done
 by deterministic hooks that never go through the model. No cloud and no telemetry: nothing leaves
 your machine except an opt-in push telling a locked phone how many questions wait. It never writes
 into the projects it follows (no files, no rules, no commits).
@@ -307,10 +307,8 @@ The page tests drive Chrome through its DevTools protocol, with no test dependen
 `google-chrome` or `chromium` from `PATH`, or the browser in `AGENT_DESK_CHROME`; without one they
 are skipped, except in CI, where they fail.
 
-`test/visual.test.ts` compares 30 screens (the desk with questions and quiet, a session's agents and
-branches, a result's before and after, a History search, a review open, one drawn from data, one with
-the desk's option controls and its Send sheet, each light and dark at 1440 × 900; ten phone screens
-at 390 × 844) with the PNGs in `test/visual/<platform>/`. A screen fails when more than 16 pixels
+`test/visual.test.ts` compares the key screens, desktop light and dark and phone, with the PNGs in
+`test/visual/<platform>/`. A screen fails when more than 16 pixels
 differ by more than 8 of 255 in a channel: a box moved by 1 px or a colour nudged by 4% fails. The
 failure prints the capture and a copy with the changed pixels in magenta, both under
 `$TMPDIR/agent-desk-visual/`. When a change is intended, look at those, then accept it:
