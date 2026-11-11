@@ -296,7 +296,7 @@ const STALE_MS = 10 * 60_000;
  */
 export function branchesPart(s) {
   const b = data.branches.find((x) => x.sessionId === s.id);
-  if (!b || (b.rows.length === 0 && b.hidden === 0)) return null;
+  if (!b || (b.rows.length === 0 && b.hidden === 0 && b.gone === 0)) return null;
   const t = TEXT.branches;
   const stale = Date.now() - Date.parse(b.checkedAt) > STALE_MS;
   return h(
@@ -305,6 +305,7 @@ export function branchesPart(s) {
     h("h4", {}, TEXT.branches.title, h("span", { class: `bage${stale ? " stale" : ""}`, title: hm(b.checkedAt) }, (stale ? t.stale : t.read)(ago(b.checkedAt)))),
     h("div", { class: "alist blist" }, b.rows.map((r) => branchRow(s, r, b.baseBranch))),
     b.hidden ? h("button", { class: "linkish faint bhidden", onclick: () => openProject(b.projectId) }, t.hidden(b.hidden)) : null,
+    b.gone ? h("div", { class: "faint bgone" }, t.goneAgents(b.gone)) : null,
   );
 }
 

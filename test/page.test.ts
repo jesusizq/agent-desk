@@ -300,6 +300,28 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("counts finished agents whose branch is gone in one quiet line, and says branch not found only of an agent still open", async () => {
+    store.upsertSession({ id: "integrated", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "integrated work", state: "waiting" });
+    for (const [name, state] of [["merged-one", "done"], ["merged-two", "done"], ["dropped", "failed"], ["stuck", "blocked"]] as const) store.upsertAgent("integrated", name, { goal: `Goal ${name}`, branch: `agent/${name}`, state });
+    const scan = store.listProjectScans().find((p) => p.name === "web-shop");
+    assert.ok(scan);
+    store.putProjectScan({ ...scan, measuredAt: new Date(Date.now() + 1000).toISOString() });
+    try {
+      const page = await open();
+      await page.click(".scard", "integrated work");
+      await page.click("#session .pchips button.chip", "agents");
+      await page.waitFor("document.querySelector('#session .branches-sec .bgone')");
+      assert.equal(await page.eval<string>("document.querySelector('#session .bgone').textContent"), "3 finished agents: branch already gone, integrated or deleted");
+      const missing = await page.eval<string[]>("[...document.querySelectorAll('#session .brow')].filter((r) => r.textContent.includes('branch not found')).map((r) => r.querySelector('.bname').textContent)");
+      assert.deepEqual(missing, ["agent/stuck"]);
+      await page.press("Escape");
+    } finally {
+      store.putProjectScan(scan);
+      store.updateSession("integrated", (x) => ({ ...x, state: "ended" }));
+      store.forgetSession("integrated");
+    }
+  });
+
   it("shows a question's past decisions quietly, and answers with one, verbatim, only when it is clicked", async () => {
     store.upsertSession({ id: "deciding", provider: "Test", project: { name: "billing", dir: "/home/demo/Projects/billing" }, title: "past decisions", state: "waiting" });
     store.ask({ sessionId: "deciding", kind: "question", text: "Bill new customers monthly or yearly by default?" });

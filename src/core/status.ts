@@ -29,6 +29,7 @@ export function statusLines(input: StatusInput): string[] {
     out.push(`Branches (git read ${since(branches.checkedAt, now)} ago${branches.baseBranch ? `; compared with ${branches.baseBranch}` : ""}):`);
     out.push(...capped(branches.rows.map((r) => `- ${branchLine(r, dir, now)}`), SHOWN.branches, "branches"));
     if (branches.hidden > 0) out.push(`  (${branches.hidden} more checkout${branches.hidden === 1 ? "" : "s"} merged, clean and idle, not listed)`);
+    if (branches.gone > 0) out.push(`  (${branches.gone} finished agent${branches.gone === 1 ? "'s branch is" : "s' branches are"} gone, integrated or deleted; not listed)`);
   } else {
     out.push(`Branches: none read for ${dir}${input.gitError ? ` (${oneLine(input.gitError, 200)})` : ""}`);
   }

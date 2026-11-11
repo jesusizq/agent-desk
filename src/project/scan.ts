@@ -68,6 +68,8 @@ export type ScanOptions = {
   sizes?: boolean;
   /** Branches the project's agents were said to work on: where each stands when no checkout has it. */
   branches?: readonly string[];
+  /** The processes of the live sessions, whose shell commands tell which checkouts are in use (`busy`). */
+  sessions?: readonly { pid: number; start?: string }[];
   /** Per git command. */
   timeoutMs?: number;
 };
@@ -87,7 +89,7 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
   const problems: string[] = [];
   const paths = new Set(listed.map((w) => path.resolve(w.path)));
   const known = new Map((previous?.worktrees ?? []).map((w) => [path.resolve(w.path), w]));
-  const busy = workingIn([...paths], BUSY_KEPT);
+  const busy = workingIn([...paths], options.sessions ?? [], BUSY_KEPT);
   const worktrees: Worktree[] = [];
   for (const [i, w] of listed.entries()) {
     const isMain = i === 0;

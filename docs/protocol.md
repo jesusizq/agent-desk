@@ -139,8 +139,14 @@ excluded by pathspec, so a worktree under `.claude/worktrees/` is not one of the
 --verify --quiet`), only when the name is a plain ref name. A command that fails or times out leaves
 its message in that checkout's `error` and in `problems`; the others are read all the same.
 
-`busy` names, by command, this user's processes whose working folder (`/proc/<pid>/cwd`) is in the
-checkout and in no checkout nested in it, shells and the scan's own process chain left out.
+`busy` names, by command, the processes a live session started through a shell (its commands and
+its agents', the rule Local servers follows: not the tool servers its provider runs as its direct
+children, such as MCP servers, nor anything outside its process tree) whose working folder
+(`/proc/<pid>/cwd`) is in the checkout and in no checkout nested in it, reading only the `stat`,
+`task/<tid>/children`, `cmdline` and `cwd` of those trees. Shells, the scan itself and the desk's own
+helpers are left out, with what they start: a process running a
+script of the desk's install (`src/`, `adapters/`, `bin/`), `agent-desk` or `agent-desk-claude`, or a
+shell whose `-c` script runs one of those as a command (a hook's).
 
 Sizes are walked at most hourly by the background scan; `agent-desk status` and the handoff read git
 only, keeping known sizes. One scan of a project runs at a time (`claimScan`); a status read while
@@ -150,7 +156,9 @@ A session's rows (`sessionBranches`, `src/core/branches.ts`, sent as `DeskState.
 by `agent-desk status`): the main checkout, each of its agents with a `worktree` (the deepest
 checkout holding it) or a `branch`, then the project's other checkouts; one merged, clean and idle is
 only counted (`hidden`). An agent whose checkout or branch the scan does not list is `missing` when
-the scan ran after the agent last changed, else `unread`. The page shows `checkedAt` as the rows'
+the scan ran after the agent last changed, else `unread`. A finished agent (`done`, `failed`)
+whose branch or checkout is `missing` was integrated and deleted: it is only counted (`gone`), so
+"branch not found" shows only for an agent still open. The page shows `checkedAt` as the rows'
 age.
 
 ## Past decisions

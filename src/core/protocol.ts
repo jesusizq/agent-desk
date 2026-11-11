@@ -392,9 +392,10 @@ export type BranchRow = {
 
 /**
  * A session's branches as the last scan of its project read them (`checkedAt`): its agents' first,
- * then the project's other checkouts; `hidden` counts the merged, clean and idle ones left out.
+ * then the project's other checkouts; `hidden` counts the merged, clean and idle ones left out, and
+ * `gone` the finished agents whose branch or checkout no longer exists.
  */
-export type SessionBranches = { sessionId: string; projectId: string; baseBranch?: string; checkedAt: string; rows: BranchRow[]; hidden: number };
+export type SessionBranches = { sessionId: string; projectId: string; baseBranch?: string; checkedAt: string; rows: BranchRow[]; hidden: number; gone: number };
 
 /** The mechanical half of a session's handoff, recorded by its adapter before its context is compacted. */
 export type Handoff = { sessionId: string; at: string; trigger: "manual" | "auto"; text: string };

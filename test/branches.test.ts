@@ -8,6 +8,7 @@ import { describe, it } from "node:test";
 import { sessionBranches } from "../src/core/branches.ts";
 import type { Agent, ProjectScan, Session } from "../src/core/model.ts";
 import { fitText, statusLines } from "../src/core/status.ts";
+import { deskHelper } from "../src/project/busy.ts";
 import { branchRef, GitError } from "../src/project/git.ts";
 import { refreshScan } from "../src/project/refresh.ts";
 import { scanProject } from "../src/project/scan.ts";
@@ -88,21 +89,54 @@ describe("git state of a project's checkouts", () => {
     assert.equal(branchRef("-x"), undefined);
   });
 
-  it("names the processes working in a checkout, the deepest one holding their folder, shells left out", async () => {
-    const { main, wip } = repo();
-    const sleeper = spawn("sleep", ["30"], { cwd: path.join(wip, ".") , stdio: "ignore" });
-    const shell = spawn("sh", ["-c", "read x"], { cwd: main, stdio: ["pipe", "ignore", "ignore"] });
+  it("names only the commands a live session started through a shell in each checkout, the deepest one holding their folder", async () => {
+    const { main, wip, done, loose } = repo();
+    // This test's process stands for the session: what it starts through a shell is its work.
+    const started = [
+      spawn("sh", ["-c", "sleep 30 & wait"], { cwd: wip, stdio: "ignore" }),
+      spawn("sh", ["-c", "sleep 31 & wait"], { cwd: main, stdio: "ignore" }),
+      // A tool server the provider runs for itself is its direct child, not started through a shell.
+      spawn("sleep", ["32"], { cwd: loose, stdio: "ignore" }),
+      // A hook's shell runs the desk's own adapter: neither it nor what it starts is work.
+      spawn("sh", ["-c", "sleep 33 & wait; false && agent-desk-claude hook"], { cwd: done, stdio: "ignore" }),
+    ];
+    // Left behind by its shell, a process no longer belongs to the session's tree.
+    execFileSync("sh", ["-c", "sleep 34 >/dev/null 2>&1 &"], { cwd: loose });
     try {
-      await new Promise((r) => setTimeout(r, 200));
-      const scan = await scanProject(main, undefined, new Date(), { sizes: false });
-      const by = new Map(scan.worktrees.map((w) => [w.path, w]));
-      assert.deepEqual(by.get(wip)?.busy, ["sleep"]);
-      assert.equal(by.get(main)?.busy?.includes("sleep") ?? false, false, "a nested worktree keeps its own processes");
-      assert.equal(by.get(main)?.busy?.includes("sh") ?? false, false, "an open shell is no work");
+      await new Promise((r) => setTimeout(r, 300));
+      const scan = await scanProject(main, undefined, new Date(), { sizes: false, sessions: [{ pid: process.pid }] });
+      const busy = Object.fromEntries(scan.worktrees.map((w) => [path.basename(w.path), w.busy ?? []]));
+      assert.deepEqual(busy, { shop: ["sleep"], wip: ["sleep"], "shop-done": [], "shop-loose": [] });
+      const none = await scanProject(main, undefined, new Date(), { sizes: false });
+      assert.ok(none.worktrees.every((w) => w.busy === undefined), "without a live session nothing is in use");
+      const gone = await scanProject(main, undefined, new Date(), { sizes: false, sessions: [{ pid: process.pid, start: "1" }] });
+      assert.ok(gone.worktrees.every((w) => w.busy === undefined), "nor for a session whose pid now runs another process");
     } finally {
-      sleeper.kill();
-      shell.kill();
+      for (const child of started) child.kill();
+      execFileSync("pkill", ["-f", "^sleep 34$"]);
     }
+  });
+
+  it("tells the desk's own helpers from work", () => {
+    const desk = path.resolve(import.meta.dirname, "..");
+    const helpers = [
+      ["sh", "-c", `h="\${AGENT_DESK_HOME:-$HOME/.cache/agent-desk}"; i=$(cat); if [ -n "$j" ]; then printf '%s\\n' "$i" | agent-desk-claude hook; fi; true`],
+      ["sh", "-c", `h="x"; if [ -e "$h/.inbox-pending" ]; then exec agent-desk-claude deliver; fi`],
+      ["/bin/sh", "-c", "agent-desk-claude wait"],
+      ["/usr/bin/node", "--experimental-strip-types", path.join(desk, "bin", "..", "src", "cli", "main.ts"), "scan", "/p"],
+      ["/home/u/.local/bin/agent-desk", "status"],
+      ["node", path.join(desk, "adapters", "claude-code", "main.ts"), "wait"],
+    ];
+    const work = [
+      ["bash", "-c", "cd agent-desk && npm test"],
+      ["bash", "-c", "npm test -- --grep agent-desk-claude"],
+      ["node", "/home/u/other/src/cli/main.ts"],
+      ["node", path.join(desk, "test", "page.test.ts")],
+      ["vexp-core", "mcp"],
+      [],
+    ];
+    for (const args of helpers) assert.equal(deskHelper(args), true, args.join(" "));
+    for (const args of work) assert.equal(deskHelper(args), false, args.join(" "));
   });
 
   it("stops a git command that does not answer, saying which and where, and goes on with the other checkouts", async () => {
@@ -188,6 +222,9 @@ describe("a session's branches", () => {
       agent("two", { branch: "agent/two", state: "done", startedAt: at(1) }),
       agent("parked", { branch: "agent/parked", startedAt: at(3) }),
       agent("fresh", { branch: "agent/fresh", startedAt: at(4), updatedAt: at(11) }),
+      // Integrated and deleted: history, not a problem.
+      agent("merged-away", { branch: "agent/merged-away", state: "done", startedAt: at(1) }),
+      agent("removed", { worktree: "/p/shop/.claude/worktrees/removed", state: "failed", startedAt: at(1) }),
       agent("plain", { startedAt: at(5) }),
       { ...agent("other", { branch: "agent/one" }), sessionId: "s2" },
     ];
@@ -199,17 +236,20 @@ describe("a session's branches", () => {
     );
     assert.equal(b.rows[0]?.session, true, "the session works in the main checkout");
     assert.equal(b.hidden, 1, "the old merged, clean, idle checkout is counted, not shown");
+    assert.equal(b.gone, 2, "finished agents whose branch or checkout is gone are counted, not shown; an open one's missing branch is");
     assert.equal(b.checkedAt, scan.measuredAt);
     assert.equal(sessionBranches(session, agents, undefined), undefined);
   });
 
   it("words them for the session, cut to a bound at a line's end", () => {
     const now = new Date(at(15));
-    const b = sessionBranches(session, [agent("one", { worktree: "/p/shop/.claude/worktrees/one", goal: "First" })], scan);
+    const b = sessionBranches(session, [agent("one", { worktree: "/p/shop/.claude/worktrees/one", goal: "First" }), agent("old", { branch: "agent/old-one", state: "done" })], scan);
     const lines = statusLines({ session, branches: b, agents: [agent("one", { goal: "First", state: "blocked" })], questions: [], services: [], reviews: [], now });
     assert.equal(lines[0], "Branches (git read 5 min ago; compared with main):");
     assert.equal(lines[2], "- agent one (working) · agent/one · .claude/worktrees/one · 2 ahead, 1 behind · 3 changed files · last «One» 10 min ago · in use: vitest");
     assert.ok(lines.includes("Agents not finished:"));
+    assert.ok(lines.includes("  (1 finished agent's branch is gone, integrated or deleted; not listed)"));
+    assert.ok(!lines.some((l) => l.includes("agent/old-one")));
     const many = Array.from({ length: 100 }, (_, i) => `line ${i} ${"x".repeat(50)}`);
     const cut = fitText(many, 1000, "… (cut)");
     assert.ok(cut.length <= 1000);

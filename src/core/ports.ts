@@ -82,14 +82,18 @@ export function urlPort(url: string): number {
   return Number(u.port || (u.protocol === "https:" ? 443 : 80));
 }
 
-/** The descendants of `pid` reached through a direct child that is a shell, nearest first. */
-function startedThroughShell(pid: number): ProcInfo[] {
+/**
+ * The descendants of `pid` reached through a direct child that is a shell, nearest first: the commands
+ * a session (or its agents) ran. A process `skip` refuses is left out with everything under it.
+ */
+export function startedThroughShell(pid: number, skip?: (proc: ProcInfo) => boolean): ProcInfo[] {
   const out: ProcInfo[] = [];
   const queue = childrenOf(pid).filter((c) => SHELLS.has(c.name));
   const seen = new Set<number>();
   for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
     if (seen.has(next.pid)) continue;
     seen.add(next.pid);
+    if (skip?.(next)) continue;
     out.push(next);
     queue.push(...childrenOf(next.pid));
   }
@@ -203,15 +207,18 @@ const SCRIPT_EXT = /\.(?:[cm]?js|ts|py|rb|php|pl)$/;
 const WORD = /^[A-Za-z][\w:.-]*$/;
 
 /** What a server is called after its command line: "vite", "next dev", "python3 -m http.server". */
-function processName(proc: ProcInfo): string {
-  let raw: string;
+export function processName(proc: ProcInfo): string {
+  return commandName(commandLine(proc.pid) ?? []) || proc.name;
+}
+
+/** A process's arguments, from /proc/<pid>/cmdline; undefined once it has exited. */
+export function commandLine(pid: number): string[] | undefined {
   try {
-    raw = fs.readFileSync(`/proc/${proc.pid}/cmdline`, "utf8");
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
   } catch (error) {
-    if (isCode(error, "ENOENT") || isCode(error, "ESRCH")) return proc.name; // exited while it was read
+    if (isCode(error, "ENOENT") || isCode(error, "ESRCH")) return undefined; // exited while it was read
     throw error;
   }
-  return commandName(raw.split("\0").filter(Boolean)) || proc.name;
 }
 
 export function commandName(args: string[]): string {

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { sessionBranches } from "../core/branches.ts";
 import type { ProjectScan, Session } from "../core/model.ts";
 import { liveServices } from "../core/ports.ts";
+import { sessionFinished } from "../core/proc.ts";
 import type { StatusInput } from "../core/status.ts";
 import type { Store } from "../store/store.ts";
 import { projectId, scanProject } from "./scan.ts";
@@ -24,7 +25,8 @@ export async function refreshScan(store: Store, dir: string, how: Refresh, probl
   const release = store.claimScan(id);
   if (!release && how.whenBusy === "skip") return undefined;
   try {
-    const scan = await scanProject(dir, store.getProjectScan(id), new Date(), { sizes: how.sizes, branches: agentBranches(store, dir, problems), ...(how.timeoutMs === undefined ? {} : { timeoutMs: how.timeoutMs }) });
+    const sessions = store.listSessions(problems).flatMap((s) => (s.process && !sessionFinished(s) ? [s.process] : []));
+    const scan = await scanProject(dir, store.getProjectScan(id), new Date(), { sizes: how.sizes, branches: agentBranches(store, dir, problems), sessions, ...(how.timeoutMs === undefined ? {} : { timeoutMs: how.timeoutMs }) });
     return { scan: release ? store.putProjectScan(scan) : scan, stored: release !== undefined };
   } finally {
     release?.();

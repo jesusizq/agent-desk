@@ -498,6 +498,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .brow.off .bname { color: var(--muted); }
 .bcounts { font-size: 0.75rem; }
 .bhidden { margin-top: 6px; font-size: 0.75rem; }
+.bgone { margin-top: 6px; font-size: 0.75rem; }
 
 @media (min-width: 701px) and (min-height: 501px) {
   /* On History the page has its own search: the header's keeps its room, so the needs pill does not move. */

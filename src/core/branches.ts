@@ -6,7 +6,9 @@ import type { Agent, BranchRow, BranchState, ProjectScan, Session, SessionBranch
 /**
  * Rows, in order: the main checkout, each agent that has a worktree or a branch (oldest first), then
  * the other checkouts of the project. A checkout already merged, clean and with nothing working in it
- * is counted in `hidden` rather than shown, unless an agent's row names it. Undefined without a scan.
+ * is counted in `hidden` rather than shown, unless an agent's row names it. A finished agent whose
+ * branch or checkout is gone (integrated and deleted) is history, counted in `gone`: "branch not found"
+ * is shown only for an agent still open, where it is a problem. Undefined without a scan.
  */
 export function sessionBranches(session: Session, agents: readonly Agent[], scan: ProjectScan | undefined): SessionBranches | undefined {
   if (!scan) return undefined;
@@ -19,14 +21,19 @@ export function sessionBranches(session: Session, agents: readonly Agent[], scan
     return fromCheckout(w, agent, at(w) || (w.main && here === undefined));
   };
   const rows: BranchRow[] = [];
+  let gone = 0;
   const main = scan.worktrees.find((w) => w.main);
   if (main) rows.push(row(main));
   for (const a of own) {
-    const w = (a.worktree === undefined ? undefined : holding(scan.worktrees, a.worktree)) ?? scan.worktrees.find((x) => a.branch !== undefined && x.branch === a.branch);
+    const w = (a.worktree === undefined ? undefined : holding(scan.worktrees.filter((x) => !x.main), a.worktree)) ?? scan.worktrees.find((x) => a.branch !== undefined && x.branch === a.branch);
     // An agent on the main checkout's branch works in the main checkout: its row is that one.
     if (w?.main && rows[0] && !rows[0].agent) rows[0] = row(w, a);
     else if (w) rows.push(row(w, a));
-    else rows.push(fromBranch(a, scan.branches?.find((b) => b.name === a.branch), scan.measuredAt > a.updatedAt));
+    else {
+      const r = fromBranch(a, scan.branches?.find((b) => b.name === a.branch), scan.measuredAt > a.updatedAt);
+      if (r.status === "missing" && !r.error && ENDED.has(a.state)) gone++;
+      else rows.push(r);
+    }
   }
   let hidden = 0;
   const others = scan.worktrees.filter((w) => !used.has(w)).sort((a, b) => (b.ahead ?? 0) - (a.ahead ?? 0));
@@ -34,10 +41,12 @@ export function sessionBranches(session: Session, agents: readonly Agent[], scan
     if (w.merged === true && w.dirty === 0 && !w.busy?.length && !w.error && !at(w)) hidden++;
     else rows.push(row(w));
   }
-  return { sessionId: session.id, projectId: scan.id, ...(scan.baseBranch ? { baseBranch: scan.baseBranch } : {}), checkedAt: scan.measuredAt, rows, hidden };
+  return { sessionId: session.id, projectId: scan.id, ...(scan.baseBranch ? { baseBranch: scan.baseBranch } : {}), checkedAt: scan.measuredAt, rows, hidden, gone };
 }
 
-/** The deepest checkout holding `folder` (an agent may work in a subfolder of its worktree). */
+const ENDED: ReadonlySet<Agent["state"]> = new Set(["done", "failed"]);
+
+/** The deepest checkout holding `folder` (an agent may work in a subfolder of its worktree); a linked worktree is never the main checkout, which may hold its folder after it is removed. */
 function holding(worktrees: readonly Worktree[], folder: string): Worktree | undefined {
   const f = path.resolve(folder);
   const inside = worktrees.filter((w) => f === path.resolve(w.path) || f.startsWith(`${path.resolve(w.path)}/`));

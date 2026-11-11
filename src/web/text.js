@@ -340,6 +340,8 @@ export const TEXT = {
     error: (why) => `git could not be read: ${why}`,
     /** @param {number} n */
     hidden: (n) => `${plural(n, "more checkout", "more checkouts")} merged, clean and idle`,
+    /** @param {number} n */
+    goneAgents: (n) => `${plural(n, "finished agent", "finished agents")}: branch already gone, integrated or deleted`,
   },
   past: {
     title: "Decided before",
