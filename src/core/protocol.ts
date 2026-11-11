@@ -432,7 +432,8 @@ export const REVIEW_NOTE_MAX = 4096;
 export const REVIEW_ROUNDS_KEPT = 5;
 
 export type ReviewProgress = { done: number; total: number };
-export type ReviewRound = { n: number; at: string; sessionId: string; bytes: number };
+/** `page`: the real path of the HTML file the round was published from, when it came from one. */
+export type ReviewRound = { n: number; at: string; sessionId: string; bytes: number; page?: string };
 /** `to`: the session it was delivered to, or null when its line was copied for another conversation. `note`: the developer's words sent after the line. */
 export type ReviewSend = { at: string; to: string | null; round: number; progress?: ReviewProgress; note?: string };
 

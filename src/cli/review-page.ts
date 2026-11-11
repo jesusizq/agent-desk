@@ -3,11 +3,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { InputError } from "../core/check.ts";
-import { REVIEW_PAGE_MAX } from "../core/model.ts";
+import { REVIEW_PAGE_MAX, REVIEW_TITLE_MAX } from "../core/model.ts";
 import { isCode } from "../store/fsx.ts";
 import { imageType } from "../store/store.ts";
 
-export type InlinedPage = { html: string; inlined: number; skipped: { ref: string; reason: string }[] };
+/** `file`: the page's real path (symlinks resolved). */
+export type InlinedPage = { file: string; html: string; inlined: number; skipped: { ref: string; reason: string }[] };
 
 const TYPES = { png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", svg: "image/svg+xml" } as const;
 
@@ -24,8 +25,9 @@ const SPACE = /[\s,]*/y;
 export function inlinePage(file: string): InlinedPage {
   let html: string;
   let folder: string;
+  let page: string;
   try {
-    const page = fs.realpathSync(path.resolve(file));
+    page = fs.realpathSync(path.resolve(file));
     if (!fs.statSync(page).isFile()) throw new InputError(`--page: ${file} is not a file`);
     if (fs.statSync(page).size > REVIEW_PAGE_MAX) throw new InputError(`--page: ${file} is larger than ${REVIEW_PAGE_MAX} bytes`);
     html = fs.readFileSync(page, "utf8");
@@ -89,7 +91,7 @@ export function inlinePage(file: string): InlinedPage {
     i = found.index;
   }
   out.push(html.slice(i));
-  return { html: out.join(""), inlined, skipped };
+  return { file: page, html: out.join(""), inlined, skipped };
 }
 
 /** Where the tag whose attributes start at `from` ends (its ">"), or -1 when it never does. */
@@ -276,6 +278,32 @@ function avifOrSvg(data: Buffer, file: string): "avif" | "svg" | undefined {
   const head = data.subarray(0, 4096).toString("utf8").replace(/^﻿/, "");
   if (/\.svg$/i.test(file) && /^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*|<!DOCTYPE[^>]*>\s*)*<svg[\s>]/i.test(head)) return "svg";
   return undefined;
+}
+
+/**
+ * What names a page that a session opened without naming it: its `<title>` as it reads (entities
+ * decoded, spacing collapsed, cut to a review title's length), else the file's name.
+ */
+export function pageTitle(html: string, file: string): string {
+  const written = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(html)?.[1] ?? "";
+  const title = decodeEntities(written.replace(/<[^>]*>/g, "")).replace(/[\s\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim() || path.basename(file);
+  return title.length > REVIEW_TITLE_MAX ? `${title.slice(0, REVIEW_TITLE_MAX - 1).trimEnd()}…` : title;
+}
+
+/**
+ * The scripts and stylesheets a page loads from files beside it (`<script src>`, `<link
+ * rel=stylesheet href>` with a relative reference): a page made of several files (an app's build, a
+ * generated report), which a review, kept as one file, cannot carry.
+ */
+export function localAssets(html: string): string[] {
+  const local = (ref: string | undefined) => ref !== undefined && ref !== "" && !/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(ref);
+  const value = (tag: string, name: string) => new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(tag)?.slice(1).find((v) => v !== undefined);
+  const found: string[] = [];
+  for (const [tag] of html.matchAll(/<(?:script|link)\b[^>]*>/gi)) {
+    const ref = /^<script/i.test(tag) ? value(tag, "src") : /stylesheet/i.test(value(tag, "rel") ?? "") ? value(tag, "href") : undefined;
+    if (local(ref)) found.push(decodeEntities(ref ?? ""));
+  }
+  return found;
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", "#39": "'", "#34": '"' };

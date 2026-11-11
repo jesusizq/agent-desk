@@ -392,6 +392,7 @@ describe("cli reviews", () => {
     const [review] = store.listReviews();
     assert.ok(review);
     assert.match(out.stdout, new RegExp(`^review ${review.id} round 1: Proposals\n.*To review.*agent-desk review ${review.id}`));
+    assert.equal(review.rounds[0]?.page, fs.realpathSync(page), "the round names the file it came from, so opening it in the browser publishes it no second time");
     const kept = store.reviewPage(review.id)?.html ?? "";
     assert.ok(kept.includes(`.a { background: url(${DATA_PNG}) }`), "CSS url() in <style>");
     assert.ok(kept.includes(`.b { background: url(../outside.png) }`));

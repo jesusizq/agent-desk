@@ -388,6 +388,8 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(runs(call("Bash", { command: "npm run e2e", run_in_background: true })), call("Bash", { command: "npm run e2e", run_in_background: true }), "a background launch is never skipped, its input passed whole");
     for (const tool of ["Monitor", "TaskOutput", "BashOutput", "TaskStop"]) assert.ok(runs(call(tool, {})), tool);
     assert.ok(runs(call("Bash", { command: "sleep 120 && tail run.log" })));
+    for (const command of ["xdg-open /tmp/r.html", "python3 -m webbrowser file:///tmp/r", "open review.htm"]) assert.ok(runs(call("Bash", { command })), `a page it may publish: ${command}`);
+    assert.equal(runs(call("Edit", { file_path: "page.html" })), undefined, "an edit of a page opens nothing");
     fs.writeFileSync(path.join(home, ".failing"), "");
     assert.ok(runs(call("Read", { file_path: "a.ts" })), "while a streak of failures is open, every call counts");
   });

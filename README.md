@@ -171,6 +171,10 @@ agent-desk reviews                                                  # this proje
 agent-desk review rv-… --close --reason "replaced by round 3"       # discard it: out of To review, kept in History
 ```
 
+A page the session simply opens in your browser (`xdg-open proposals.html`) is published the same
+way by its hooks, titled after the page, unless it is a tool's (a dependency's docs, a coverage or
+test report, an app's build) or lies outside the project, its worktrees and the temporary folder.
+
 With `--options`, the session gives only data (questions, options with a label, title, text,
 screenshots and which it recommends; `agent-desk review --help` has the format) and the desk draws
 the page in its own look, phone first, images zoomed with a tap. A page the session writes itself

@@ -477,7 +477,13 @@ export function readReview(value: unknown, where = "review"): Review {
 
 function readReviewRound(value: unknown, where: string): ReviewRound {
   const f = fields(value, where);
-  return { n: int(f.n, `${where}.n`, 1), at: isoTime(f.at, `${where}.at`), sessionId: id(f.sessionId, `${where}.sessionId`), bytes: int(f.bytes, `${where}.bytes`) };
+  return compact({
+    n: int(f.n, `${where}.n`, 1),
+    at: isoTime(f.at, `${where}.at`),
+    sessionId: id(f.sessionId, `${where}.sessionId`),
+    bytes: int(f.bytes, `${where}.bytes`),
+    page: optional(f.page, `${where}.page`, (v, w) => nonEmpty(v, w, 4096)),
+  });
 }
 
 export function readProgress(value: unknown, where: string): ReviewProgress {

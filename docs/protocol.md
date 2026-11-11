@@ -258,6 +258,31 @@ review, never in Needs you; nothing sounds or is pushed.
   project (`project.dir`), while that review is not closed, is its next round: the saved state
   carries over, so the page shows the earlier answers under the same keys. A closed review's title
   starts a new review. Publishing holds `reviews/.publish.lock`, so two at once make one review.
+- **Opened in the browser.** Claude Code's adapter publishes, the same way (`inlinePage`, then
+  `Store.publishReview`), a local page a call of the session or of its sub-agents opens for the
+  developer to see (`publishOpenedPages`, `adapters/claude-code/pages.ts`, after a `Bash` call that
+  succeeded): a path ending in `.html` or `.htm`, or a `file:` URL, given to `xdg-open`, `open`,
+  `start`, `gio open`, `sensible-browser`, `x-www-browser`, `wslview`, `python -m webbrowser` or a
+  browser binary (Firefox, Chrome, Chromium, Brave, Edge, Vivaldi, Opera, Epiphany) not run
+  `--headless`, `--screenshot`, `--print-to-pdf` or `--dump-dom`, read from the command line as the
+  shell splits it (quotes, `;`, `&&`, `|`, `cd`, `nohup`/`env` and the like; a word the shell would
+  expand is left out). Its title is the page's `<title>` as it reads (entities decoded, spacing
+  collapsed, cut to 120 characters), else the file's name; the same title is its next round. It is
+  left when: the file does not exist; it is outside the session's project (`project.dir`), the
+  project's linked worktrees (`locateProject` maps them to the main checkout) and the temporary
+  folder (`/tmp`, `os.tmpdir()`), symlinks resolved; a folder on its way down from there is one where
+  tools write their pages (`node_modules`, `bower_components`, `vendor`, `coverage`, `htmlcov`,
+  `lcov-report`, `.nyc_output`, `playwright-report`, `test-results`, `blob-report`, `allure-report`,
+  `mochawesome-report`, `dist`, `build`, `out`, `.next`, `.nuxt`, `.svelte-kit`, `target`, `_site`,
+  `storybook-static`, `.git`, `.venv`, `venv`, `site-packages`): a dependency's docs, a coverage or
+  test report, an app's build, which preview a tool or the app rather than ask the developer
+  anything; the session published that file in this turn already (each round keeps the real path it
+  came from, `rounds[].page`, also from `agent-desk review --page`; the turn is since the session's
+  `turnEndedAt`); or the review it would continue shows that very page as its latest round, so a
+  page opened again unchanged never looks new. A page that loads scripts or stylesheets from beside
+  it (`<script src>`, `<link rel=stylesheet href>`, relative) is a page made of several files a
+  review cannot carry, and like one too large or unreadable it is left with the reason on the hook's
+  stderr. A page served by a local server is a service (see Local servers), never published.
 - **The page as kept.** Copied into the store with the images it names by a relative path inlined as
   `data:` URIs: `<img src>`, `srcset` (on `<img>` and `<source>`), CSS `url()` in `<style>` and in
   `style=""`, outside scripts and comments. Only a file whose real path (symlinks resolved) is inside

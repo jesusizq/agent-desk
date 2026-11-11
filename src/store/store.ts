@@ -983,7 +983,7 @@ export class Store {
    * title in the same project that is not closed (its saved state carries over). The page of the
    * last REVIEW_ROUNDS_KEPT rounds is kept.
    */
-  publishReview(input: { sessionId: string; title: string; html: string }): Review {
+  publishReview(input: { sessionId: string; title: string; html: string; page?: string }): Review {
     const session = this.getSession(input.sessionId);
     if (!session) throw new InputError(`no session ${input.sessionId} in the store; it registers when its first hook runs`);
     const title = reviewTitle(input.title.trim(), "title");
@@ -997,7 +997,7 @@ export class Store {
       return withLock(this.paths.review(reviewId), () => {
         const current = existing && this.getReview(reviewId);
         const n = (current?.rounds.at(-1)?.n ?? 0) + 1;
-        const round = { n, at: this.stamp(), sessionId: session.id, bytes };
+        const round = compact({ n, at: this.stamp(), sessionId: session.id, bytes, page: input.page });
         const next = readReview(
           current
             ? { ...current, title, sessionId: session.id, rounds: [...current.rounds, round] }

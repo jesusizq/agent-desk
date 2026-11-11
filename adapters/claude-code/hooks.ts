@@ -10,6 +10,7 @@ import { checkedOutBranch, locateProject } from "../../src/project/locate.ts";
 import { sessionStatus } from "../../src/project/refresh.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { AgentFields, Store } from "../../src/store/store.ts";
+import { publishOpenedPages } from "./pages.ts";
 
 export const PROVIDER = "Claude Code";
 
@@ -133,6 +134,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (input.event !== "PermissionDenied") recordActivity(input, ctx, problems);
       if (input.event !== "PermissionDenied" && (f.tool_name === "Agent" || f.tool_name === "Task")) launchReturned(input, ctx);
       if (input.event === "PostToolUse" && f.tool_name === "TaskStop") stoppedBySession(input, ctx);
+      if (input.event === "PostToolUse" && f.tool_name === "Bash") publishPages(input, ctx, problems);
       return { code: 0 };
 
     case "Notification": {
@@ -887,6 +889,12 @@ function worktreeBranch(agent: Agent, worktree: string | undefined): AgentFields
   if (worktree === undefined || (agent.branch !== undefined && agent.branchFromWorktree !== true)) return {};
   const branch = checkedOutBranch(worktree);
   return branch === undefined || branch === agent.branch ? {} : { branch, branchFromWorktree: true };
+}
+
+/** A page the call opened in the developer's browser goes to To review by itself (pages.ts). */
+function publishPages(input: Common, ctx: HookContext, problems: string[]): void {
+  const command = fields(input.raw.tool_input ?? {}, "hook input.tool_input").command;
+  if (command !== undefined) publishOpenedPages(ctx.store, input.sessionId, text(command, "hook input.tool_input.command", 1_000_000), input.cwd, ctx.env.HOME, problems);
 }
 
 /** Tools that wait on work running apart from the call: a monitor, a background task's output, a wake-up. */

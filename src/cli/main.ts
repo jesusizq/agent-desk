@@ -47,7 +47,9 @@ Posting (from a session; the session is found from the calling process, or --ses
                     publish an HTML page for the developer to review (one file keeping its answers in
                     localStorage); its images beside it are inlined. The same title again is its next round.
                     Mark each option with data-agent-desk-option="<label>" (each question's element with
-                    data-agent-desk-group="<question>") and the desk adds its Choose / Iterate / Discard
+                    data-agent-desk-group="<question>") and the desk adds its Choose / Iterate / Discard.
+                    A page the session opens in the browser (xdg-open, open, a browser with its path) is
+                    published by itself, titled after its <title>
   agent-desk review "<title>" --options <file.json>
                     publish the developer's choice between options as a page the desk draws itself, with
                     Choose, Iterate and Discard on each option and None of these on each question:
@@ -237,15 +239,16 @@ const COMMANDS: Record<string, Command> = {
     const title = reviewTitle(nonEmpty(positionals[0], "title", 4096).trim(), "title");
     let html: string;
     let inlined: number;
+    let file: string | undefined;
     if (values.options !== undefined) {
       const { review, folder } = readOptionsFile(nonEmpty(values.options, "--options", 4096));
       ({ html, images: inlined } = renderOptionsPage(title, review, folder));
     } else {
       const page = inlinePage(nonEmpty(values.page, "--page", 4096));
       for (const s of page.skipped) process.stderr.write(`agent-desk review: left as is, ${s.reason}: ${s.ref}\n`);
-      ({ html, inlined } = page);
+      ({ html, inlined, file } = page);
     }
-    const review = store.publishReview({ sessionId, title, html });
+    const review = store.publishReview(compact({ sessionId, title, html, page: file }));
     print(`review ${review.id} round ${review.rounds.at(-1)?.n ?? 1}: ${review.title}`);
     print(`The developer will find it in To review on the desk${inlined ? ` (${inlined} image(s) inlined)` : ""}. Do not wait for it: end your turn. When they send it, read it with: agent-desk review ${review.id}`);
   },
