@@ -221,6 +221,14 @@ function srcset(value: string, swap: (raw: string) => string | undefined): strin
 }
 
 /**
+ * An image a review names by a path relative to `folder`, as a data: URI, under the same rules as a
+ * page's images (inside the folder, symlinks resolved; a PNG, JPEG, GIF, WebP, AVIF or SVG); or why not.
+ */
+export function imageDataUri(folder: string, ref: string): string | { reason: string } {
+  return dataUri(folder, ref, new Map()) ?? { reason: "no file named" };
+}
+
+/**
  * The file a relative reference names as a data: URI, or why it is not inlined; undefined for what
  * is no file to inline (already a data: URI, a fragment).
  */

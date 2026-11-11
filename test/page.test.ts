@@ -6,6 +6,7 @@ import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
+import { renderOptionsPage } from "../src/cli/review-options.ts";
 import { procInfo } from "../src/core/proc.ts";
 import { Store } from "../src/store/store.ts";
 import { Browser, findChrome, type Page } from "./browser.ts";
@@ -3214,6 +3215,31 @@ paint();
       const decision = store.listQuestions().find((q) => q.review?.id === r.id && !q.review.note);
       assert.deepEqual([decision?.answer?.via, decision?.answer?.text], ["review", shown], "the page's words, as shown");
       store.takeInbox("rv-marked");
+      store.closeReview(r.id);
+    });
+
+    it("opens a review drawn from options data with the desk's controls on every option, counting questions decided", async () => {
+      store.upsertSession({ id: "rv-drawn", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "Drawn session" });
+      const data = {
+        questions: [
+          { title: "Pay button", options: [{ label: "A", title: "Solid", images: [], recommended: true }, { label: "B", title: "Outline", images: [], recommended: false }] },
+          { title: "Copy", options: [{ label: "1", title: "Pay now", images: [], recommended: false }] },
+        ],
+      };
+      const r = store.publishReview({ sessionId: "rv-drawn", title: "Drawn choice", html: renderOptionsPage("Drawn choice", data, import.meta.dirname).html });
+      const page = await openReview("Drawn choice");
+      await page.inFrame("/review/", "new Promise((r) => { const ready = () => (document.querySelectorAll('agent-desk-control').length === 5 ? r(true) : setTimeout(ready, 50)); ready(); })");
+      assert.equal(await page.eval<string>("document.querySelector('.rv-count').textContent"), "0 of 2", "no counter of its own: the questions decided");
+      await page.inFrame("/review/", "document.querySelector('[data-agent-desk-option=\"B\"] agent-desk-control').shadowRoot.querySelector('button.discard').click(), true");
+      await page.inFrame("/review/", "document.querySelector('[data-agent-desk-option=\"A\"] agent-desk-control').shadowRoot.querySelector('button.choose').click(), true");
+      await page.waitFor("document.querySelector('.rv-count').textContent === '1 of 2'");
+      await page.inFrame("/review/", "[...document.querySelectorAll('section')[1].querySelectorAll(':scope > agent-desk-control')].at(-1).shadowRoot.querySelector('button.none').click(), true");
+      await page.waitFor("document.querySelector('.rv-count').textContent === '2 of 2'");
+      await page.waitFor("document.querySelector('.rv-saved').textContent.startsWith('Saved')");
+      await page.click(".rv-send");
+      const shown = ['Options marked in the page:', '[Pay button] Chosen: "A"', '[Pay button] Discarded "B"', "[Copy] None of these"].join("\n");
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('.rv-answers pre')?.textContent === ${JSON.stringify(shown)}`);
+      await page.click("#review-send button", "Cancel");
       store.closeReview(r.id);
     });
 

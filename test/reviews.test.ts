@@ -5,6 +5,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { promisify } from "node:util";
+import { renderOptionsPage } from "../src/cli/review-options.ts";
 import { inlinePage } from "../src/cli/review-page.ts";
 import { InputError } from "../src/core/check.ts";
 import { parseProgress, REVIEW_ROUNDS_KEPT, REVIEW_STATE_MAX, reviewLine } from "../src/core/model.ts";
@@ -294,6 +295,12 @@ describe("the review document", () => {
     for (const theme of ["light", "dark"] as const) {
       assert.ok(shimTokens[theme].size >= 8, theme);
       for (const [name, value] of shimTokens[theme]) assert.equal(value, DESK_TOKENS[theme].get(name), `${theme} ${name}`);
+    }
+    const { html } = renderOptionsPage("T", { questions: [{ title: "Q", options: [{ label: "A", title: "a", images: [], recommended: false }] }] }, import.meta.dirname);
+    const pageTokens = { light: tokensAfter(html, ":root {"), dark: tokensAfter(html, "@media (prefers-color-scheme: dark) {\n  :root {") };
+    for (const theme of ["light", "dark"] as const) {
+      assert.ok(pageTokens[theme].size >= 8, `page ${theme}`);
+      for (const [name, value] of pageTokens[theme]) assert.equal(value, DESK_TOKENS[theme].get(name), `page ${theme} ${name}`);
     }
   });
 

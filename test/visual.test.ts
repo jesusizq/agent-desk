@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
+import { readOptionsReview, renderOptionsPage } from "../src/cli/review-options.ts";
 import { Store } from "../src/store/store.ts";
 import { Browser, findChrome, type Page } from "./browser.ts";
 import { serve, tempHome } from "./helpers.ts";
@@ -81,6 +82,25 @@ article { background: #fff; border: 1px solid #dde1e8; border-radius: 12px; padd
 <article data-agent-desk-option="C"><p>Your cart is empty! Start shopping →</p></article>
 </section></body></html>`;
 
+/** A session's options data, as agent-desk review --options reads it: three variants with screenshots, and one more question. */
+const PAY_OPTIONS = readOptionsReview(
+  {
+    intro: "Three pay buttons for the checkout.\nSame text and size; only the style changes.",
+    questions: [
+      {
+        title: "Which pay button?",
+        options: [
+          { label: "A", title: "Solid green", text: "Highest contrast. Matches the success colour.", images: ["pay-button-a.png"], recommended: true },
+          { label: "B", title: "Brand purple", images: ["pay-button-b.png"] },
+          { label: "C", title: "Outline", text: "Quieter; may read as secondary.", images: ["pay-button-c.png"] },
+        ],
+      },
+      { title: "Show the card logos under it?", options: [{ label: "Yes", title: "Visa, Mastercard, Apple Pay" }, { label: "No", title: "Only the lock icon" }] },
+    ],
+  },
+  "PAY_OPTIONS",
+);
+
 const desktop = (name: string, extra: Omit<Screen, "name" | "device" | "theme"> = {}): Screen[] =>
   (["light", "dark"] as const).map((theme) => ({ name: `${name}-${theme}`, device: "desktop", theme, ...extra }));
 
@@ -115,6 +135,9 @@ describe("what the page looks like", { skip: skipped() }, () => {
     // The busy desk and one more review, whose page marks its options for the desk's controls.
     const marked = demoStore();
     marked.publishReview({ sessionId: "demo-checkout", title: "Empty cart headline", html: MARKED_PAGE });
+    // And one the desk drew itself from a session's options data, with its screenshots.
+    const drawn = renderOptionsPage("Pay button variant", PAY_OPTIONS, path.join(import.meta.dirname, "../scripts/demo-images"));
+    marked.publishReview({ sessionId: "demo-checkout", title: "Pay button variant", html: drawn.html });
     const servers = [await serve(busy), await serve(quiet), await serve(marked)];
     closers = servers.map((s) => s.close);
     urls = { busy: servers[0]?.base ?? "", quiet: servers[1]?.base ?? "", marked: servers[2]?.base ?? "" };
@@ -338,6 +361,8 @@ describe("what the page looks like", { skip: skipped() }, () => {
     },
     ...desktop("review-options", { marked: true, show: (page) => markOptions(page, false) }),
     { name: "phone-review-options", device: "phone", theme: "light", marked: true, show: (page) => markOptions(page, true) },
+    ...desktop("review-drawn", { marked: true, show: (page) => openDrawn(page, false) }),
+    { name: "phone-review-drawn", device: "phone", theme: "dark", marked: true, show: (page) => openDrawn(page, true) },
     {
       name: "phone-display-menu",
       device: "phone",
@@ -362,6 +387,14 @@ describe("what the page looks like", { skip: skipped() }, () => {
     await page.inFrame("/review/", `(${press("B", "choose")}, ${press("C", "iterate")}, true)`);
     await page.inFrame("/review/", `(() => { const t = ${root("C")}.querySelector('textarea'); t.value = 'Keep the link, lose the exclamation mark'; t.dispatchEvent(new Event('input', { bubbles: true, composed: true })); return true; })()`);
     await page.waitFor("document.querySelector('.rv-count')?.textContent === '1 of 1' && document.querySelector('.rv-saved')?.textContent.startsWith('Saved')");
+  }
+
+  /** The review drawn from options data, open, its images loaded and its controls placed. */
+  async function openDrawn(page: Page, touch: boolean): Promise<void> {
+    await openReview(page, "Pay button variant", touch);
+    await page.inFrame("/review/", `new Promise((r) => { const ready = () => (document.querySelectorAll('agent-desk-control').length === 7 && [...document.images].every((i) => i.complete) ? r(true) : setTimeout(ready, 50)); ready(); })`);
+    // Its first open saves the progress the shim counts (no counter of its own): drawn once saved.
+    await page.waitFor("document.querySelector('.rv-count')?.textContent === '0 of 2' && document.querySelector('.rv-saved')?.textContent.startsWith('Saved')");
   }
 
   /** A demo review open, its page drawn in its frame. */

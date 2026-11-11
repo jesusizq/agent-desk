@@ -554,6 +554,89 @@ describe("cli reviews", () => {
     assert.equal(store.getReview(review.id)?.closedAt, undefined);
   });
 
+  /** A JSON file of options beside an image, an image outside its folder, and a file that only claims to be one. */
+  function optionsFolder(data: unknown): { file: string; dir: string; root: string } {
+    const root = tempHome();
+    const dir = path.join(root, "choice");
+    fs.mkdirSync(path.join(dir, "shots"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "shots", "a.png"), PNG);
+    fs.writeFileSync(path.join(dir, "fake.png"), "<script>alert(1)</script>");
+    fs.writeFileSync(path.join(root, "outside.png"), PNG);
+    const file = path.join(dir, "options.json");
+    fs.writeFileSync(file, typeof data === "string" ? data : JSON.stringify(data));
+    return { file, dir, root };
+  }
+  const CHOICE = {
+    intro: "Two questions.\nAnswer either.",
+    questions: [
+      { title: "Which pay button?", text: "Line one\nline <two> & \"three\"", options: [{ label: "A", title: "Solid <b>green</b>", images: ["shots/a.png"], recommended: true }, { label: "B", title: "Outline", text: "<script>alert(1)</script>" }] },
+      { title: "Copy", options: [{ label: "1", title: "Pay now" }] },
+    ],
+  };
+
+  it("draws a review from options data: text escaped, line breaks kept, images inlined, every option marked", async () => {
+    const store = sessionOfThisProcess();
+    const { file } = optionsFolder(CHOICE);
+    const out = await cli(store.paths.home, "review", "Pay button", "--options", file);
+    assert.equal(out.code, 0, out.stderr);
+    const [review] = store.listReviews();
+    assert.ok(review);
+    assert.ok(out.stdout.startsWith(`review ${review.id} round 1: Pay button\n`) && out.stdout.includes("(1 image(s) inlined)"), out.stdout);
+    const html = store.reviewPage(review.id)?.html ?? "";
+    assert.ok(!/<script/i.test(html), "no script, not even the session's text as one");
+    assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;") && html.includes("Solid &lt;b&gt;green&lt;/b&gt;"), "the session's text as text");
+    assert.ok(html.includes("Line one\nline &lt;two&gt; &amp; &quot;three&quot;"), "line breaks kept");
+    assert.ok(html.includes(`<img src="data:image/png;base64,${PNG.toString("base64")}" alt="A: Solid &lt;b&gt;green&lt;/b&gt;">`), "the image inlined");
+    assert.deepEqual([...html.matchAll(/data-agent-desk-group="([^"]*)"/g)].map((m) => m[1]), ["Which pay button?", "Copy"]);
+    assert.deepEqual([...html.matchAll(/data-agent-desk-option="([^"]*)"/g)].map((m) => m[1]), ["A", "B", "1"]);
+    assert.ok(html.includes('<span class="rec-badge">Recommended</span>'));
+    assert.ok(!html.includes("data-agent-desk-progress"), "progress is the questions decided, counted by the shim");
+    // The same title again: its next round, the marks kept where the labels match.
+    const marks = JSON.stringify({ groups: [{ name: "Which pay button?", options: [{ label: "A", pick: "choose" }] }] });
+    store.changeReviewState(review.id, { ops: [{ op: "set", key: "agent-desk:options", value: marks }] }, "local");
+    const again = await cli(store.paths.home, "review", "pay button", "--options", file);
+    assert.match(again.stdout, /round 2: pay button/);
+    assert.equal(store.listReviews().length, 1);
+    assert.equal(store.reviewState(review.id).data["agent-desk:options"], marks);
+  });
+
+  it("refuses options data that does not fit, saying where, and publishes nothing", async () => {
+    const store = sessionOfThisProcess();
+    const q = (options: unknown[], extra: Record<string, unknown> = {}) => ({ questions: [{ title: "Q", options, ...extra }] });
+    const o = (extra: Record<string, unknown> = {}) => ({ label: "A", title: "T", ...extra });
+    const cases: [unknown, RegExp][] = [
+      ["{not json", /not valid JSON/],
+      [[], /expected an object/],
+      [{ questions: [] }, /questions: at least one question/],
+      [{ questions: [{ title: "Q", options: [] }] }, /questions\[0\]\.options: at least one option/],
+      [{ questionz: [] }, /unknown field "questionz"/],
+      [q([o({ titel: "x" })]), /questions\[0\]\.options\[0\]: unknown field "titel"/],
+      [q([o(), o()]), /the label "A" twice/],
+      [{ questions: [{ title: "Q", options: [o()] }, { title: "Q", options: [o()] }] }, /the title "Q" twice/],
+      [q([o({ label: "x".repeat(41) })]), /options\[0\]\.label: text longer than 40/],
+      [q([o({ title: "two\nlines" })]), /options\[0\]\.title: one line/],
+      [q([o({ text: "x".repeat(4001) })]), /options\[0\]\.text: text longer than 4000/],
+      [q(Array.from({ length: 13 }, (_, i) => o({ label: `L${i}` }))), /options: more than 12/],
+      [{ questions: Array.from({ length: 21 }, (_, i) => ({ title: `Q${i}`, options: [o()] })) }, /questions: more than 20/],
+      [q([o({ images: Array.from({ length: 7 }, () => "shots/a.png") })]), /images: more than 6/],
+      [q([o({ recommended: "yes" })]), /recommended: expected/],
+      [q([o({ images: ["../outside.png"] })]), /images\[0\]: "\.\.\/outside\.png" is not inlined: outside/],
+      [q([o({ images: ["fake.png"] })]), /images\[0\]: "fake\.png" is not inlined: not a PNG/],
+      [q([o({ images: ["missing.png"] })]), /no such file/],
+      [q([o({ images: ["https://example.com/x.png"] })]), /not a file beside/],
+    ];
+    for (const [data, message] of cases) {
+      const { file } = optionsFolder(data);
+      const out = await cli(store.paths.home, "review", "Choice", "--options", file);
+      assert.equal(out.code, 2, `${JSON.stringify(data).slice(0, 80)}: ${out.stderr}`);
+      assert.match(out.stderr, message, JSON.stringify(data).slice(0, 80));
+    }
+    const { file, root } = optionsFolder(CHOICE);
+    assert.match((await cli(store.paths.home, "review", "Choice", "--options", file, "--page", file)).stderr, /not both/);
+    assert.match((await cli(store.paths.home, "review", "Choice", "--options", path.join(root, "nope.json"))).stderr, /cannot read it/);
+    assert.deepEqual(store.listReviews(), []);
+  });
+
   it("refuses a bad review id, title or page and exits 2", async () => {
     const store = sessionOfThisProcess();
     const { page, root } = pageFolder("<html></html>");

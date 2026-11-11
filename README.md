@@ -164,13 +164,17 @@ A session that makes an HTML page for you to review or choose from publishes it 
 it from a local server:
 
 ```sh
+agent-desk review "Pay button variant" --options choice.json        # the desk draws the page from questions and options
 agent-desk review "Checkout copy proposals" --page proposals.html   # the same title again: its next round
 agent-desk review rv-…                                              # what you answered, read by any later session
 agent-desk reviews                                                  # this project's reviews and where each stands
 agent-desk review rv-… --close --reason "replaced by round 3"       # discard it: out of To review, kept in History
 ```
 
-A page that marks each option with `data-agent-desk-option="<label>"` (and each question with
+With `--options`, the session gives only data (questions, options with a label, title, text,
+screenshots and which it recommends; `agent-desk review --help` has the format) and the desk draws
+the page in its own look, phone first, images zoomed with a tap. A page the session writes itself
+that marks each option with `data-agent-desk-option="<label>"` (and each question with
 `data-agent-desk-group="<question>"`) gets the desk's own Choose, Iterate and Discard on every option
 and None of these on every question, with no code of its own. It shows in To review, never in Needs you. The page opens whole on the desk inside a sandbox with no
 origin and no network: its own scripts and styles run, the images beside it are inlined when it is

@@ -15,6 +15,7 @@ import { ancestors, sessionFinished } from "../core/proc.ts";
 import { locateProject } from "../project/locate.ts";
 import { storeHome } from "../store/paths.ts";
 import { type Decision, type DecisionQuery, Store } from "../store/store.ts";
+import { OPTIONS_LIMITS, readOptionsFile, renderOptionsPage } from "./review-options.ts";
 import { inlinePage } from "./review-page.ts";
 
 /** Decisions listed by default: enough to recall a project's recent ones without filling a model's context. */
@@ -44,7 +45,19 @@ Posting (from a session; the session is found from the calling process, or --ses
                     question (on the desk, or in a dialog); --question opens that one whatever its answer
   agent-desk review "<title>" --page <file.html>
                     publish an HTML page for the developer to review (one file keeping its answers in
-                    localStorage); its images beside it are inlined. The same title again is its next round
+                    localStorage); its images beside it are inlined. The same title again is its next round.
+                    Mark each option with data-agent-desk-option="<label>" (each question's element with
+                    data-agent-desk-group="<question>") and the desk adds its Choose / Iterate / Discard
+  agent-desk review "<title>" --options <file.json>
+                    publish the developer's choice between options as a page the desk draws itself, with
+                    Choose, Iterate and Discard on each option and None of these on each question:
+                    { "intro"?: "<text>", "questions": [{ "title": "<one line>", "text"?: "<text>", "options": [
+                      { "label": "A", "title": "<one line>", "text"?: "<text>", "images"?: ["<path>", ...],
+                        "recommended"?: true }, ...] }, ...] }
+                    up to ${OPTIONS_LIMITS.questions} questions of ${OPTIONS_LIMITS.options} options, labels of ${OPTIONS_LIMITS.label} characters and titles of ${OPTIONS_LIMITS.title} (one line,
+                    unique in their question), texts of ${OPTIONS_LIMITS.text} (line breaks kept, shown as plain text), ${OPTIONS_LIMITS.images} images
+                    an option, named relative to the JSON file and inside its folder. The same title again is
+                    its next round, keeping what was marked on options of the same label
   agent-desk review <id> [--out <new file>]
                     what the developer answered in a review, with its saved state (any session may read it);
                     the page's parts are cut at 16 KB, --out writes the whole as JSON
@@ -209,23 +222,32 @@ const COMMANDS: Record<string, Command> = {
   },
 
   review(args, store) {
-    const { values, positionals } = parse(args, { page: { type: "string" }, out: { type: "string" }, close: { type: "boolean" }, reason: { type: "string" } }, 1);
+    const { values, positionals } = parse(args, { page: { type: "string" }, options: { type: "string" }, out: { type: "string" }, close: { type: "boolean" }, reason: { type: "string" } }, 1);
     if (values.reason !== undefined && !values.close) throw new InputError("--reason goes with closing a review: agent-desk review <id> --close --reason \"<text>\"");
-    if (values.close && (values.page !== undefined || values.out !== undefined)) throw new InputError("--close takes a review id and an optional --reason, not --page or --out");
-    if (values.page === undefined) {
+    if (values.close && (values.page !== undefined || values.options !== undefined || values.out !== undefined)) throw new InputError("--close takes a review id and an optional --reason, not --page, --options or --out");
+    if (values.page !== undefined && values.options !== undefined) throw new InputError("a review is published from --page <file.html> or from --options <file.json>, not both");
+    if (values.page === undefined && values.options === undefined) {
       const value = nonEmpty(positionals[0], "review id", 4096);
-      if (!ID_PATTERN.test(value)) throw new InputError(`expected a review id such as rv-…, got ${JSON.stringify(value)}; to publish a page, pass --page <file.html>`);
+      if (!ID_PATTERN.test(value)) throw new InputError(`expected a review id such as rv-…, got ${JSON.stringify(value)}; to publish one, pass --options <file.json> or --page <file.html>`);
       if (values.close) return closeReview(store, value, values.reason === undefined ? undefined : reviewReason(values.reason.trim(), "--reason"), callingSession(store, values.session));
       return readReview(store, value, callingSession(store, values.session), values.out === undefined ? undefined : path.resolve(nonEmpty(values.out, "--out", 4096)));
     }
     if (values.out !== undefined) throw new InputError("--out goes with reading a review (agent-desk review <id> --out <file>), not with publishing one");
     const sessionId = resolveSession(store, values.session);
     const title = reviewTitle(nonEmpty(positionals[0], "title", 4096).trim(), "title");
-    const page = inlinePage(nonEmpty(values.page, "--page", 4096));
-    for (const s of page.skipped) process.stderr.write(`agent-desk review: left as is, ${s.reason}: ${s.ref}\n`);
-    const review = store.publishReview({ sessionId, title, html: page.html });
+    let html: string;
+    let inlined: number;
+    if (values.options !== undefined) {
+      const { review, folder } = readOptionsFile(nonEmpty(values.options, "--options", 4096));
+      ({ html, images: inlined } = renderOptionsPage(title, review, folder));
+    } else {
+      const page = inlinePage(nonEmpty(values.page, "--page", 4096));
+      for (const s of page.skipped) process.stderr.write(`agent-desk review: left as is, ${s.reason}: ${s.ref}\n`);
+      ({ html, inlined } = page);
+    }
+    const review = store.publishReview({ sessionId, title, html });
     print(`review ${review.id} round ${review.rounds.at(-1)?.n ?? 1}: ${review.title}`);
-    print(`The developer will find it in To review on the desk${page.inlined ? ` (${page.inlined} image(s) inlined)` : ""}. Do not wait for it: end your turn. When they send it, read it with: agent-desk review ${review.id}`);
+    print(`The developer will find it in To review on the desk${inlined ? ` (${inlined} image(s) inlined)` : ""}. Do not wait for it: end your turn. When they send it, read it with: agent-desk review ${review.id}`);
   },
 
   reviews(args, store) {

@@ -258,6 +258,19 @@ review, never in Needs you; nothing sounds or is pushed.
   is dropped) or a `confirm` (which returns false); `window.open` returns null. On `{ type:
   "collect" }` from its parent it clicks `[data-agent-desk-answers]`, or posts an empty copy. It
   scrolls to `#at=<0..1>` of its URL once loaded.
+- **Drawn from data.** `agent-desk review "<title>" --options <file.json>` publishes a page the desk
+  draws itself (`src/cli/review-options.ts`) through the same pipeline (store, rounds, CSP, shim):
+  `{ "intro"?: text, "questions": [{ "title": line, "text"?: text, "options": [{ "label": line,
+  "title": line, "text"?: text, "images"?: [path, …], "recommended"?: true }] }] }`. At most 20
+  questions of 12 options and 6 images an option; a label 40 characters, a title 200 (one line each,
+  unique within its question), a text 4000 (line breaks kept); the file 1 MB; no other field. Images
+  are named relative to the JSON file and inlined under the page rules below, but one that cannot be
+  is an error, not left out. All text is escaped plain text; the page has no script, the desk's
+  colours (light or dark as the device prefers), one column on a phone, and an image tapped fills the
+  screen until tapped again. Each question is a `data-agent-desk-group` and each option a
+  `data-agent-desk-option` with its label, so the option controls below are its only controls, and
+  its progress is the questions decided. The same title again is its next round, its marks kept on
+  the options of the same label.
 - **Options.** A page marks each option the developer chooses between with
   `data-agent-desk-option="<short label>"`, and, when it asks more than one thing, the element holding
   each question's options with `data-agent-desk-group="<question>"` (options outside any group make
@@ -387,6 +400,7 @@ command's usage and exits 0. What a session posts:
 | `interpret "<text>"` | how the session understood the answer of the turn now running (see below) |
 | `unanswered [--question <id>]` | the developer's reply did not answer the question: it opens again (see below) |
 | `scan <project dir> [--if-older-than S]` | measures the project's checkouts with read-only git and a file walk; sizes are re-measured at most hourly |
+| `review "<title>" --options <file.json>` | a review the desk draws from options data, or its next round (see Reviews) |
 | `review "<title>" --page <file.html>` | a review, or its next round (see Reviews); its images inlined |
 | `review <id> --close [--reason "<text>"]` | closes the review (see Reviews), with the calling session and the reason |
 | `status [--json]` | reads the project's git again (see Branches) and stores it; prints the session's branches, unfinished agents, open questions, local servers and open reviews (`--json`: the same as records) |
