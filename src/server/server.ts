@@ -102,10 +102,11 @@ function goneSessions(sessions: Session[]): string[] {
   return sessions.filter((s) => s.state !== "ended" && sessionFinished(s)).map((s) => s.id);
 }
 
-function diskWarnings(sessions: Session[], problems: string[]): DiskWarning[] {
+/** The filesystems of the projects that running sessions work in, when one runs short of space; a session whose process is gone runs nothing there. */
+export function diskWarnings(sessions: Session[], problems: string[], lowRatio = LOW_DISK_RATIO): DiskWarning[] {
   const byDevice = new Map<number, DiskWarning>();
   for (const s of sessions) {
-    if (s.state === "ended") continue;
+    if (sessionFinished(s)) continue;
     let dev: number;
     let stat: fs.StatsFs;
     try {
@@ -118,7 +119,7 @@ function diskWarnings(sessions: Session[], problems: string[]): DiskWarning[] {
     }
     const totalBytes = stat.blocks * stat.bsize;
     const freeBytes = stat.bavail * stat.bsize;
-    if (totalBytes === 0 || freeBytes / totalBytes >= LOW_DISK_RATIO) continue;
+    if (totalBytes === 0 || freeBytes / totalBytes >= lowRatio) continue;
     const entry = byDevice.get(dev) ?? { dir: s.project.dir, projects: [], freeBytes, totalBytes };
     if (!entry.projects.includes(s.project.name)) entry.projects.push(s.project.name);
     byDevice.set(dev, entry);

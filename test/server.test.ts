@@ -7,7 +7,8 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { procInfo } from "../src/core/proc.ts";
 import { Push } from "../src/server/push.ts";
-import { createDeskServer, deskState } from "../src/server/server.ts";
+import { createDeskServer, deskState, diskWarnings } from "../src/server/server.ts";
+import type { Session } from "../src/core/model.ts";
 import type { Store } from "../src/store/store.ts";
 import { addSession, PNG, serve, shellListener, tempHome, testStore } from "./helpers.ts";
 
@@ -496,3 +497,22 @@ describe("PIN in front of remote access", () => {
   });
 });
 
+
+describe("disk warnings", () => {
+  it("name only the projects of sessions still running, not one whose process is gone or one that ended", () => {
+    const me = procInfo(process.pid);
+    assert.ok(me);
+    const dir = os.tmpdir();
+    const session = (name: string, more: Partial<Session>): Session =>
+      ({ id: name, provider: "Test", project: { name, dir }, state: "waiting", startedAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", ...more }) as Session;
+    const sessions = [
+      session("live", { process: { pid: process.pid, start: me.start, ancestors: [] } }),
+      session("gone", { process: { pid: 2 ** 22 + 1, ancestors: [] } }),
+      session("ended", { state: "ended" }),
+    ];
+    const problems: string[] = [];
+    // Every disk counts as short of space at a ratio of 1, so only which sessions are listed is tested.
+    assert.deepEqual(diskWarnings(sessions, problems, 1).flatMap((w) => w.projects), ["live"]);
+    assert.deepEqual(problems, []);
+  });
+});
