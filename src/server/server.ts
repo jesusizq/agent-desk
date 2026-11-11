@@ -10,6 +10,7 @@ import { ID_PATTERN } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
 import { type DeskState, type DiskWarning, imageIds, type ReviewState, reviewNote, type Session } from "../core/model.ts";
+import { OPTIONS_TEXT_MAX, optionsText } from "../core/options.ts";
 import { liveServices } from "../core/ports.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
@@ -209,7 +210,10 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     if (reviewState?.[1]) {
       if (!ID_PATTERN.test(reviewState[1])) return sendJson(res, 400, { error: "invalid id" });
       if (!store.getReview(reviewState[1])) return sendJson(res, 404, { error: "not found" });
-      return sendJson(res, 200, store.reviewState(reviewState[1]));
+      const state = store.reviewState(reviewState[1]);
+      // What the marks read as, built here once: the Send sheet shows exactly this.
+      const options = optionsText(state.data);
+      return sendJson(res, 200, options === undefined ? state : { ...state, options });
     }
     const image = /^\/images\/([^/]+)$/.exec(route);
     if (image?.[1]) return imageFile(store, image[1], res, unlockEnds);
@@ -313,7 +317,8 @@ async function reviewAction(store: Store, reviewId: string, action: string, from
     if (action === "send") {
       const f = fields(body, "body");
       const note = f.note === undefined || (typeof f.note === "string" && f.note.trim() === "") ? undefined : reviewNote(f.note, "note");
-      return sendJson(res, 200, { line: store.sendReview(reviewId, oneOf(["session", "other"] as const)(f.to, "to"), int(f.rev, "rev"), note).line });
+      const options = f.options === undefined ? undefined : text(f.options, "options", OPTIONS_TEXT_MAX);
+      return sendJson(res, 200, { line: store.sendReview(reviewId, oneOf(["session", "other"] as const)(f.to, "to"), int(f.rev, "rev"), note, options).line });
     }
     if (action === "opened") return sendJson(res, 200, store.markReviewOpened(reviewId));
     return sendJson(res, 200, store.closeReview(reviewId).review);

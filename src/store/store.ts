@@ -52,6 +52,7 @@ import {
   reviewTitle,
   stateBytes,
 } from "../core/model.ts";
+import { OPTIONS_KEY, optionsText, readOptionMarks } from "../core/options.ts";
 import { ensureDir, isCode, listJson, readJson, withLock, writeAtomic, writeJson } from "./fsx.ts";
 import { StorePaths } from "./paths.ts";
 
@@ -1050,6 +1051,8 @@ export class Store {
       }
       const nextData: Record<string, string> = Object.fromEntries(data);
       if (stateBytes(nextData) > REVIEW_STATE_MAX) throw new InputError(`the review's saved state would be larger than ${REVIEW_STATE_MAX} bytes; nothing was saved`);
+      const marks = nextData[OPTIONS_KEY];
+      if (marks !== undefined && marks !== state.data[OPTIONS_KEY]) readOptionMarks(marks, `the page's option marks (${OPTIONS_KEY}); nothing was saved`);
       const summary = change.summary === undefined ? state.summary : change.summary === "" ? undefined : change.summary;
       const next: ReviewState = compact({ data: nextData, summary, rev: state.rev + 1 });
       const changed = change.ops.length > 0 || change.summary !== undefined;
@@ -1102,9 +1105,10 @@ export class Store {
    * developer's answers (the text the page copied, else how far they got) are recorded, the answers
    * as a closed question of that session, so the project's decisions and History hold them. `note`,
    * the developer's own words, follows the line verbatim in the same message, and is recorded as a
-   * second closed question answered on the desk.
+   * second closed question answered on the desk. `optionsShown`: the options text the sheet showed;
+   * when given, a send whose marks read otherwise is refused as stale.
    */
-  sendReview(reviewId: string, to: "session" | "other", seenRev: number, note?: string): { line: string; review: Review } {
+  sendReview(reviewId: string, to: "session" | "other", seenRev: number, note?: string, optionsShown?: string): { line: string; review: Review } {
     const file = this.paths.review(reviewId);
     return withLock(file, () => {
       const review = this.getReview(reviewId);
@@ -1118,6 +1122,7 @@ export class Store {
       }
       const state = this.reviewState(reviewId);
       if (state.rev !== seenRev) throw new StaleReview(`the review changed since it was shown (saved state ${state.rev}, shown ${seenRev}); look at it again, then send it`, state.rev);
+      if (optionsShown !== undefined && optionsShown !== (optionsText(state.data) ?? "")) throw new StaleReview("the options marked in the page are not the ones shown; look at them again, then send it", state.rev);
       const said = note === undefined ? undefined : reviewNote(note, "note");
       const line = reviewLine(review, round, review.progress, to, said);
       const at = this.stamp();
@@ -1148,8 +1153,9 @@ export class Store {
   /** The developer's answers to a review as a decision of the session that published it: closed at once, never in Needs you. */
   private reviewDecision(review: Review, round: number, state: ReviewState, at: string): Question {
     const reviewed = review.progress ? `${review.progress.done} of ${review.progress.total} reviewed. ` : "";
-    // What the page copied is the page's text, told apart from the developer's own words by its source.
-    const answer = state.summary === undefined ? { text: `${reviewed}The page copied no answers; agent-desk review ${review.id} shows its saved state.`, via: "desk" as const } : { text: bounded(state.summary), via: "review" as const };
+    // The options marked and what the page copied are the page's text, told apart from the developer's own words by their source.
+    const pages = [optionsText(state.data), state.summary].filter((x) => x !== undefined);
+    const answer = pages.length === 0 ? { text: `${reviewed}The page copied no answers; agent-desk review ${review.id} shows its saved state.`, via: "desk" as const } : { text: bounded(pages.join("\n\n")), via: "review" as const };
     return readQuestion({
       id: newId("q"),
       sessionId: review.sessionId,

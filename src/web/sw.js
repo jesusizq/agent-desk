@@ -120,6 +120,8 @@ async function keepChanges(id, sent, rev) {
     else if (o?.op === "remove" && typeof o.key === "string") delete state.data[o.key];
   }
   if (typeof sent.summary === "string") state.summary = sent.summary || undefined;
+  // What the marks read as is the desk's to build: a stale reading must not be shown offline.
+  if (Array.isArray(sent.ops) && sent.ops.length) delete state.options;
   if (typeof rev === "number") state.rev = rev;
   const headers = new Headers(kept.headers);
   await (await caches.open(CACHE)).put(key, new Response(JSON.stringify(state), { status: 200, headers }));

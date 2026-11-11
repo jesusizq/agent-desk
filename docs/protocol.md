@@ -258,6 +258,29 @@ review, never in Needs you; nothing sounds or is pushed.
   is dropped) or a `confirm` (which returns false); `window.open` returns null. On `{ type:
   "collect" }` from its parent it clicks `[data-agent-desk-answers]`, or posts an empty copy. It
   scrolls to `#at=<0..1>` of its URL once loaded.
+- **Options.** A page marks each option the developer chooses between with
+  `data-agent-desk-option="<short label>"`, and, when it asks more than one thing, the element holding
+  each question's options with `data-agent-desk-group="<question>"` (options outside any group make
+  one group). The shim adds to each marked option (inside it, or right after an element that holds
+  no children, such as `<img>`) the desk's own Choose, Iterate (with a box: what to change) and
+  Discard (with an optional why), and to each group None of these (optional why), at the end of the
+  group's element, or of the page for options outside a group. They are drawn in a shadow root of
+  their own, in the desk's colours (light or dark as the device prefers), touch-sized on a phone; the
+  page's styles do not reach them and the page's handlers never see their clicks or keys. Labels are
+  read on one line, 200 characters at most, made unique within a group. What is picked is kept in the
+  page's routed `localStorage` under the reserved key `agent-desk:options` (`OPTIONS_KEY`,
+  `src/core/options.ts`): `{ "groups": [{ "name", "none"?, "options": [{ "label", "pick": "choose" |
+  "iterate" | "discard", "note"? }] }] }`, in the page's order, so it syncs between devices and
+  carries over rounds where the labels match like the page's own answers; the desk refuses a write
+  of that key that does not read (100 groups and 100 options a group at most, a note 2000
+  characters, 32 KB once read) and saves nothing of it. Without a `data-agent-desk-progress` counter,
+  progress is the groups decided (an option chosen or to iterate, None of these, or every option
+  discarded) of all of them. The page shares its window with the shim and could write the key
+  itself, so the marks are the page's data: `GET /api/reviews/<id>/state` adds `options`, what they
+  read as (`Options marked in the page:`, then one line per mark naming its group), the Send sheet
+  shows it word for word with what the page copied, a send records both as the decision's answer
+  with `via: "review"`, the send's `options` must be the text the sheet showed (else 409 stale), and
+  `agent-desk review <id>` prints it fenced as written in the page.
 - **Saved state.** `POST /api/reviews/<id>/state` applies the page's operations in order under the
   review's lock, so two devices merge per key, the later write winning on a key both set; every
   accepted write adds 1 to `rev`. `data` ≤ 2 MB as UTF-8 JSON, a key ≤ 200 characters, `summary`
@@ -426,9 +449,9 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/sessions/<id>/message` `{ "text": "…", "images"?: ["<id>"] }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
 | `POST /api/results/<id>/seen`, `POST /api/seen` | mark one result, or everything, as seen |
 | `GET /review/<id>`, `GET /review/<id>/raw` | a review's latest page, with the shim or without, only with `reviewHeaders` (see Reviews) |
-| `GET /api/reviews/<id>/state` | `{ data, summary?, rev }` |
+| `GET /api/reviews/<id>/state` | `{ data, summary?, options?, rev }` (`options`: what the options marked in the page read as) |
 | `POST /api/reviews/<id>/state` `{ "ops": [{ "op": "set", "key", "value" } \| { "op": "remove", "key" } \| { "op": "clear" }], "progress"?: "12/97", "summary"?: "…" }` | applies the page's changes; returns `{ rev }`; 5 MB body at most |
-| `POST /api/reviews/<id>/send` `{ "to": "session" \| "other", "rev": n, "note"?: "…" }` | returns `{ line }` (the line, then the note); 409 `{ error, stale: true, rev }` when the state changed since the desk showed it at `rev`, 409 `{ error }` when the session takes no message now |
+| `POST /api/reviews/<id>/send` `{ "to": "session" \| "other", "rev": n, "note"?: "…", "options"?: "…" }` | returns `{ line }` (the line, then the note); 409 `{ error, stale: true, rev }` when the state changed since the desk showed it at `rev`, 409 `{ error }` when the session takes no message now |
 | `POST /api/reviews/<id>/opened`, `POST /api/reviews/<id>/close` | first opened on the desk; leaves To review (stays in History) |
 
 Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header

@@ -3198,6 +3198,25 @@ paint();
       store.closeReview(r.id);
     });
 
+    it("shows the options marked in the page in the Send sheet, as the page's words, and records exactly them", async () => {
+      const html = `<!doctype html><html><head><title>marked</title></head><body>
+<section data-agent-desk-group="Tagline"><article data-agent-desk-option="Plain">Plain</article><article data-agent-desk-option="Bold">Bold</article></section></body></html>`;
+      const r = publish("rv-marked", "Taglines", { state: "working", takesMessagesWhileWorking: true }, html);
+      const page = await openReview("Taglines");
+      await page.inFrame("/review/", "new Promise((r) => { const ready = () => (document.querySelectorAll('agent-desk-control').length === 3 ? r(true) : setTimeout(ready, 50)); ready(); })");
+      await page.inFrame("/review/", "document.querySelector('[data-agent-desk-option=\"Bold\"] agent-desk-control').shadowRoot.querySelector('button.choose').click(), true");
+      await page.waitFor("document.querySelector('.rv-count').textContent === '1 of 1'");
+      await page.click(".rv-send");
+      const shown = 'Options marked in the page:\n[Tagline] Chosen: "Bold"';
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('.rv-answers pre')?.textContent === ${JSON.stringify(shown)}`);
+      await page.click("#review-send button[type=submit]");
+      await page.waitFor("!document.getElementById('review-send').open");
+      const decision = store.listQuestions().find((q) => q.review?.id === r.id && !q.review.note);
+      assert.deepEqual([decision?.answer?.via, decision?.answer?.text], ["review", shown], "the page's words, as shown");
+      store.takeInbox("rv-marked");
+      store.closeReview(r.id);
+    });
+
     it("shows the answers again instead of sending when another device changed them after the sheet opened", async () => {
       const r = publish("rv-stale", "Stale answers", { state: "working", takesMessagesWhileWorking: true });
       const page = await openReview("Stale answers");

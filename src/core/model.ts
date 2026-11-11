@@ -1,5 +1,5 @@
 // Validators that read protocol records back from untrusted files and input.
-import { bool, compact, type Fields, fields, InputError, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
+import { bool, compact, CONTROL, type Fields, fields, InputError, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
 import { id } from "./ids.ts";
 import type { PlanHistory, PlanWindowHistory } from "./limits.ts";
 import {
@@ -427,7 +427,6 @@ function readPlanWindowHistory(value: unknown, where: string): PlanWindowHistory
 }
 
 // The title names a review on one line of the desk, of the CLI and of the line sent to a session.
-const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 /** One line of at most `max` characters, no control characters, no spaces at its ends. */
 function oneLine(value: unknown, where: string, max: number): string {

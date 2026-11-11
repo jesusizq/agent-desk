@@ -4,6 +4,9 @@ export class InputError extends Error {
   override name = "InputError";
 }
 
+/** Characters that break a one-line text: control characters and Unicode line separators. */
+export const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
 export type Fields = Readonly<Record<string, unknown>>;
 
 export function fields(value: unknown, where: string): Fields {

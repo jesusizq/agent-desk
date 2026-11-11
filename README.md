@@ -170,7 +170,9 @@ agent-desk reviews                                                  # this proje
 agent-desk review rv-… --close --reason "replaced by round 3"       # discard it: out of To review, kept in History
 ```
 
-It shows in To review, never in Needs you. The page opens whole on the desk inside a sandbox with no
+A page that marks each option with `data-agent-desk-option="<label>"` (and each question with
+`data-agent-desk-group="<question>"`) gets the desk's own Choose, Iterate and Discard on every option
+and None of these on every question, with no code of its own. It shows in To review, never in Needs you. The page opens whole on the desk inside a sandbox with no
 origin and no network: its own scripts and styles run, the images beside it are inlined when it is
 published (only those inside its folder), and nothing else loads. What it keeps in `localStorage`
 is kept on the desk instead, so you can go on from the phone or days later, and the next round

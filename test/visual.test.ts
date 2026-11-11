@@ -34,7 +34,7 @@ function skipped(): string | false {
 type Renderer = { chrome: string; fonts: string[] };
 type Device = "desktop" | "phone";
 type Theme = "light" | "dark";
-type Screen = { name: string; device: Device; theme: Theme; quiet?: boolean; show?: (page: Page) => Promise<void> };
+type Screen = { name: string; device: Device; theme: Theme; quiet?: boolean; marked?: boolean; show?: (page: Page) => Promise<void> };
 
 const STILL = "document.getAnimations().every((a) => a.effect?.getComputedTiming().iterations === Infinity)";
 const arrived = (id: string) => `document.getElementById('${id}').open && !document.getElementById('${id}').getAnimations().length`;
@@ -69,13 +69,25 @@ const SETTLE = `(async () => {
   for (let i = 0; i < 2; i++) await new Promise((r) => requestAnimationFrame(r));
 })()`;
 
+/** A page a session made with its options marked for the desk's controls, in its own plain style. */
+const MARKED_PAGE = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Empty cart headline</title>
+<style>body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 20px; background: #f6f7f9; color: #1d2330 } h1 { font-size: 20px; margin: 0 0 16px }
+article { background: #fff; border: 1px solid #dde1e8; border-radius: 12px; padding: 16px; margin: 0 0 12px } article p { margin: 0; font-size: 18px }
+@media (prefers-color-scheme: dark) { body { background: #12151b; color: #e4e7ec } article { background: #1a1e26; border-color: #2c323d } }</style></head><body>
+<h1>Empty cart headline</h1>
+<section data-agent-desk-group="Which headline for the empty cart?">
+<article data-agent-desk-option="A"><p>Your cart is empty.</p></article>
+<article data-agent-desk-option="B"><p>Nothing here yet. Find something you like.</p></article>
+<article data-agent-desk-option="C"><p>Your cart is empty! Start shopping →</p></article>
+</section></body></html>`;
+
 const desktop = (name: string, extra: Omit<Screen, "name" | "device" | "theme"> = {}): Screen[] =>
   (["light", "dark"] as const).map((theme) => ({ name: `${name}-${theme}`, device: "desktop", theme, ...extra }));
 
 describe("what the page looks like", { skip: skipped() }, () => {
   let browser: Browser;
   let busy: Store;
-  let urls: { busy: string; quiet: string };
+  let urls: { busy: string; quiet: string; marked: string };
   let closers: (() => Promise<void>)[] = [];
   /** Compares two PNGs in Chrome itself, which decodes and encodes them without a PNG library. */
   let lab: Page;
@@ -100,9 +112,12 @@ describe("what the page looks like", { skip: skipped() }, () => {
     const quiet = demoStore();
     for (const q of quiet.listQuestions()) if (q.status === "open") quiet.dismiss(q.id);
     for (const r of quiet.listResults()) if (!r.seenAt) quiet.markResultSeen(r.id);
-    const servers = [await serve(busy), await serve(quiet)];
+    // The busy desk and one more review, whose page marks its options for the desk's controls.
+    const marked = demoStore();
+    marked.publishReview({ sessionId: "demo-checkout", title: "Empty cart headline", html: MARKED_PAGE });
+    const servers = [await serve(busy), await serve(quiet), await serve(marked)];
     closers = servers.map((s) => s.close);
-    urls = { busy: servers[0]?.base ?? "", quiet: servers[1]?.base ?? "" };
+    urls = { busy: servers[0]?.base ?? "", quiet: servers[1]?.base ?? "", marked: servers[2]?.base ?? "" };
     browser = await Browser.launch(chrome ?? "");
     lab = await browser.newPage(64, 64);
     renderer = await measureRenderer();
@@ -133,7 +148,7 @@ describe("what the page looks like", { skip: skipped() }, () => {
   });
 
   /** The desk as `device` shows it, in `theme`, drawn and at rest. */
-  async function open(device: Device, theme: Theme, quiet = false): Promise<Page> {
+  async function open(device: Device, theme: Theme, quiet = false, marked = false): Promise<Page> {
     const size = SIZES[device];
     const page = await browser.newPage(size.width, size.height);
     pages.push(page);
@@ -145,7 +160,7 @@ describe("what the page looks like", { skip: skipped() }, () => {
     await page.send("Emulation.setTimezoneOverride", { timezoneId: "Europe/Madrid" });
     await page.send("Emulation.setLocaleOverride", { locale: "en-GB" });
     await page.send("Page.addScriptToEvaluateOnNewDocument", { source: FIRST_VISIT });
-    await page.goto((quiet ? urls.quiet : urls.busy) + "/");
+    await page.goto((quiet ? urls.quiet : marked ? urls.marked : urls.busy) + "/");
     await page.waitFor(quiet ? "document.querySelector('.board.quiet .all-clear')" : "document.querySelector('.next') && document.querySelectorAll('.scard').length === 3");
     await page.waitFor(`document.documentElement.dataset.theme === '${theme}'`);
     // Inherited by every box: a blinking caret would make two captures differ.
@@ -321,6 +336,8 @@ describe("what the page looks like", { skip: skipped() }, () => {
         await sameId(page);
       },
     },
+    ...desktop("review-options", { marked: true, show: (page) => markOptions(page, false) }),
+    { name: "phone-review-options", device: "phone", theme: "light", marked: true, show: (page) => markOptions(page, true) },
     {
       name: "phone-display-menu",
       device: "phone",
@@ -334,6 +351,18 @@ describe("what the page looks like", { skip: skipped() }, () => {
 
   /** The review's id in the line shown is drawn at random by each demo store: one fixed id in its place keeps the screen the same. */
   const sameId = (page: Page) => page.eval("(() => { const line = document.querySelector('#review-send .rv-line-text'); line.textContent = line.textContent.replace(/agent-desk review rv-[\\w-]+/, 'agent-desk review rv-demo'); })()");
+
+  /** The review whose page marks its options, open, with one chosen and one to iterate. */
+  async function markOptions(page: Page, touch: boolean): Promise<void> {
+    await openReview(page, "Empty cart headline", touch);
+    const root = (label: string) => `document.querySelector('[data-agent-desk-option="${label}"] agent-desk-control').shadowRoot`;
+    await page.inFrame("/review/", `new Promise((r) => { const ready = () => (document.querySelectorAll('agent-desk-control').length === 4 ? r(true) : setTimeout(ready, 50)); ready(); })`);
+    // Every screen opens the same store: a pick already made by the screen before is left as it is.
+    const press = (label: string, pick: string) => `(${root(label)}.querySelector('button.${pick}').getAttribute('aria-pressed') === 'true' || ${root(label)}.querySelector('button.${pick}').click())`;
+    await page.inFrame("/review/", `(${press("B", "choose")}, ${press("C", "iterate")}, true)`);
+    await page.inFrame("/review/", `(() => { const t = ${root("C")}.querySelector('textarea'); t.value = 'Keep the link, lose the exclamation mark'; t.dispatchEvent(new Event('input', { bubbles: true, composed: true })); return true; })()`);
+    await page.waitFor("document.querySelector('.rv-count')?.textContent === '1 of 1' && document.querySelector('.rv-saved')?.textContent.startsWith('Saved')");
+  }
 
   /** A demo review open, its page drawn in its frame. */
   async function openReview(page: Page, title: string, touch = false): Promise<void> {
@@ -349,7 +378,7 @@ describe("what the page looks like", { skip: skipped() }, () => {
   for (const screen of screens) {
     it(screen.name, async (t) => {
       if (mismatch) return t.skip(mismatch);
-      const page = await open(screen.device, screen.theme, screen.quiet);
+      const page = await open(screen.device, screen.theme, screen.quiet, screen.marked);
       await screen.show?.(page);
       const actual = await capture(page, screen.device);
       const file = path.join(BASELINES, `${screen.name}.png`);

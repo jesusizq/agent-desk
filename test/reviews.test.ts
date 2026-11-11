@@ -8,9 +8,10 @@ import { promisify } from "node:util";
 import { inlinePage } from "../src/cli/review-page.ts";
 import { InputError } from "../src/core/check.ts";
 import { parseProgress, REVIEW_ROUNDS_KEPT, REVIEW_STATE_MAX, reviewLine } from "../src/core/model.ts";
+import { OPTIONS_KEY, optionsText, readOptionMarks } from "../src/core/options.ts";
 import { reviewCsp } from "../src/server/security.ts";
 import { reviewDocument } from "../src/server/server.ts";
-import { readReviewChange, Store, Undeliverable } from "../src/store/store.ts";
+import { readReviewChange, StaleReview, Store, Undeliverable } from "../src/store/store.ts";
 import { Browser, findChrome } from "./browser.ts";
 import { addSession, PNG, serve, tempHome, testStore } from "./helpers.ts";
 
@@ -174,6 +175,71 @@ describe("reviews in the store", () => {
   });
 });
 
+describe("options marked in a page", () => {
+  const marks = (groups: unknown) => JSON.stringify({ groups });
+
+  it("read as one line per mark, each with its group, in the page's order", () => {
+    const text = optionsText({
+      [OPTIONS_KEY]: marks([
+        { name: "Headline", options: [{ label: "A", pick: "choose" }, { label: "B «2»", pick: "iterate", note: "shorter\nand calmer" }, { label: "C", pick: "discard" }, { label: "D", pick: "discard", note: "too loud" }] },
+        { name: "", none: "none fits", options: [] },
+        { name: "Button", none: "", options: [{ label: "X", pick: "iterate" }] },
+      ]),
+    });
+    assert.equal(
+      text,
+      [
+        "Options marked in the page:",
+        '[Headline] Chosen: "A"',
+        '[Headline] Iterate "B «2»": shorter',
+        "    and calmer",
+        '[Headline] Discarded "C"',
+        '[Headline] Discarded "D": too loud',
+        "None of these: none fits",
+        '[Button] Iterate "X"',
+        "[Button] None of these",
+      ].join("\n"),
+    );
+    assert.equal(optionsText({}), undefined, "nothing marked: nothing to read");
+    assert.equal(optionsText({ [OPTIONS_KEY]: marks([]) }), undefined);
+  });
+
+  it("refuse marks that do not read, past their limits, or twice the same", () => {
+    const bad = [
+      "{not json",
+      "[]",
+      marks("x"),
+      marks([{ name: "G", options: [{ label: "A", pick: "maybe" }] }]),
+      marks([{ name: "G", options: [{ label: "", pick: "choose" }] }]),
+      marks([{ name: "G", options: [{ label: "two\nlines", pick: "choose" }] }]),
+      marks([{ name: "G", options: [{ label: "x".repeat(201), pick: "choose" }] }]),
+      marks([{ name: "G", options: [{ label: "A", pick: "choose", note: "n".repeat(2001) }] }]),
+      marks([{ name: "G", options: [{ label: "A", pick: "choose" }, { label: "A", pick: "discard" }] }]),
+      marks([{ name: "G", options: [] }, { name: "G", options: [] }]),
+      marks(Array.from({ length: 101 }, (_, i) => ({ name: `G${i}`, options: [] }))),
+      marks(Array.from({ length: 40 }, (_, i) => ({ name: `G${i}`, options: Array.from({ length: 2 }, (_, j) => ({ label: `O${j}`, pick: "iterate", note: "n".repeat(1000) })) }))),
+    ];
+    for (const raw of bad) assert.throws(() => readOptionMarks(raw), InputError, raw.slice(0, 80));
+  });
+
+  it("are checked when the page saves them, and recorded with a send as the page's words, only as shown", () => {
+    const { store, id } = withReview();
+    assert.throws(() => store.changeReviewState(id, { ops: [{ op: "set", key: OPTIONS_KEY, value: "{broken" }] }, "local"), /option marks.*nothing was saved/);
+    assert.equal(store.reviewState(id).rev, 0, "nothing saved");
+    const value = marks([{ name: "Headline", options: [{ label: "A", pick: "choose" }] }]);
+    const { rev } = store.changeReviewState(id, { ops: [{ op: "set", key: OPTIONS_KEY, value }], summary: "copied by the page" }, "local");
+    const shown = 'Options marked in the page:\n[Headline] Chosen: "A"';
+    assert.throws(() => store.sendReview(id, "other", rev, undefined, "Options marked in the page:\nsomething else"), StaleReview, "what the sheet showed is not what would be recorded");
+    assert.equal(store.getReview(id)?.sends.length, 0);
+    store.sendReview(id, "other", rev, "my own words", shown);
+    const recorded = store.listQuestions().filter((q) => q.review?.id === id);
+    assert.deepEqual(recorded.map((q) => [q.answer?.via, q.answer?.text]).sort(), [
+      ["desk", "my own words"],
+      ["review", `${shown}\n\ncopied by the page`],
+    ]);
+  });
+});
+
 describe("inlining a page's images", () => {
   const page = (html: string, files: Record<string, Buffer> = {}) => {
     const dir = tempHome();
@@ -211,7 +277,26 @@ describe("inlining a page's images", () => {
   });
 });
 
+/** The custom properties set in the CSS block that follows `opening` in `css`. */
+function tokensAfter(css: string, opening: string): Map<string, string> {
+  const at = css.indexOf(opening);
+  assert.ok(at >= 0, `no ${opening} in the CSS`);
+  const block = css.slice(at + opening.length, css.indexOf("}", at));
+  return new Map([...block.matchAll(/(--[\w-]+):\s*([^;}]+)/g)].map((m) => [m[1] ?? "", (m[2] ?? "").trim()]));
+}
+const DESK_CSS = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "web", "style.css"), "utf8");
+/** The desk's own colours, light and dark, that every look drawn for a review must use. */
+const DESK_TOKENS = { light: tokensAfter(DESK_CSS, ":root {"), dark: tokensAfter(DESK_CSS, '[data-theme="dark"] {') };
+
 describe("the review document", () => {
+  it("draws the option controls in the desk's own colours, light and dark", () => {
+    const shimTokens = { light: tokensAfter(SHIM, ":host {"), dark: tokensAfter(SHIM, "@media (prefers-color-scheme: dark) {\n  :host {") };
+    for (const theme of ["light", "dark"] as const) {
+      assert.ok(shimTokens[theme].size >= 8, theme);
+      for (const [name, value] of shimTokens[theme]) assert.equal(value, DESK_TOKENS[theme].get(name), `${theme} ${name}`);
+    }
+  });
+
   it("puts the state and the shim right after <head>, with < escaped", () => {
     const doc = reviewDocument('<!doctype html><html><HEAD lang="x"><title>t</title></HEAD><header>h</header></html>', { data: { k: "</script><b>" }, rev: 3 }, "SHIM");
     assert.equal(doc, '<!doctype html><html><HEAD lang="x"><script>window.__agentDeskReview={"data":{"k":"\\u003c/script>\\u003cb>"},"rev":3};</script><script>SHIM</script><title>t</title></HEAD><header>h</header></html>');
@@ -479,6 +564,7 @@ describe("the shim in a browser", { skip: chrome ? false : "no Chrome found (set
       await page.goto(`${server.base}/review/${reviewId}`);
       await page.eval(`(window.seen = [], addEventListener("message", (e) => e.data?.agentDesk && seen.push(e.data)), true)`);
       assert.equal(await page.eval("document.getElementById('count').textContent"), "3/6", "the saved state is the page's localStorage");
+      assert.equal(await page.eval("document.querySelectorAll('agent-desk-control').length"), 0, "a page that marks no options gets no controls");
       assert.equal(await page.eval("origin"), "null", "the page has no origin: it can reach nothing of the desk");
       await page.click("article[data-i='2'] [data-v='yes']");
       await page.waitFor("seen.some((m) => m.type === 'progress' && m.text === '4/6')");
@@ -493,6 +579,52 @@ describe("the shim in a browser", { skip: chrome ? false : "no Chrome found (set
       await page.waitFor("seen.some((m) => m.type === 'notice' && m.text === 'Sure?')");
       assert.equal(await page.eval("sessionStorage.setItem('x', '1'), sessionStorage.getItem('x')"), "1");
       assert.equal(await page.eval("seen.filter((m) => m.type === 'set').length"), 1, "sessionStorage stays in memory");
+      assert.deepEqual(page.errors, []);
+    } finally {
+      await page.close();
+    }
+  });
+
+  it("puts the desk's controls on the options a page marks, keeps the picks in its routed storage, and counts groups decided", async () => {
+    const html = `<!doctype html><html><head><title>options</title><style>* { color: red !important; display: inline !important; } button { font-size: 40px; }</style></head><body>
+<section data-agent-desk-group="Headline"><article data-agent-desk-option="A"><h2>A</h2></article><article data-agent-desk-option="B"><h2>B</h2></article><article data-agent-desk-option="  C  "><h2>C</h2></article></section>
+<section data-agent-desk-group="Button"><img data-agent-desk-option="X" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><div data-agent-desk-option="Y">Y</div></section>
+<script>window.clicks = 0; window.keys = 0; document.addEventListener("click", () => clicks++); document.addEventListener("keydown", () => keys++);</script>
+</body></html>`;
+    const review = store.publishReview({ sessionId: "demo-checkout", title: "Marked options", html });
+    const page = await browser.newPage(1000, 700);
+    /** The shadow root of the controls of the option labelled `option` (its attribute trimmed): inside it, or right after it. */
+    const control = (option: string) =>
+      `(() => { const o = [...document.querySelectorAll('[data-agent-desk-option]')].find((e) => e.getAttribute('data-agent-desk-option').trim() === ${JSON.stringify(option)}); return (o.querySelector(':scope > agent-desk-control') ?? o.nextElementSibling).shadowRoot; })()`;
+    try {
+      await page.goto(`${server.base}/review/${review.id}`);
+      await page.eval(`(window.seen = [], addEventListener("message", (e) => e.data?.agentDesk && seen.push(e.data)), true)`);
+      await page.waitFor("document.querySelectorAll('agent-desk-control').length === 7");
+      assert.equal(await page.eval("document.querySelector('[data-agent-desk-option=\"X\"]').nextElementSibling.tagName"), "AGENT-DESK-CONTROL", "an image gets them right after it");
+      assert.deepEqual(await page.eval(`[...${control("A")}.querySelectorAll('button')].map((b) => b.textContent)`), ["Choose", "Iterate", "Discard"]);
+      assert.equal(await page.eval(`getComputedStyle(${control("A")}.querySelector('button')).fontSize`), "13px", "the page's styles do not reach them");
+      await page.eval(`${control("A")}.querySelector('button.choose').click()`);
+      await page.waitFor("seen.some((m) => m.type === 'progress' && m.text === '1/2')");
+      assert.equal(await page.eval("clicks"), 0, "the page never sees a click on them");
+      await page.eval(`${control("C")}.querySelector('button.iterate').click()`);
+      await page.eval(`(() => { const t = ${control("C")}.querySelector('textarea'); t.value = 'warmer'; t.dispatchEvent(new Event('input', { bubbles: true, composed: true })); t.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, composed: true, key: 'a' })); })()`);
+      assert.equal(await page.eval("keys"), 0, "nor a key typed in them");
+      const button = "[...document.querySelectorAll('section')[1].querySelectorAll(':scope > agent-desk-control')].at(-1).shadowRoot";
+      await page.eval(`${button}.querySelector('button.none').click()`);
+      await page.waitFor("seen.some((m) => m.type === 'progress' && m.text === '2/2')");
+      const last = await page.eval<string>(`seen.filter((m) => m.type === 'set' && m.key === ${JSON.stringify(OPTIONS_KEY)}).at(-1).value`);
+      assert.equal(optionsText({ [OPTIONS_KEY]: last }), ['Options marked in the page:', '[Headline] Chosen: "A"', '[Headline] Iterate "C": warmer', "[Button] None of these"].join("\n"));
+      // Saved on the desk, the page opens with them, on any device.
+      store.changeReviewState(review.id, { ops: [{ op: "set", key: OPTIONS_KEY, value: last }] }, "remote");
+      await page.goto(`${server.base}/review/${review.id}`);
+      await page.waitFor("document.querySelectorAll('agent-desk-control').length === 7");
+      const pressed = (option: string) => page.eval<string>(`[...${control(option)}.querySelectorAll('button')].map((b) => b.getAttribute('aria-pressed')).join()`);
+      assert.deepEqual([await pressed("A"), await pressed("B"), await pressed("C")], ["true,false,false", "false,false,false", "false,true,false"]);
+      assert.equal(await page.eval(`${control("C")}.querySelector('textarea').value`), "warmer");
+      assert.equal(await page.eval(`${control("C")}.querySelector('label:not([hidden]) textarea') !== null`), true, "its box open");
+      // The page redraws an option: its controls come back, as picked.
+      await page.eval(`document.querySelector('[data-agent-desk-option="A"]').innerHTML = '<h2>A again</h2>'`);
+      await page.waitFor(`${control("A")}?.querySelector('button.choose').getAttribute('aria-pressed') === 'true'`);
       assert.deepEqual(page.errors, []);
     } finally {
       await page.close();

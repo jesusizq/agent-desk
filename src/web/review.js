@@ -11,7 +11,7 @@ import { DeskError, getJson, OfflineError, post, postJson, refresh, run, unlockE
 import { data, ID, isLive, label, ON_THIS_MACHINE, page, projectColor, S, takesMessages, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Review} Review */
-/** @typedef {{ data: Record<string, string>, summary?: string, rev: number }} Saved */
+/** `options`: what the options marked in the page read as, built by the desk (src/core/options.ts). @typedef {{ data: Record<string, string>, summary?: string, options?: string, rev: number }} Saved */
 /** @typedef {{ op: "set", key: string, value: string } | { op: "remove", key: string } | { op: "clear" }} Op */
 /**
  * What the page changed and the desk has not saved yet: a clear first, then the last change of each key
@@ -184,7 +184,7 @@ export function sendKept() {
  * `data`: the page's saved state as this page's frame has it, once `known`: what the desk holds besides
  * is another device's change.
  * @typedef {{ id: string, frame: HTMLIFrameElement, known: boolean, seen: string | undefined, data: Map<string, string>,
- *   summary: string, progress: { done: number, total: number } | undefined, sync: boolean, collecting: number, strayed: boolean }} Current
+ *   summary: string, options: string, progress: { done: number, total: number } | undefined, sync: boolean, collecting: number, strayed: boolean }} Current
  */
 /** @type {Current | null} */
 let current = null;
@@ -231,6 +231,7 @@ function took(saved) {
   current.known = true;
   current.data = new Map(Object.entries(saved.data));
   current.summary = saved.summary ?? "";
+  current.options = saved.options ?? "";
 }
 
 /**
@@ -247,7 +248,7 @@ export function openReview(id, { fromRoute = false } = {}) {
   if (fromRoute) history.replaceState(null, "", location.pathname + location.search);
   if (history.state?.review !== id) history.pushState({ review: id }, "", `#rv=${encodeURIComponent(id)}`);
   const frame = newFrame(id);
-  current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), summary: "", progress: r.progress, sync: false, collecting: 0, strayed: false };
+  current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), summary: "", options: "", progress: r.progress, sync: false, collecting: 0, strayed: false };
   const shown = current;
   if (!r.openedAt) run(post(`/api/reviews/${id}/opened`));
   drawView();
@@ -526,6 +527,7 @@ function openSend() {
       const r = R(shown.id);
       if (current !== shown || !r) return;
       shown.summary = saved.summary ?? "";
+      shown.options = saved.options ?? "";
       const refused = sessionRefusal(r);
       const p = r.progress;
       if (!sheet?.open) sheet = { id: r.id, to: refused ? "other" : "session", keep: !(p && p.done >= p.total), refused, open: true, rev: saved.rev, note: sheet?.id === r.id ? sheet.note : "" };
@@ -557,7 +559,8 @@ function drawSheet() {
     );
   const note = choice.note.trim();
   const line = sendLine(r, choice.to, note);
-  const answers = current.summary;
+  // What the decision records, the page's words: the options marked, then what it copied.
+  const answers = [current.options, current.summary].filter(Boolean).join("\n\n");
   const provider = s?.provider ?? data.sessions.find((x) => x.project.name === r.project.name)?.provider ?? "";
   // Redrawn only when what it shows changed: the answers can be long, and a redraw at every fetch would be for nothing.
   const shows = JSON.stringify([lead, sessionHint, s && label(s), choice, line, answers, current.data.size, provider]);
@@ -631,7 +634,7 @@ function submit(r, line) {
       }
       try {
         const note = choice.note.trim();
-        const reply = /** @type {{ line?: unknown }} */ (await postJson(`/api/reviews/${r.id}/send`, { to: choice.to, rev: choice.rev, ...(note ? { note } : {}) }));
+        const reply = /** @type {{ line?: unknown }} */ (await postJson(`/api/reviews/${r.id}/send`, { to: choice.to, rev: choice.rev, options: current?.options ?? "", ...(note ? { note } : {}) }));
         if (reply.line !== line) throw new Error(`the desk sent "${String(reply.line)}", not the line shown`);
       } catch (error) {
         if (error instanceof DeskError && error.status === 409) {
