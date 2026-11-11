@@ -4,7 +4,7 @@
 without going to look for it.
 
 <p align="center">
-  <img src="docs/images/dashboard.png" width="720" alt="The dashboard: what needs you on the left, answered in place; sessions and results to review on the right">
+  <img src="docs/images/dashboard.png" width="720" alt="The dashboard: what needs you on the left, answered in place; sessions and reviews on the right">
 </p>
 
 You run several AI coding sessions across a few projects, each with its own swarm of sub-agents,
@@ -21,8 +21,10 @@ and step away. When you come back, one browser tab shows:
 - **Pages to review at your pace:** a page a session made for you to choose from (proposals,
   variants, a checklist) opens whole on the desk, keeps your answers across devices and days, and
   goes back to the session with one click.
-- **What is happening now:** each session, its agents, what each one is doing, which are blocked and
-  which failed, and which sessions wrote something you have not read.
+- **What is happening now:** each session, its agents (recorded by hooks as they launch, resume and
+  stop, never by the model), what each one is doing, which are blocked and which failed, the local
+  servers its commands started (found by themselves, with their link), and which sessions wrote
+  something you have not read.
 - **Where each branch stands:** under a session's agents, each agent's branch and worktree read from
   git (commits ahead and behind, uncommitted files, last commit, what runs in it), with how old the
   reading is; `agent-desk status` prints the same for the session, and before a compaction it is
@@ -34,8 +36,9 @@ and step away. When you come back, one browser tab shows:
 - **From your phone,** through your own Tailscale tailnet, behind a PIN.
 
 It costs almost nothing: about 750 tokens per session for its instructions; everything else is done
-by deterministic hooks that never go through the model. Nothing leaves your machine, and it never
-writes into the projects it follows (no files, no rules, no commits).
+by deterministic hooks that never go through the model. No cloud and no telemetry: nothing leaves
+your machine except an opt-in push telling a locked phone how many questions wait. It never writes
+into the projects it follows (no files, no rules, no commits).
 
 It knows nothing about any one AI tool: each tool reports through a thin adapter (`adapters/<tool>/`)
 over a plain file-and-CLI protocol. Claude Code has one today; Codex, Grok or any other agent CLI
@@ -190,7 +193,10 @@ that line to paste into another conversation, followed word for word by your not
 `agent-desk decisions --search` finds them. A new session in the project is told about reviews sent
 and not read yet. A review you no longer want is closed without sending it: the × on its tile, or
 Close review in its bar, each asking for a second click; History keeps it, with the reason when a
-session closed it with `--close`. Details in [docs/protocol.md](docs/protocol.md#reviews).
+session closed it with `--close`. A link you click in a review page opens in a new tab when it is a
+local preview (`localhost`), so a session can offer live prototypes that screenshots cannot show (an
+option's `url` in `--options` becomes "Open live ↗"); on the phone it says it runs on the computer,
+and a link to anywhere else is not opened. Details in [docs/protocol.md](docs/protocol.md#reviews).
 
 ## Send keys to a session (tmux)
 
@@ -301,8 +307,9 @@ The page tests drive Chrome through its DevTools protocol, with no test dependen
 `google-chrome` or `chromium` from `PATH`, or the browser in `AGENT_DESK_CHROME`; without one they
 are skipped, except in CI, where they fail.
 
-`test/visual.test.ts` compares 14 screens (the desk with questions and quiet, a session's agents, a
-result's before and after, a History search, each light and dark at 1440 × 900; four phone screens
+`test/visual.test.ts` compares 30 screens (the desk with questions and quiet, a session's agents and
+branches, a result's before and after, a History search, a review open, one drawn from data, one with
+the desk's option controls and its Send sheet, each light and dark at 1440 × 900; ten phone screens
 at 390 × 844) with the PNGs in `test/visual/<platform>/`. A screen fails when more than 16 pixels
 differ by more than 8 of 255 in a channel: a box moved by 1 px or a colour nudged by 4% fails. The
 failure prints the capture and a copy with the changed pixels in magenta, both under
