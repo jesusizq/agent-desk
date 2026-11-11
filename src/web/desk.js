@@ -2,7 +2,7 @@
 // The desk: the inbox, the sessions and what to review, side by side, or one per tab on a phone.
 import { h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
-import { agentAge, agentDot, agentGist, agentQuiet, failedInARow, failing, inTrouble, sessionAgents, sessionDot, sessionQuiet, spoken, stuckNote, troubleText } from "./agents.js";
+import { agentAge, agentDot, agentGist, agentQuiet, failedInARow, failedUnseen, failing, inTrouble, sessionAgents, sessionDot, sessionQuiet, spoken, stuckNote, troubleText } from "./agents.js";
 import { askBody, decisionOf } from "./answer.js";
 import { forgetButton } from "./control.js";
 import { ago, firstLine, headline, heat, hm, stamp } from "./format.js";
@@ -267,7 +267,7 @@ function sessionCard(s, rich) {
   const failLine = (x, who) => troubleLine("idle", [who, TEXT.failingCalls(failedInARow(x))].filter(Boolean).join(" · "));
   // A rich card says each agent's trouble on the agent's own row, once.
   const listed = rich ? [] : as;
-  for (const a of listed.filter((a) => a.state === "failed" || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a, true)}`));
+  for (const a of listed.filter((a) => failedUnseen(a) || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a, true)}`));
   if (failing(s)) matters.push(failLine(s, ""));
   for (const a of listed.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
   const quiet = sessionQuiet(s);
@@ -316,19 +316,20 @@ const atWork = (a) => a.state === "working" || a.state === "waiting";
 
 /**
  * The agents that are live or need a look, trouble first, each on one row: its state, its goal, what
- * it was said to do or why it stopped (never a tool call), and for how long. Finished ones are only
- * counted. @param {Agent[]} as
+ * it was said to do or why it stopped (never a tool call), and for how long. Finished ones, and
+ * failures their session has told of since, are only counted. @param {Agent[]} as
  */
 function agentLines(as) {
   if (!as.length) return null;
   // sessionAgents puts failed, blocked and idle first; an agent that may be stuck comes right after them.
-  const rank = (/** @type {Agent} */ a) => (a.state === "failed" || a.state === "blocked" || a.state === "idle" ? 0 : stuckNote(a) ? 1 : 2);
-  const open = as.filter((a) => a.state !== "done").sort((a, b) => rank(a) - rank(b));
+  const rank = (/** @type {Agent} */ a) => (failedUnseen(a) || a.state === "blocked" || a.state === "idle" ? 0 : stuckNote(a) ? 1 : 2);
+  const told = as.filter((a) => a.state === "failed" && !failedUnseen(a)).length;
+  const open = as.filter((a) => a.state !== "done" && (a.state !== "failed" || failedUnseen(a))).sort((a, b) => rank(a) - rank(b));
   const rows = open.slice(0, AGENT_LINES);
   const hidden = open.slice(AGENT_LINES);
-  const done = as.length - open.length;
+  const done = as.length - open.length - told;
   const t = TEXT.sessionLine;
-  const rest = [hidden.length ? (hidden.every(atWork) ? t.moreAtWork(hidden.length) : t.moreAgents(hidden.length)) : "", done ? t.agentsDone(done) : ""].filter(Boolean).join(" · ");
+  const rest = [hidden.length ? (hidden.every(atWork) ? t.moreAtWork(hidden.length) : t.moreAgents(hidden.length)) : "", done ? t.agentsDone(done) : "", told ? t.agentsFailed(told) : ""].filter(Boolean).join(" · ");
   return h(
     "div",
     { class: "s-agents" },

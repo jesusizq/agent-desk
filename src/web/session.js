@@ -3,7 +3,7 @@
 import { dialog, h, icon, patch } from "./dom.js";
 import { arrive } from "./motion.js";
 import { TEXT } from "./text.js";
-import { agentRows, agentsPart, sessionAgents, sessionQuiet } from "./agents.js";
+import { agentRows, agentsPart, failedUnseen, sessionAgents, sessionQuiet } from "./agents.js";
 import { askBody, replyBox } from "./answer.js";
 import { controlSection, forgetButton } from "./control.js";
 import { conversationView, loadConversation, outgoingView } from "./conversation.js";
@@ -25,7 +25,7 @@ const TERMINAL_NAMES = /** @type {Record<string, string>} */ ({ vscode: "VS Code
 
 /**
  * The session's state in one line of chips: first what asks for action (the command its context
- * calls for, an ended session, failed agents), then context and plan, then its agents, results,
+ * calls for, an ended session, agents failed since its last turn), then context and plan, then its agents, results,
  * servers and the rest, each unfolding under the chips.
  * Every field is optional: a provider that does not report one leaves it out.
  * @param {Session} s @param {Metrics | undefined} m
@@ -33,6 +33,7 @@ const TERMINAL_NAMES = /** @type {Record<string, string>} */ ({ vscode: "VS Code
 function panelChips(s, m) {
   const as = data.agents.filter((a) => a.sessionId === s.id);
   const failed = as.filter((a) => a.state === "failed").length;
+  const loud = as.some(failedUnseen);
   const results = data.results.filter((r) => r.sessionId === s.id).length;
   const services = data.services.filter((v) => v.sessionId === s.id).length;
   const command = m?.suggestion?.command;
@@ -44,17 +45,17 @@ function panelChips(s, m) {
       content,
       part === "more" ? null : h("span", { class: "caret", "aria-hidden": "true" }, "▾"),
     );
-  const agents = as.length ? unfold("agents", [failed ? dot("failed") : null, TEXT.chips.agents(as.length, failed)], failed ? "bad" : "") : null;
+  const agents = as.length ? unfold("agents", [loud ? dot("failed") : null, TEXT.chips.agents(as.length, failed)], loud ? "bad" : "") : null;
   // What asks for action leads: on a phone the row scrolls sideways and its end starts off-screen.
   return h(
     "div",
     { class: "pchips" },
     m?.suggestion && command ? suggestionChip(m.suggestion, m.contextPercent ?? 0, command) : null,
     !isLive(s) ? [h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone), forgetButton(s, () => redrawPanel(s.id), "chip")] : null,
-    failed ? agents : null,
+    loud ? agents : null,
     m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
     (m?.planWindows ?? []).map((w) => planGauge(w, "chip")),
-    failed ? null : agents,
+    loud ? null : agents,
     results ? unfold("results", TEXT.chips.results(results)) : null,
     services ? unfold("services", TEXT.chips.live(services)) : null,
     unfold("more", TEXT.chips.more),

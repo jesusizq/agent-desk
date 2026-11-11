@@ -3,6 +3,7 @@
 import { byId, dialog } from "./dom.js";
 import { bump } from "./motion.js";
 import { TEXT } from "./text.js";
+import { failedUnseen } from "./agents.js";
 import { alertOn, chime, notify } from "./alerts.js";
 import { inSight, panelShowsConversation } from "./layout.js";
 import { toast } from "./pieces.js";
@@ -65,8 +66,8 @@ export function remindWaiting() {
   }
 }
 
-/** Keys of what has failed: results, and agents (by session and name). */
-export const failures = () => [...data.results.filter((r) => r.status === "failed").map((r) => `r ${r.id}`), ...data.agents.filter((a) => a.state === "failed").map((a) => `a ${a.sessionId} ${a.name}`)];
+/** Keys of what has failed: results, and agents (by session and name) whose session has not told of it yet. */
+export const failures = () => [...data.results.filter((r) => r.status === "failed").map((r) => `r ${r.id}`), ...data.agents.filter(failedUnseen).map((a) => `a ${a.sessionId} ${a.name}`)];
 
 /** A new failure, when the developer asked to hear of failures too (off by default: they need no answer). */
 function noticeFailures() {

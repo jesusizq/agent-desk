@@ -5,7 +5,7 @@ import { TEXT } from "./text.js";
 import { ago, hm } from "./format.js";
 import { dot } from "./pieces.js";
 import { openProject } from "./projects.js";
-import { agentOf, data, waitingOn } from "./state.js";
+import { S, agentOf, data, waitingOn } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Agent} Agent */
@@ -84,8 +84,18 @@ export function stuckNote(a) {
   if (!quiet && !fails) return null;
   return { text: [quiet ? TEXT.quietFor(quiet) : "", fails ? TEXT.failingCalls(failedInARow(a)) : ""].filter(Boolean).join(" · "), tip: fails ? failingTip(a) : undefined };
 }
-/** It needs a look: failed, blocked, idle, or at work and maybe stuck. @param {Agent} a */
-export const inTrouble = (a) => a.state === "failed" || a.state === "blocked" || a.state === "idle" || stuckNote(a) !== null;
+/**
+ * It failed, and its session has not ended a turn since: once one has, the session has seen the
+ * failure and told the developer, and the agent is one more failed row in its list. Blocked, idle
+ * and stuck agents get no such end: they are still open, and may need a look after any turn.
+ * @param {Agent} a
+ */
+export const failedUnseen = (a) => {
+  const turnEnded = S(a.sessionId)?.turnEndedAt;
+  return a.state === "failed" && (turnEnded === undefined || Date.parse(a.endedAt ?? a.updatedAt) > Date.parse(turnEnded));
+};
+/** It needs a look: failed since its session's last turn, blocked, idle, or at work and maybe stuck. @param {Agent} a */
+export const inTrouble = (a) => failedUnseen(a) || a.state === "blocked" || a.state === "idle" || stuckNote(a) !== null;
 /**
  * A working session none of whose own calls nor working agents' has moved for a while: minutes, or 0.
  * Never while it, or one of its working agents, waits on a job of its own. @param {Session} s

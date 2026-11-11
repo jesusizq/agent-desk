@@ -174,6 +174,40 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("keeps an agent's failure loud only until its session ends a turn after it, then one failed row in its list", async () => {
+    const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    const page = await open();
+    await page.eval("localStorage.setItem('agent-desk:failures', 'on')");
+    const project = { name: "web-shop", dir: "/home/demo/Projects/web-shop" };
+    // It failed at the start of an earlier turn; the session has ended turns since, so it has told of it.
+    store.upsertSession({ id: "told", provider: "Test", project, title: "told of its failure", state: "waiting", turnEndedAt: ago(30) });
+    new Store(store.paths.home, () => new Date(Date.now() - 60 * 60_000)).upsertAgent("told", "profile", { goal: "Profile agent", state: "failed", activity: "Did not start: Permission to use Agent denied" });
+    store.upsertAgent("told", "docs", { goal: "Docs agent", activityAt: ago(0) });
+    // It failed during the turn now running.
+    store.upsertSession({ id: "fresh", provider: "Test", project, title: "failing this turn", state: "working", activityAt: ago(0), turnEndedAt: ago(30) });
+    new Store(store.paths.home, () => new Date(Date.now() - 5 * 60_000)).upsertAgent("fresh", "build", { goal: "Build agent", state: "failed", activity: "No space left on device" });
+    const told = cardOf("told of its failure");
+    const fresh = cardOf("failing this turn");
+    await page.waitFor(`${told} && ${fresh}`);
+    assert.deepEqual(await page.eval<string[]>(`[...${fresh}.querySelectorAll('.s-bad')].map((l) => l.textContent)`), ["Build agent · No space left on device"], "a failure of the turn at work stays loud");
+    assert.equal(await page.eval<number>(`${told}.querySelectorAll('.s-bad').length`), 0, "a failure its session has told of is not");
+    assert.ok(await page.eval<boolean>(`(() => { const cards = [...document.querySelectorAll('.scard')]; return cards.indexOf(${fresh}) < cards.indexOf(${told}); })()`), "nor does it raise its session");
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Build agent'))");
+    assert.equal(await page.eval<boolean>("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Profile agent'))"), false, "and calls for no notice");
+    await page.eval("localStorage.removeItem('agent-desk:failures')");
+    await page.click(".scard", "told of its failure");
+    const chip = await page.eval<{ text: string; bad: boolean; mark: boolean }>(`(() => {
+      const chip = [...document.querySelectorAll('#session .pchips > .chip')].find((c) => c.textContent.includes('agents'));
+      return { text: chip.textContent, bad: chip.classList.contains('bad'), mark: !!chip.querySelector('.dot') };
+    })()`);
+    assert.deepEqual([chip.text.replace("▾", ""), chip.bad, chip.mark], ["2 agents · 1 failed", false, false], "its chip counts it, with no red");
+    await page.click("#session .pchips button.chip", "agents");
+    await page.waitFor("document.querySelector('#session .ppart .arow.failed')");
+    assert.match(await page.eval<string>("document.querySelector('#session .ppart .arow.failed').textContent"), /Profile agent.*Did not start: Permission to use Agent denied/, "it stays a failed row in the session's agents");
+    await page.press("Escape");
+    for (const id of ["told", "fresh"]) store.upsertSession({ id, provider: "Test", project, state: "ended" });
+  });
+
   it("draws each state in a shape of its own, solid only where it needs the developer, 14px on a card and 16px in a row", async () => {
     const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
     store.upsertSession({ id: "marks", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "every state", state: "working" });
@@ -1494,6 +1528,26 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       } finally {
         quiet.upsertSession({ id: "noisy", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, state: "ended" });
         quiet.markSessionUnread("demo-pagos");
+      }
+    });
+
+    it("counts on a rich card, among the finished, a failure its session has told of since", async () => {
+      const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+      const project = { name: "web-shop", dir: "/home/demo/Projects/web-shop" };
+      quiet.upsertSession({ id: "told-rich", provider: "Test", project, title: "told on a rich card", state: "waiting", turnEndedAt: ago(30) });
+      new Store(quiet.paths.home, () => new Date(Date.now() - 60 * 60_000)).upsertAgent("told-rich", "profile", { goal: "Profile agent", state: "failed", activity: "Did not start: Permission to use Agent denied" });
+      quiet.upsertAgent("told-rich", "docs", { goal: "Docs agent", activity: "Writing the guide", activityAt: ago(0) });
+      quiet.upsertAgent("told-rich", "lint", { goal: "Lint agent", state: "done" });
+      try {
+        const page = await browser.newPage(1440, 900);
+        pages.push(page);
+        await page.goto(quietBase + "/");
+        const card = cardOf("told on a rich card");
+        await page.waitFor(`${card}?.querySelector('.s-agents')`);
+        assert.deepEqual(await page.eval<string[]>(`[...${card}.querySelectorAll('.s-agent b')].map((b) => b.textContent)`), ["Docs agent"], "no red row for it");
+        assert.equal(await page.eval<string>(`${card}.querySelector('.s-agents > .s-more').textContent`), "1 done · 1 failed");
+      } finally {
+        quiet.upsertSession({ id: "told-rich", provider: "Test", project, state: "ended" });
       }
     });
 

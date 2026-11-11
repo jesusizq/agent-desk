@@ -57,6 +57,8 @@ export const TEXT = {
     moreAtWork: (n) => `+${n} more at work`,
     /** @param {number} n */
     agentsDone: (n) => `${n} done`,
+    /** @param {number} n */
+    agentsFailed: (n) => `${n} failed`,
     /** @param {number} working @param {number} done */
     agents: (working, done) => [working && `${working} agent${working === 1 ? "" : "s"} working`, done && `${done} done`].filter(Boolean).join(" · "),
   },
