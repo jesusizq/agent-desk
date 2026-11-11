@@ -76,6 +76,16 @@ export class Undeliverable extends InputError {
   override name = "Undeliverable";
 }
 
+/** A review was sent from a view of it older than its saved state: what the developer saw is not what would be recorded. */
+export class StaleReview extends InputError {
+  override name = "StaleReview";
+  readonly rev: number;
+  constructor(message: string, rev: number) {
+    super(message);
+    this.rev = rev;
+  }
+}
+
 /** Fields to merge into an agent; one given as undefined is removed from it. */
 export type AgentFields = { [K in keyof Omit<Agent, "sessionId" | "name">]?: Agent[K] | undefined };
 
@@ -1018,7 +1028,7 @@ export class Store {
    * developer's answers (the text the page copied, else how far they got) are recorded, the answers
    * as a closed question of that session, so the project's decisions and History hold them.
    */
-  sendReview(reviewId: string, to: "session" | "other"): { line: string; review: Review } {
+  sendReview(reviewId: string, to: "session" | "other", seenRev: number): { line: string; review: Review } {
     const file = this.paths.review(reviewId);
     return withLock(file, () => {
       const review = this.getReview(reviewId);
@@ -1031,11 +1041,11 @@ export class Store {
         if (!this.acceptsMessages(session.id)) throw new Undeliverable("the session that published it is not taking messages from the desk right now; send it to another conversation, or write in its terminal");
       }
       const state = this.reviewState(reviewId);
+      if (state.rev !== seenRev) throw new StaleReview(`the review changed since it was shown (saved state ${state.rev}, shown ${seenRev}); look at it again, then send it`, state.rev);
       const line = reviewLine(review, round, review.progress, to);
       const at = this.stamp();
       const decision = this.reviewDecision(review, round, state, at);
       const next = readReview({ ...review, sends: [...review.sends, compact({ at, to: to === "session" ? review.sessionId : null, round, progress: review.progress })] }, file);
-      if (to === "session" && session?.state === "working") this.noteSentWhileWorking(session.id, line);
       writeJson(this.paths.question(decision.id, "closed"), decision);
       try {
         writeJson(file, next);
@@ -1051,6 +1061,7 @@ export class Store {
         fs.rmSync(this.paths.question(decision.id, "closed"), { force: true });
         throw new Error(`could not send review ${reviewId}; nothing was recorded`, { cause: error });
       }
+      if (to === "session" && session?.state === "working") this.noteSentWhileWorking(session.id, line);
       return { line, review: next };
     });
   }
@@ -1058,7 +1069,8 @@ export class Store {
   /** The developer's answers to a review as a decision of the session that published it: closed at once, never in Needs you. */
   private reviewDecision(review: Review, round: number, state: ReviewState, at: string): Question {
     const reviewed = review.progress ? `${review.progress.done} of ${review.progress.total} reviewed. ` : "";
-    const answer = state.summary ?? `${reviewed}The page copied no answers; agent-desk review ${review.id} shows its saved state.`;
+    // What the page copied is the page's text, told apart from the developer's own words by its source.
+    const answer = state.summary === undefined ? { text: `${reviewed}The page copied no answers; agent-desk review ${review.id} shows its saved state.`, via: "desk" as const } : { text: bounded(state.summary), via: "review" as const };
     return readQuestion({
       id: newId("q"),
       sessionId: review.sessionId,
@@ -1068,7 +1080,7 @@ export class Store {
       askedAt: at,
       status: "answered",
       closedAt: at,
-      answer: { text: bounded(answer), at, via: "desk" },
+      answer: { ...answer, at },
       review: { id: review.id, round },
     });
   }

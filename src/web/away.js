@@ -66,7 +66,7 @@ function happened() {
   const failedAgents = data.agents.filter((a) => a.state === "failed" && a.endedAt && during(a.endedAt) && inProject(a.sessionId));
   const failed = [...results.filter((r) => r.status === "failed"), ...failedAgents];
   /** @param {Question} q */
-  const inTerminal = (q) => q.status === "answered" && q.answer?.via !== "desk" && during(q.closedAt ?? q.askedAt) && inProject(q.sessionId);
+  const inTerminal = (q) => q.status === "answered" && q.answer?.via === "terminal" && during(q.closedAt ?? q.askedAt) && inProject(q.sessionId);
   const items = openItems();
   return {
     finished: results.filter((r) => r.status !== "failed"),

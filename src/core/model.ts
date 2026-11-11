@@ -5,6 +5,7 @@ import type { PlanHistory, PlanWindowHistory } from "./limits.ts";
 import {
   AGENT_STATES,
   ANSWER_CHANNELS,
+  ANSWER_SOURCES,
   ATTACHED_IMAGES_MAX,
   GROUP_SIZE_MAX,
   QUESTION_KINDS,
@@ -149,7 +150,7 @@ function readAnswer(value: unknown, where: string): Answer {
   return compact({
     text: text(f.text, `${where}.text`),
     at: isoTime(f.at, `${where}.at`),
-    via: oneOf(ANSWER_CHANNELS)(f.via, `${where}.via`),
+    via: oneOf(ANSWER_SOURCES)(f.via, `${where}.via`),
     images: optional(f.images, `${where}.images`, imageIds),
     probable: optional(f.probable, `${where}.probable`, bool),
   });

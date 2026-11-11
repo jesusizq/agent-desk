@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import * as path from "node:path";
 import { gzipSync } from "node:zlib";
-import { fields, InputError, oneOf, optional, text } from "../core/check.ts";
+import { fields, InputError, int, oneOf, optional, text } from "../core/check.ts";
 import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
@@ -12,10 +12,10 @@ import { type DeskState, type DiskWarning, imageIds, type ReviewState, type Sess
 import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
-import { IMAGE_MAX_BYTES, IMAGE_TYPES, readReviewChange, type Store, Undeliverable } from "../store/store.ts";
+import { IMAGE_MAX_BYTES, IMAGE_TYPES, readReviewChange, StaleReview, type Store, Undeliverable } from "../store/store.ts";
 import { type FeedOptions, StateFeed } from "./feed.ts";
 import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
-import { type Access, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, REVIEW_HEADERS, send, sendJson, writeAllowed } from "./security.ts";
+import { type Access, deskOrigin, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, reviewHeaders, send, sendJson, writeAllowed } from "./security.ts";
 
 const WEB_DIR = path.join(import.meta.dirname, "..", "web");
 const STATIC: Record<string, string> = {
@@ -194,7 +194,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
       return sendJson(res, 200, store.listMessages(conversation[1]));
     }
     const review = /^\/review\/([^/]+)(\/raw)?$/.exec(route);
-    if (review?.[1]) return reviewPage(store, review[1], review[2] === undefined, res);
+    if (review?.[1]) return reviewPage(store, review[1], review[2] === undefined, deskOrigin(req, access, reach.from), res);
     const reviewState = /^\/api\/reviews\/([^/]+)\/state$/.exec(route);
     if (reviewState?.[1]) {
       if (!ID_PATTERN.test(reviewState[1])) return sendJson(res, 400, { error: "invalid id" });
@@ -284,13 +284,13 @@ export function reviewDocument(html: string, state: ReviewState, shim: string): 
   return html.slice(0, at) + injected + html.slice(at);
 }
 
-/** The latest round of a review, only ever with REVIEW_HEADERS: it is a session's HTML, never the desk's. */
-function reviewPage(store: Store, reviewId: string, withShim: boolean, res: ServerResponse): void {
+/** The latest round of a review, only ever with reviewHeaders: it is a session's HTML, never the desk's. */
+function reviewPage(store: Store, reviewId: string, withShim: boolean, origin: string, res: ServerResponse): void {
   if (!ID_PATTERN.test(reviewId)) return sendJson(res, 400, { error: "invalid id" });
   const found = store.reviewPage(reviewId);
   if (!found) return sendJson(res, 404, { error: "not found" });
   const shim = withShim ? fs.readFileSync(path.join(WEB_DIR, "review-shim.js"), "utf8") : undefined;
-  res.writeHead(200, REVIEW_HEADERS);
+  res.writeHead(200, reviewHeaders(origin));
   res.end(shim === undefined ? found.html : reviewDocument(found.html, store.reviewState(reviewId), shim));
 }
 
@@ -300,10 +300,14 @@ async function reviewAction(store: Store, reviewId: string, action: string, from
   try {
     const body = await readBody(req, action === "state" ? REVIEW_BODY_LIMIT : BODY_LIMIT);
     if (action === "state") return sendJson(res, 200, store.changeReviewState(reviewId, readReviewChange(body), from));
-    if (action === "send") return sendJson(res, 200, { line: store.sendReview(reviewId, oneOf(["session", "other"] as const)(fields(body, "body").to, "to")).line });
+    if (action === "send") {
+      const f = fields(body, "body");
+      return sendJson(res, 200, { line: store.sendReview(reviewId, oneOf(["session", "other"] as const)(f.to, "to"), int(f.rev, "rev")).line });
+    }
     if (action === "opened") return sendJson(res, 200, store.markReviewOpened(reviewId));
     return sendJson(res, 200, store.closeReview(reviewId));
   } catch (error) {
+    if (error instanceof StaleReview) return sendJson(res, 409, { error: error.message, stale: true, rev: error.rev });
     if (error instanceof Undeliverable) return sendJson(res, 409, { error: error.message });
     if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
     throw error;

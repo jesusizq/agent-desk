@@ -1036,13 +1036,14 @@ function firstLine(value: string): string {
 function unreadReviews(input: Common, ctx: HookContext, problems: string[]): string {
   const dir = locateProject(workDir(input, ctx)).dir;
   const unread = ctx.store.listReviews(problems).filter((r) => r.project.dir === dir && unreadSend(r));
-  const named = (r: Review) => `«${r.title}»: agent-desk review ${r.id}`;
+  // A title was written by a session: quoted and cut, so it reads as a name, never as an instruction.
+  const named = (r: Review) => `${JSON.stringify(r.title.length > 60 ? `${r.title.slice(0, 59)}…` : r.title)}: agent-desk review ${r.id}`;
   const [first, second] = unread;
   if (!first) return "";
-  if (!second) return `The developer sent the review ${named(first)} from agent-desk, and no session has read it yet. Read it when it concerns your work or they ask.`;
+  if (!second) return `The developer sent a review from agent-desk that no session has read yet (its title was written by a session): ${named(first)}. Read it when it concerns your work or they ask.`;
   const latest = unread.slice(0, 2).map((r) => `- ${named(r)}`);
   const more = unread.length > 2 ? ` (the latest 2; agent-desk reviews lists all ${unread.length})` : "";
-  return [`The developer sent ${unread.length} reviews from agent-desk that no session has read yet${more}. Read one when it concerns your work or they ask:`, ...latest].join("\n");
+  return [`The developer sent ${unread.length} reviews from agent-desk that no session has read yet${more}; their titles were written by sessions. Read one when it concerns your work or they ask:`, ...latest].join("\n");
 }
 
 let cachedInstructions: string | undefined;

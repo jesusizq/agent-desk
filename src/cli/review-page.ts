@@ -11,18 +11,15 @@ export type InlinedPage = { html: string; inlined: number; skipped: { ref: strin
 
 const TYPES = { png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", svg: "image/svg+xml" } as const;
 
-const ATTRS = `(?:[^>"']|"[^"]*"|'[^']*')*`;
-/** Script and style elements and comments: tags inside them are text, not elements. */
-const RAW = new RegExp(`<script\\b${ATTRS}>[\\s\\S]*?</script\\s*>|(<style\\b${ATTRS}>)([\\s\\S]*?)(</style\\s*>)|<!--[\\s\\S]*?-->`, "gi");
-const TAG = new RegExp(`<([a-z][^\\s/>]*)${ATTRS}>`, "gi");
-const ATTR = /(\s)(src|srcset|style)(\s*=\s*)(?:"([^"]*)"|'([^']*)')/gi;
-const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]+))\s*\)/gi;
+const NAME = /[a-zA-Z][^\s/>]*/y;
+const SPACE = /[\s,]*/y;
 
 /**
  * Reads the page and inlines what its `<img src>`, `srcset`, `<source srcset>` and CSS `url()` (in
  * `<style>` and `style=""`) name by a relative path, only when the file's real path is inside the
  * page's own folder (symlinks resolved) and it is a PNG, JPEG, GIF, WebP, AVIF or SVG image. The
- * rest is left as it is, and listed in `skipped`.
+ * rest is left as it is, and listed in `skipped`. One pass over the page, in time and memory linear
+ * in its size; past REVIEW_PAGE_MAX with its images it stops with an error.
  */
 export function inlinePage(file: string): InlinedPage {
   let html: string;
@@ -40,71 +37,187 @@ export function inlinePage(file: string): InlinedPage {
   const skipped: InlinedPage["skipped"] = [];
   const cache = new Map<string, string | { reason: string }>();
   let inlined = 0;
-  const inline = (ref: string): string | undefined => {
+  let bytes = Buffer.byteLength(html);
+  /** The data: URI to put in place of `raw` (the reference as written), or undefined to leave it. */
+  const inline = (raw: string): string | undefined => {
+    const ref = decodeEntities(raw);
     const found = dataUri(folder, ref, cache);
     if (found === undefined) return undefined;
     if (typeof found !== "string") {
       skipped.push({ ref, reason: found.reason });
       return undefined;
     }
+    bytes += found.length - Buffer.byteLength(raw);
+    if (bytes > REVIEW_PAGE_MAX) throw new InputError(`--page: with its images inlined the page would be larger than ${REVIEW_PAGE_MAX} bytes (at ${JSON.stringify(ref)}); use fewer or smaller images, or reference one file fewer times`);
     inlined++;
     return found;
   };
-  const css = (text: string) => text.replace(CSS_URL, (whole, a?: string, b?: string, c?: string) => {
-    const uri = inline(decodeEntities(a ?? b ?? c ?? ""));
-    return uri === undefined ? whole : `url(${uri})`;
-  });
-  const tags = (text: string) =>
-    text.replace(TAG, (tag, name: string) => {
-      const media = /^(img|source)$/i.test(name);
-      return tag.replace(ATTR, (whole, space: string, attr: string, eq: string, dq?: string, sq?: string) => {
-        const quote = dq === undefined ? "'" : '"';
-        const value = dq ?? sq ?? "";
-        const kind = attr.toLowerCase();
-        let next: string;
-        if (kind === "style") next = css(value);
-        else if (!media) return whole;
-        else if (kind === "src") next = inline(decodeEntities(value)) ?? value;
-        else next = srcset(value, (ref) => inline(decodeEntities(ref)));
-        return `${space}${attr}${eq}${quote}${next}${quote}`;
-      });
-    });
-  let out = "";
-  let last = 0;
-  for (const m of html.matchAll(RAW)) {
-    out += tags(html.slice(last, m.index));
-    out += m[1] !== undefined && m[2] !== undefined && m[3] !== undefined ? m[1] + css(m[2]) + m[3] : m[0];
-    last = m.index + m[0].length;
+  const out: string[] = [];
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) break;
+    out.push(html.slice(i, lt));
+    i = lt;
+    if (html.startsWith("<!--", lt)) {
+      const end = html.indexOf("-->", lt + 4);
+      if (end < 0) break; // an unclosed comment runs to the end: the rest stays as it is
+      out.push(html.slice(lt, end + 3));
+      i = end + 3;
+      continue;
+    }
+    NAME.lastIndex = lt + 1;
+    const name = NAME.exec(html)?.[0];
+    if (name === undefined) {
+      out.push("<");
+      i = lt + 1;
+      continue;
+    }
+    const close = tagEnd(html, lt + 1 + name.length);
+    if (close < 0) break; // an unclosed tag runs to the end
+    const lower = name.toLowerCase();
+    out.push(rewriteTag(html, lt, close, lower === "img" || lower === "source", inline));
+    i = close + 1;
+    if (lower !== "script" && lower !== "style") continue;
+    // Script and style text runs to its closing tag; none, and it runs to the end.
+    const closer = new RegExp(`</${lower}`, "gi");
+    closer.lastIndex = i;
+    const found = closer.exec(html);
+    if (!found) break;
+    const content = html.slice(i, found.index);
+    out.push(lower === "style" ? css(content, inline) : content);
+    i = found.index;
   }
-  out += tags(html.slice(last));
-  return { html: out, inlined, skipped };
+  out.push(html.slice(i));
+  return { html: out.join(""), inlined, skipped };
+}
+
+/** Where the tag whose attributes start at `from` ends (its ">"), or -1 when it never does. */
+function tagEnd(html: string, from: number): number {
+  let quote = "";
+  let afterEquals = false;
+  for (let k = from; k < html.length; k++) {
+    const c = html.charAt(k);
+    if (quote !== "") {
+      if (c === quote) quote = "";
+      continue;
+    }
+    if (c === ">") return k;
+    if ((c === '"' || c === "'") && afterEquals) quote = c;
+    if (c === "=") afterEquals = true;
+    else if (!/\s/.test(c)) afterEquals = false;
+  }
+  return -1;
+}
+
+/** The tag from `start` to `close`, its `src`, `srcset` (on media only) and `style` values inlined. */
+function rewriteTag(html: string, start: number, close: number, media: boolean, inline: (raw: string) => string | undefined): string {
+  const tag = html.slice(start, close + 1);
+  const parts: string[] = [];
+  let last = 0;
+  let k = tag.search(/[\s/>]/);
+  while (k >= 0 && k < tag.length - 1) {
+    while (k < tag.length - 1 && /[\s/]/.test(tag.charAt(k))) k++;
+    const nameStart = k;
+    while (k < tag.length - 1 && !/[\s/=>]/.test(tag.charAt(k))) k++;
+    const attr = tag.slice(nameStart, k).toLowerCase();
+    let j = k;
+    while (j < tag.length - 1 && /\s/.test(tag.charAt(j))) j++;
+    if (tag.charAt(j) !== "=") {
+      if (k === nameStart) k++;
+      continue;
+    }
+    j++;
+    while (j < tag.length - 1 && /\s/.test(tag.charAt(j))) j++;
+    const q = tag.charAt(j);
+    let valueStart: number;
+    let valueEnd: number;
+    if (q === '"' || q === "'") {
+      valueStart = j + 1;
+      valueEnd = tag.indexOf(q, valueStart);
+      if (valueEnd < 0) break;
+      k = valueEnd + 1;
+    } else {
+      valueStart = j;
+      valueEnd = j;
+      while (valueEnd < tag.length - 1 && !/[\s>]/.test(tag.charAt(valueEnd))) valueEnd++;
+      k = valueEnd;
+    }
+    const value = tag.slice(valueStart, valueEnd);
+    let next: string | undefined;
+    if (attr === "style") next = css(value, inline);
+    else if (media && attr === "src") next = inline(value);
+    else if (media && attr === "srcset") next = srcset(value, inline);
+    if (next !== undefined && next !== value) {
+      parts.push(tag.slice(last, valueStart), next);
+      last = valueEnd;
+    }
+  }
+  parts.push(tag.slice(last));
+  return parts.join("");
+}
+
+/** CSS text with each `url()` inlined; a quote or parenthesis never closed leaves the rest as it is. */
+function css(text: string, inline: (raw: string) => string | undefined): string {
+  const out: string[] = [];
+  const opener = /url\(/gi;
+  let last = 0;
+  for (;;) {
+    const m = opener.exec(text);
+    if (!m) break;
+    let k = m.index + 4;
+    while (k < text.length && /\s/.test(text.charAt(k))) k++;
+    const q = text.charAt(k);
+    let raw: string;
+    if (q === '"' || q === "'") {
+      const end = text.indexOf(q, k + 1);
+      if (end < 0) break; // none later either
+      raw = text.slice(k + 1, end);
+      k = end + 1;
+    } else {
+      const from = k;
+      while (k < text.length && !/[)\s"']/.test(text.charAt(k))) k++;
+      raw = text.slice(from, k);
+    }
+    while (k < text.length && /\s/.test(text.charAt(k))) k++;
+    opener.lastIndex = k;
+    if (text.charAt(k) !== ")") continue;
+    const uri = inline(raw);
+    if (uri === undefined) continue;
+    out.push(text.slice(last, m.index), `url(${uri})`);
+    last = k + 1;
+    opener.lastIndex = k + 1;
+  }
+  out.push(text.slice(last));
+  return out.join("");
 }
 
 /** A `srcset` with each candidate's URL replaced when `swap` gives one; descriptors and commas stay. */
-function srcset(value: string, swap: (ref: string) => string | undefined): string {
+function srcset(value: string, swap: (raw: string) => string | undefined): string {
   // As the HTML spec reads it: a candidate's URL runs to the next space, and commas it ends with
   // end the candidate; otherwise its descriptors run to the next comma.
-  let out = "";
+  const out: string[] = [];
   let i = 0;
   while (i < value.length) {
-    const gap = /^[\s,]*/.exec(value.slice(i))?.[0] ?? "";
-    out += gap;
+    SPACE.lastIndex = i;
+    const gap = SPACE.exec(value)?.[0] ?? "";
+    out.push(gap);
     i += gap.length;
     if (i >= value.length) break;
     let j = i;
     while (j < value.length && !/\s/.test(value.charAt(j))) j++;
-    const word = value.slice(i, j);
-    const commas = /,*$/.exec(word)?.[0] ?? "";
-    const url = word.slice(0, word.length - commas.length);
-    out += (swap(url) ?? url) + commas;
+    let end = j;
+    while (end > i && value.charAt(end - 1) === ",") end--;
+    const url = value.slice(i, end);
+    out.push(swap(url) ?? url, value.slice(end, j));
     i = j;
-    if (commas !== "") continue;
-    let k = i;
-    while (k < value.length && value.charAt(k) !== ",") k++;
-    out += value.slice(i, k);
+    if (end < j) continue;
+    let k = value.indexOf(",", i);
+    if (k < 0) k = value.length;
+    out.push(value.slice(i, k));
     i = k;
   }
-  return out;
+  return out.join("");
 }
 
 /**

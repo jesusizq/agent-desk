@@ -82,6 +82,8 @@ export const QUESTION_KINDS = ["question", "permission", "waiting"] as const;
 export type QuestionKind = (typeof QUESTION_KINDS)[number];
 export const QUESTION_STATUSES = ["open", "answered", "dismissed"] as const;
 export const ANSWER_CHANNELS = ["terminal", "desk"] as const;
+/** Where an answer comes from: a channel, or `review`, the text a review's page copied (written by the page, not the developer). */
+export const ANSWER_SOURCES = [...ANSWER_CHANNELS, "review"] as const;
 
 /** Images the developer can attach to one answer or message from the desk. */
 export const ATTACHED_IMAGES_MAX = 10;
@@ -91,7 +93,7 @@ export const ATTACHED_IMAGES_MAX = 10;
  * the developer's next message in the terminal, which may be about something else; an answer given
  * to that very question (on the desk, or in the provider's own dialog) is certain and has none.
  */
-export type Answer = { text: string; at: string; via: (typeof ANSWER_CHANNELS)[number]; images?: string[]; probable?: boolean };
+export type Answer = { text: string; at: string; via: (typeof ANSWER_SOURCES)[number]; images?: string[]; probable?: boolean };
 
 /** The questions asked together: `index` is this one's place among `size` of them, from 0. */
 export type QuestionGroup = { id: string; index: number; size: number };

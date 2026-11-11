@@ -19,19 +19,30 @@ export const IMAGE_HEADERS = {
 
 /**
  * A review's page, written by a session: a sandbox without the desk's origin, scripts and styles of
- * its own only, images and fonts only inlined, no network, framed only by the desk.
+ * its own only, images and fonts only inlined, no network, and framed only by the desk at `origin`
+ * (the request's own desk origin, named rather than 'self', which a sandbox may read otherwise).
+ * The service worker builds the same with its own origin (src/web/sw.js).
  */
-export const REVIEW_CSP =
-  "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+export function reviewCsp(origin: string): string {
+  return `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors ${origin}`;
+}
 
-export const REVIEW_HEADERS = {
-  "Content-Security-Policy": REVIEW_CSP,
-  "X-Content-Type-Options": "nosniff",
-  "Referrer-Policy": "no-referrer",
-  "Cross-Origin-Resource-Policy": "same-origin",
-  "Content-Type": "text/html; charset=utf-8",
-  "Cache-Control": "no-store",
-} as const;
+export function reviewHeaders(origin: string): Record<string, string> {
+  return {
+    "Content-Security-Policy": reviewCsp(origin),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  };
+}
+
+/** The desk's origin a request reached it at: this machine's Host (already checked by reachOf), or the tailnet host. */
+export function deskOrigin(req: IncomingMessage, access: Access, from: "local" | "remote"): string {
+  if (from === "remote" && access.remote) return `https://${access.remote.host}`;
+  return `http://${(req.headers.host ?? "").toLowerCase()}`;
+}
 
 /**
  * Who may reach the desk: this machine on its port, and, when configured, the developer's other

@@ -5,13 +5,14 @@ import * as http from "node:http";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { promisify } from "node:util";
+import { inlinePage } from "../src/cli/review-page.ts";
 import { InputError } from "../src/core/check.ts";
 import { parseProgress, REVIEW_ROUNDS_KEPT, REVIEW_STATE_MAX, reviewLine } from "../src/core/model.ts";
-import { REVIEW_CSP } from "../src/server/security.ts";
+import { reviewCsp } from "../src/server/security.ts";
 import { reviewDocument } from "../src/server/server.ts";
 import { readReviewChange, Store, Undeliverable } from "../src/store/store.ts";
 import { Browser, findChrome } from "./browser.ts";
-import { addSession, serve, tempHome, testStore } from "./helpers.ts";
+import { addSession, PNG, serve, tempHome, testStore } from "./helpers.ts";
 
 const run = promisify(execFile);
 const WORKER = path.join(import.meta.dirname, "fixtures", "worker.ts");
@@ -125,6 +126,19 @@ describe("reviews in the store", () => {
     assert.match(deskState(store).problems.join("\n"), /rv-bad.*not valid JSON/, "an unreadable review is reported, not skipped");
   });
 
+  it("leaves nothing behind when a send cannot be delivered", () => {
+    const { store, id } = withReview();
+    store.updateSession("s1", (s) => ({ ...s, state: "working", takesMessagesWhileWorking: true }));
+    fs.mkdirSync(store.paths.inboxDir, { recursive: true });
+    fs.writeFileSync(store.paths.sessionInbox("s1"), "not a folder");
+    store.isListening = () => true; // the listener check cannot read a broken inbox; this test is about the write
+    assert.throws(() => store.sendReview(id, "session", 0), /nothing was recorded/);
+    assert.deepEqual(store.getReview(id)?.sends, []);
+    assert.deepEqual(store.listQuestions(), []);
+    assert.deepEqual(store.listMessages("s1"), []);
+    assert.equal(store.getSession("s1")?.sentWhileWorking, undefined, "not noted as sent while it worked");
+  });
+
   it("validates ids before they become paths", () => {
     const store = testStore();
     for (const bad of ["../x", "a/b", ".hidden", "", "a.json"]) assert.throws(() => store.paths.reviewDir(bad), /expected an id/, bad);
@@ -140,6 +154,43 @@ describe("reviews in the store", () => {
     const review = { id: "rv-1", title: "Proposals" };
     assert.equal(reviewLine(review, 2, { done: 37, total: 97 }, "session"), "Review «Proposals» sent from agent-desk (round 2, 37 of 97 reviewed). Read the answers with: agent-desk review rv-1");
     assert.equal(reviewLine(review, 1, undefined, "other"), "Pick up the review «Proposals» from agent-desk (round 1): agent-desk review rv-1");
+  });
+});
+
+describe("inlining a page's images", () => {
+  const page = (html: string, files: Record<string, Buffer> = {}) => {
+    const dir = tempHome();
+    for (const [name, data] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), data);
+    fs.writeFileSync(path.join(dir, "page.html"), html);
+    return path.join(dir, "page.html");
+  };
+
+  it("takes linear time on markup that never closes", () => {
+    const n = 200_000;
+    for (const [name, html] of [
+      ["unclosed quotes in tags", '<a href="x'.repeat(1) + '<img src="'.repeat(n)],
+      ["tags with an unclosed quote", '<b title=\'x '.repeat(n)],
+      ["unclosed script", `<script>${"<script>".repeat(n)}`],
+      ["unclosed style", `<style>${"url(\"".repeat(n)}`],
+      ["unclosed comments", "<!--".repeat(n)],
+      ["url( without a closing parenthesis", `<style>${"url(a".repeat(n)}</style>`],
+      ["style attributes", `<p style="${"url( ".repeat(n)}">`],
+      ["a long srcset", `<img srcset="${"a.png 1x, ,,".repeat(n)}">`],
+      ["many tags", "<i a=b c='d'>".repeat(n)],
+    ] as const) {
+      const started = performance.now();
+      const out = inlinePage(page(html));
+      const ms = performance.now() - started;
+      assert.ok(ms < 3000, `${name}: ${Math.round(ms)} ms`);
+      assert.equal(out.inlined, 0, name);
+    }
+  });
+
+  it("stops with an error past the page limit, however often one image is named", () => {
+    const big = Buffer.concat([PNG, Buffer.alloc(1024 * 1024)]);
+    const html = `<html><head></head><body>${'<img src="a.png">'.repeat(30)}</body></html>`;
+    assert.throws(() => inlinePage(page(html, { "a.png": big })), (error: unknown) => error instanceof InputError && /larger than 26214400 bytes \(at "a\.png"\)/.test(error.message));
+    assert.equal(inlinePage(page(html.replace(/<img src="a.png">/g, '<img src="b.png">').replace('<img src="b.png">', '<img src="a.png">'), { "a.png": big })).inlined, 1, "once is within the limit");
   });
 });
 
@@ -165,7 +216,7 @@ describe("review routes", () => {
       for (const route of [`/review/${id}`, `/review/${id}/raw`]) {
         const res = await fetch(server.base + route);
         assert.equal(res.status, 200, route);
-        assert.equal(res.headers.get("content-security-policy"), REVIEW_CSP, route);
+        assert.equal(res.headers.get("content-security-policy"), reviewCsp(server.base), route);
         assert.equal(res.headers.get("x-content-type-options"), "nosniff");
         assert.equal(res.headers.get("referrer-policy"), "no-referrer");
         assert.equal(res.headers.get("content-type"), "text/html; charset=utf-8");
@@ -174,8 +225,14 @@ describe("review routes", () => {
         assert.equal(body.includes("window.__agentDeskReview"), !route.endsWith("/raw"), route);
         if (!route.endsWith("/raw")) assert.ok(body.includes(SHIM) && body.includes('"a":"\\u003cx>"'));
       }
-      assert.match(REVIEW_CSP, /^sandbox allow-scripts;/);
-      assert.doesNotMatch(REVIEW_CSP, /allow-same-origin|connect-src|'self'(?!$)/);
+      assert.equal(reviewCsp(server.base), `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors ${server.base}`);
+      const viaLocalhost = await new Promise<string>((resolve, reject) => {
+        http.get({ host: "127.0.0.1", port: server.port, path: `/review/${id}`, headers: { Host: `localhost:${server.port}` } }, (res) => {
+          res.resume();
+          resolve(String(res.headers["content-security-policy"]));
+        }).on("error", reject);
+      });
+      assert.equal(viaLocalhost, reviewCsp(`http://localhost:${server.port}`), "framed only by the desk at the origin it was reached at");
       const state = await fetch(`${server.base}/api/reviews/${id}/state`);
       assert.deepEqual(await state.json(), { data: { a: "<x>" }, rev: 1 });
       assert.equal((await fetch(`${server.base}/review-shim.js`)).status, 200, "the service worker builds the page offline with it");
@@ -224,7 +281,7 @@ describe("review routes", () => {
       const cookie = new RemoteUnlock(store.paths.pin, store.secret()).unlock("424242").split(";")[0] ?? "";
       const open = await call(`/review/${id}`, { Cookie: cookie });
       assert.equal(open.status, 200);
-      assert.equal(open.headers["content-security-policy"], REVIEW_CSP);
+      assert.equal(open.headers["content-security-policy"], reviewCsp(`https://${remote.host}`));
       assert.ok(open.headers["x-agent-desk-unlock-ends"], "the device deletes its copy when the unlock ends");
     } finally {
       await server.close();
@@ -242,7 +299,7 @@ describe("review writes", () => {
     try {
       const ops = { ops: [{ op: "set", key: "a", value: "1" }] };
       for (const headers of [{ Origin: "http://evil.example" }, { Origin: "null" }, { "X-Agent-Desk-Secret": "0".repeat(64) }]) {
-        for (const action of ["state", "send", "opened", "close"]) assert.equal((await post(`/api/reviews/${id}/${action}`, action === "send" ? { to: "other" } : ops, headers)).status, 403, `${action} ${JSON.stringify(headers)}`);
+        for (const action of ["state", "send", "opened", "close"]) assert.equal((await post(`/api/reviews/${id}/${action}`, action === "send" ? { to: "other", rev: 0 } : ops, headers)).status, 403, `${action} ${JSON.stringify(headers)}`);
       }
       assert.equal(store.reviewState(id).rev, 0, "nothing was written");
       assert.deepEqual(await (await post(`/api/reviews/${id}/state`, { ...ops, progress: "1 of 4" })).json(), { rev: 1 });
@@ -258,7 +315,7 @@ describe("review writes", () => {
       assert.equal((await post(`/api/reviews/../state`, ops)).status, 404);
       assert.equal((await post(`/api/reviews/a.b/state`, ops)).status, 400);
       assert.equal((await post(`/api/reviews/rv-none/opened`, {})).status, 400);
-      assert.equal((await post(`/api/reviews/${id}/send`, { to: "everyone" })).status, 400);
+      assert.equal((await post(`/api/reviews/${id}/send`, { to: "everyone", rev: 1 })).status, 400);
       assert.ok((await (await post(`/api/reviews/${id}/opened`, {})).json() as { openedAt?: string }).openedAt);
       assert.ok((await (await post(`/api/reviews/${id}/close`, {})).json() as { closedAt?: string }).closedAt);
       assert.equal(store.reviewState(id).rev, 1);
@@ -270,9 +327,16 @@ describe("review writes", () => {
   it("send the line the server builds: to the session while it takes messages, else 409 with the reason", async () => {
     const { store, id } = withReview("Proposals «2»");
     const server = await serve(store);
-    const post = (to: string) => fetch(`${server.base}/api/reviews/${id}/send`, { method: "POST", headers: { "Content-Type": "application/json", Origin: server.base, "X-Agent-Desk-Secret": store.secret() }, body: JSON.stringify({ to }) });
+    const post = (to: string, rev: unknown = 1) => fetch(`${server.base}/api/reviews/${id}/send`, { method: "POST", headers: { "Content-Type": "application/json", Origin: server.base, "X-Agent-Desk-Secret": store.secret() }, body: JSON.stringify({ to, rev }) });
     try {
       store.changeReviewState(id, { ops: [], progress: "Done: 3/9 <b>", summary: "<b>my answers</b>" }, "local");
+      const stale = await post("other", 0);
+      assert.equal(stale.status, 409);
+      const body = (await stale.json()) as { error: string; stale?: boolean; rev?: number };
+      assert.deepEqual([body.stale, body.rev], [true, 1], "sent from an older view: only what the developer saw is recorded");
+      assert.match(body.error, /changed since it was shown/);
+      assert.equal((await post("other", "1")).status, 400, "rev is a number");
+      assert.equal((await post("other", null)).status, 400, "and required");
       const refused = await post("session");
       assert.equal(refused.status, 409);
       assert.match(((await refused.json()) as { error: string }).error, /not taking messages.*another conversation/);
@@ -291,7 +355,7 @@ describe("review writes", () => {
       assert.deepEqual(store.getReview(id)?.sends.map((s) => [s.to, s.round, s.progress]), [["s1", 1, { done: 3, total: 9 }], [null, 1, { done: 3, total: 9 }]]);
       const decisions = store.listQuestions();
       assert.equal(decisions.length, 2);
-      assert.ok(decisions.every((q) => q.status === "answered" && q.answer?.text === "<b>my answers</b>" && q.review?.id === id && q.text === "Review «Proposals «2»», round 1"));
+      assert.ok(decisions.every((q) => q.status === "answered" && q.answer?.text === "<b>my answers</b>" && q.answer.via === "review" && q.review?.id === id && q.text === "Review «Proposals «2»», round 1"));
       assert.deepEqual(store.openQuestions(), [], "never in Needs you");
       const found = store.decisions({ project: { dir: "/work/shop" }, search: "my answers", limit: 10 });
       assert.equal(found.total, 2);
