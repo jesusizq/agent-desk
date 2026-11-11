@@ -111,6 +111,11 @@ button.chip:hover { border-color: var(--border-strong); }
 .split::after { content: ""; position: absolute; top: 0; bottom: 0; left: 9px; width: 2px; border-radius: 2px; background: transparent; transition: background .15s; }
 .split:hover::after, body.resizing .split::after { background: var(--border-strong); }
 .split:focus-visible { outline: 0; }
+/* A grip of dots says the line can be dragged; it sits at the height the eye already is and turns into the line under the pointer. */
+.split::before { content: ""; position: absolute; left: 50%; top: min(50%, 38vh); width: 8px; height: 30px; translate: -50% -50%; z-index: 1; border-radius: 4px;
+  background: radial-gradient(circle, var(--faint) 1.1px, transparent 1.4px) 0 0 / 4px 6px repeat, var(--bg); opacity: .55; transition: opacity var(--dur-2) var(--ease-out); }
+.split:hover::before, body.resizing .split::before { opacity: 1; }
+.split:focus-visible::before { opacity: 1; background: radial-gradient(circle, var(--accent) 1.1px, transparent 1.4px) 0 0 / 4px 6px repeat, var(--bg); }
 .split:focus-visible::after { background: var(--accent); }
 body.resizing { cursor: col-resize; user-select: none; }
 .col-needs { grid-area: needs; } .col-sessions { grid-area: sessions; } .col-review { grid-area: review; }

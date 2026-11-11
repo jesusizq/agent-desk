@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { commandName, localHost, sessionListeners, urlPort } from "../src/core/ports.ts";
+import { commandName, localHost, notAServer, sessionListeners, urlPort } from "../src/core/ports.ts";
 import { procInfo } from "../src/core/proc.ts";
 import { shellListener } from "./helpers.ts";
 
@@ -70,3 +70,13 @@ describe("local servers of a session", () => {
     assert.equal(commandName([]), "");
   });
 });
+
+describe("what is not a server to open", () => {
+  it("leaves out browsers a test drives and debugger ports, keeps dev servers", () => {
+    for (const args of [["/opt/google/chrome/chrome", "--headless"], ["/home/u/.cache/ms-playwright/chromium-1/chrome-linux/headless_shell"], ["firefox"], ["node", "--inspect=9229", "server.js"], ["/usr/bin/x", "--remote-debugging-port=0"]]) {
+      assert.equal(notAServer(args), true, args.join(" "));
+    }
+    for (const args of [["node", "node_modules/.bin/vite"], ["python3", "-m", "http.server", "8771"], ["next", "dev"]]) assert.equal(notAServer(args), false, args.join(" "));
+  });
+});
+

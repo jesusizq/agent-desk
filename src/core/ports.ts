@@ -36,6 +36,7 @@ export function sessionListeners(roots: readonly { pid: number; start?: string }
     if (!live[i] || sockets.size === 0) return [];
     const found = new Map<number, Listener>();
     for (const proc of startedThroughShell(root.pid)) {
+      if (notAServer(commandLine(proc.pid) ?? [])) continue;
       for (const inode of socketInodes(proc.pid)) {
         const socket = sockets.get(inode);
         if (!socket || found.has(socket.port)) continue;
@@ -200,6 +201,15 @@ function bootTime(): number {
   const m = /^btime (\d+)$/m.exec(fs.readFileSync("/proc/stat", "utf8"));
   if (!m?.[1]) throw new Error("/proc/stat: no btime line");
   return Number(m[1]) * 1000;
+}
+
+const BROWSER = /^(?:chrome|chromium(?:-browser)?|google-chrome(?:-\w+)?|headless_shell|chrome-headless-shell|firefox|msedge|webkit\w*)$/i;
+
+/** A browser a test drives or a debugger port: it listens, but there is nothing in it to open. */
+export function notAServer(args: readonly string[]): boolean {
+  const [first] = args;
+  if (first !== undefined && BROWSER.test(path.basename(first))) return true;
+  return args.some((a) => a.startsWith("--remote-debugging-port") || a.startsWith("--inspect"));
 }
 
 const INTERPRETER = /^(?:node|nodejs|bun|deno|python[\d.]*|ruby|php|perl)$/;
