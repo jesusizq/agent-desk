@@ -13,7 +13,7 @@ import { badge, bar, dialogHead, dot, goLink, LOCAL_URL, localLink, planGauge, s
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
 import { imageUrl, offlineNotice, offlineText, post, run } from "./server.js";
-import { asksOf, data, isLive, isNew, itemsOf, label, metricsOf, S, sessionName, ui, unread } from "./state.js";
+import { asksOf, data, isLive, isNew, itemsOf, label, metricsOf, midTurn, S, sessionName, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Result} Result */
@@ -258,8 +258,8 @@ export function chat(s) {
   const asking = items[at];
   const lead = asking?.open[0];
   // At work, a session whose adapter delivers mid-turn gets the message at its next step.
-  const midTurn = s.state === "working" && s.takesMessagesWhileWorking === true && isLive(s);
-  const canReply = !asking && ((s.state === "waiting" && data.listening.includes(s.id)) || midTurn);
+  const working = midTurn(s);
+  const canReply = !asking && ((s.state === "waiting" && data.listening.includes(s.id)) || working);
   // Until the conversation arrives, the shape of what comes before the latest message, which is known.
   const loading = !fetched ? [h("div", { class: "skel skel-msg mine", "aria-hidden": "true" }), h("div", { class: "skel skel-msg", "aria-hidden": "true" })] : null;
   return [
@@ -297,8 +297,8 @@ export function chat(s) {
           )
         : // One box whatever the session does, inert while it cannot take a message: the panel's foot never jumps.
           replyBox(`message-${s.id}`, [], s.id, {
-            placeholder: canReply ? (midTurn ? TEXT.workingPlaceholder : undefined) : s.state === "working" ? TEXT.workingNoMessages : TEXT.notListeningShort,
-            hint: midTurn ? TEXT.sendHintWorking : undefined,
+            placeholder: canReply ? (working ? TEXT.workingPlaceholder : undefined) : s.state === "working" ? TEXT.workingNoMessages : TEXT.notListeningShort,
+            hint: working ? TEXT.sendHintWorking : undefined,
             off: canReply ? null : s.state === "working" ? TEXT.conversation.working : TEXT.notListening,
           }),
     ),

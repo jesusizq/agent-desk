@@ -265,6 +265,36 @@ describe("what the page looks like", { skip: skipped() }, () => {
         await page.waitFor(`${arrived("session")} && document.querySelector('#session .chat-footer textarea')`);
       },
     },
+    ...desktop("review-open", { show: (page) => openReview(page, "Checkout copy proposals") }),
+    ...desktop("review-send", {
+      show: async (page) => {
+        await openReview(page, "Checkout copy proposals");
+        await page.click(".rv-send");
+        await page.waitFor(`${arrived("review-send")} && document.querySelector('.rv-answers pre')`);
+        await sameId(page);
+      },
+    }),
+    {
+      name: "phone-review-tab",
+      device: "phone",
+      theme: "light",
+      show: async (page) => {
+        await page.tap(".tabbar button", "To review");
+        await page.waitFor(`document.querySelector('.tabbar button[aria-pressed="true"]')?.textContent.includes('To review') && ${STILL}`);
+      },
+    },
+    { name: "phone-review-open", device: "phone", theme: "light", show: (page) => openReview(page, "Checkout copy proposals", true) },
+    {
+      name: "phone-review-send",
+      device: "phone",
+      theme: "dark",
+      show: async (page) => {
+        await openReview(page, "Landing hero headlines", true);
+        await page.tap(".rv-send");
+        await page.waitFor(`${arrived("review-send")} && document.querySelector('#review-send input[value=other]').checked`);
+        await sameId(page);
+      },
+    },
     {
       name: "phone-display-menu",
       device: "phone",
@@ -275,6 +305,20 @@ describe("what the page looks like", { skip: skipped() }, () => {
       },
     },
   ];
+
+  /** The review's id in the line shown is drawn at random by each demo store: one fixed id in its place keeps the screen the same. */
+  const sameId = (page: Page) => page.eval("(() => { const line = document.querySelector('#review-send .rv-line-text'); line.textContent = line.textContent.replace(/rv-[\\w-]+$/, 'rv-demo'); })()");
+
+  /** A demo review open, its page drawn in its frame. */
+  async function openReview(page: Page, title: string, touch = false): Promise<void> {
+    if (touch) {
+      await page.tap(".tabbar button", "To review");
+      await page.waitFor(STILL);
+      await page.tap(".rv-tile", title);
+    } else await page.click(".rv-tile", title);
+    await page.waitFor(`${arrived("review")} && document.querySelector('#review iframe') && document.querySelector('.rv-saved')`);
+    await page.inFrame("/review/", "document.fonts.ready.then(() => true)");
+  }
 
   for (const screen of screens) {
     it(screen.name, async (t) => {

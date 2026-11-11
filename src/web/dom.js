@@ -245,6 +245,9 @@ const ICONS = {
   inbox: '<path d="M3 13h5l1.5 3h5l1.5-3h5"/><path d="M5.5 5h13L21 13v6H3v-6z"/>',
   terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 17-5-5-9 8"/>',
+  doc: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
+  arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
 };
 /** @typedef {keyof typeof ICONS} IconName */
 
@@ -365,9 +368,11 @@ export function byId(id) {
 
 /** Where the page keeps what is being written on this device; a device behind the PIN drops it when its unlock ends. */
 export const DRAFTS_KEY = "agent-desk:drafts";
+/** Where the page keeps, per review, the changes not saved to the desk yet and where it was scrolled; dropped with the drafts. */
+export const REVIEWS_KEY = "agent-desk:reviews";
 
 /** The page's windows (index.html): a backdrop click, going back to Needs you and the arrival bubble treat them alike. */
-export const WINDOWS = /** @type {const} */ (["result", "session", "zoom"]);
+export const WINDOWS = /** @type {const} */ (["result", "session", "zoom", "review", "review-send"]);
 
 /** @param {string} id @returns {HTMLDialogElement} */
 export function dialog(id) {

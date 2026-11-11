@@ -10,6 +10,7 @@ import { TEXT } from "./text.js";
 /** @typedef {import("../core/protocol.ts").AgentState} AgentState */
 /** @typedef {import("../core/protocol.ts").Result} Result */
 /** @typedef {import("../core/protocol.ts").ConversationEntry} ConversationEntry */
+/** @typedef {import("../core/protocol.ts").Review} Review */
 /** @typedef {AgentState | "needs"} DotState */
 
 /** @param {string} name */
@@ -154,6 +155,13 @@ export const isNew = (r) => !r.seenAt && (!data.seen || r.at > data.seen.since);
 export const isLive = (s) => s.state !== "ended" && !data.gone.includes(s.id);
 /** Ended with a question open and not looked at since: its question must not vanish unseen. @param {Session} s */
 export const endedUnseen = (s) => s.state === "ended" && s.endedAsking === true && unread(s);
+
+/** Reviews a session published and the developer has not closed, in the projects shown, as the desk orders them (newest round first). */
+export const openReviews = () => data.reviews.filter((r) => !r.closedAt && (ui.project === null || r.project.name === ui.project));
+/** At work, a session whose adapter delivers mid-turn gets a message from the desk at its next step. @param {Session} s */
+export const midTurn = (s) => s.state === "working" && s.takesMessagesWhileWorking === true && isLive(s);
+/** A message from the desk reaches the session now: it listens for one, or takes them while it works. @param {Session} s */
+export const takesMessages = (s) => data.listening.includes(s.id) || midTurn(s);
 
 /** Finished work to look at, in the projects shown; failures wait in the inbox instead. */
 export const toReview = () => data.results.filter((r) => inProject(r.sessionId) && isNew(r) && r.status !== "failed");

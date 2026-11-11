@@ -16,6 +16,7 @@ import { noticeArrivals, remindWaiting } from "./notice.js";
 import { renewPush, watchPush } from "./push.js";
 import { headerMenu, sessionLink, toast } from "./pieces.js";
 import { openResult } from "./result.js";
+import { openReview, renderReview } from "./review.js";
 import { follow } from "./live.js";
 import { refresh } from "./server.js";
 import { openSession, renderPanel } from "./session.js";
@@ -83,6 +84,7 @@ function render(how) {
   renderStrip();
   renderView(how);
   renderPanel();
+  renderReview();
   renderArrival();
 }
 Object.assign(page, { render, renderView, renderPanel, noticeArrivals, renewPush });
@@ -218,7 +220,7 @@ function edgeSwipe(d) {
   d.addEventListener("touchend", end);
   d.addEventListener("touchcancel", end);
 }
-/** Links into the page: #history, #needs, #s=<session id>, #r=<result id>. */
+/** Links into the page: #history, #needs, #s=<session id>, #r=<result id>, #rv=<review id>. */
 export function route() {
   const [k, v] = location.hash.slice(1).split("=");
   if (k === "needs") {
@@ -233,6 +235,7 @@ export function route() {
   if (s) openSession(s.id);
   const r = k === "r" && v ? data.results.find((x) => x.id === v) : undefined;
   if (r) openResult(r, { markSeen: false });
+  if (k === "rv" && v && history.state?.review !== v) openReview(decodeURIComponent(v), { fromRoute: true });
 }
 addEventListener("hashchange", route);
 // The device keeps the last desk it saw, shown when the computer is off or asleep (sw.js). Some

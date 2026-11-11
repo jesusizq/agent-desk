@@ -1,6 +1,6 @@
 // @ts-check
 // Talking to the desk server: the state fetched, writes with the secret, and the drafts kept on this device.
-import { DRAFTS_KEY, h } from "./dom.js";
+import { DRAFTS_KEY, h, REVIEWS_KEY } from "./dom.js";
 import { TEXT } from "./text.js";
 import { stamp } from "./format.js";
 import { toast } from "./pieces.js";
@@ -14,8 +14,8 @@ const UNLOCK_ENDS_HEADER = "X-Agent-Desk-Unlock-Ends";
 /** Longer than the service worker's wait (sw.js), so its saved copy arrives first when there is one. */
 const NO_ANSWER_MS = 8000;
 
-/** Set once a device behind the PIN learns its unlock ended (endUnlock). */
-let unlockEnded = false;
+/** Set once a device behind the PIN learns its unlock ended (endUnlock): nothing is kept on the device after. */
+export let unlockEnded = false;
 /** What is being written stays on this device: a phone may close the app, and the desk may reload it. */
 export function saveDrafts() {
   if (unlockEnded) return; // the reload to the PIN page must not write them back
@@ -63,10 +63,11 @@ function dropStaleDrafts() {
 /** The unlock ended: the reload brings the PIN page, and the same view after it. @param {Response} res */
 const needsPin = (res) => res.status === 401 && res.headers.has(LOCKED_HEADER);
 
-/** Nothing written on a device behind the PIN outlives its unlock: drafts and unsent messages go with the saved desk. */
+/** Nothing written on a device behind the PIN outlives its unlock: drafts, unsent messages and review changes go with the saved desk. */
 function endUnlock() {
   unlockEnded = true;
   localStorage.removeItem(DRAFTS_KEY);
+  localStorage.removeItem(REVIEWS_KEY);
   location.reload();
 }
 
@@ -85,10 +86,13 @@ function reloadAtUnlockEnd(res) {
   unlockTimer = setTimeout(endUnlock, ends - Date.now() + 1);
 }
 
-/** A write to the desk; no connection is said as such, not as fetch's own "Load failed". @param {string} route @param {RequestInit} init */
+/** The desk could not be reached: what was sent may be sent again once it answers. */
+export class OfflineError extends Error {}
+
+/** A request to the desk; no connection is said as such, not as fetch's own "Load failed". @param {string} route @param {RequestInit} [init] */
 async function write(route, init) {
   const res = await fetch(route, init).catch(() => {
-    throw new Error(offlineReason());
+    throw new OfflineError(offlineReason());
   });
   if (needsPin(res)) endUnlock();
   return res;
@@ -108,17 +112,22 @@ export const offlineText = () => [offlineHead(), offlineReason()].filter(Boolean
 /** The calm banner that says so, in the strip or a window. @param {string} cls */
 export const offlineNotice = (cls) => h("div", { class: `offline ${cls}`, role: "status" }, h("b", {}, offlineHead()), " ", h("span", { class: "why" }, offlineReason()));
 
-/** @param {string} route @param {unknown} [body] */
+/** The desk's answer as JSON; an error answer throws with the desk's reason. @param {Response} res @returns {Promise<unknown>} */
+async function replyOf(res) {
+  const body = /** @type {unknown} */ (await res.json().catch(() => ({})));
+  if (res.ok) return body;
+  const error = typeof body === "object" && body !== null && "error" in body && typeof body.error === "string" ? body.error : null;
+  throw new Error(error ?? `${res.status} ${res.statusText}`);
+}
+/** A write to the desk, returning what it answers. @param {string} route @param {unknown} [body] */
+export async function postJson(route, body = {}) {
+  return replyOf(await write(route, { method: "POST", headers: { "Content-Type": "application/json", "X-Agent-Desk-Secret": secret }, body: JSON.stringify(body) }));
+}
+/** A read from the desk. @param {string} route */
+export const getJson = async (route) => replyOf(await write(route));
+/** A write to the desk, then its state fetched again. @param {string} route @param {unknown} [body] */
 export async function post(route, body = {}) {
-  const res = await write(route, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Agent-Desk-Secret": secret },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const detail = /** @type {{ error?: string }} */ (await res.json().catch(() => ({})));
-    throw new Error(detail.error ?? `${res.status} ${res.statusText}`);
-  }
+  await postJson(route, body);
   await refresh();
 }
 

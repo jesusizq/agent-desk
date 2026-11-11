@@ -495,10 +495,12 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       window.fetch = (url, init) => String(url) === "/api/state" ? real(url).then(async (r) => new Response(await r.text(), { headers: { "Content-Type": "application/json", "X-Agent-Desk-Unlock-Ends": ends } })) : real(url, init);
     })()`);
     await page.eval(`localStorage.setItem("agent-desk:drafts", JSON.stringify({ drafts: [["message-demo-pagos", "unsent idea"]], images: [] }))`);
+    await page.eval(`localStorage.setItem("agent-desk:reviews", JSON.stringify({ "rv-gone": { ops: [{ op: "set", key: "answers", value: "kept offline" }], at: 0.4 } }))`);
     await fetchNow(page);
     assert.equal(await page.eval<boolean>("window.beforeReload"), true, "not before the end");
     await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')", 5000);
     assert.equal(await page.eval<string | null>("localStorage.getItem('agent-desk:drafts')"), null, "its drafts went with the unlock");
+    assert.equal(await page.eval<string | null>("localStorage.getItem('agent-desk:reviews')"), null, "and the review changes kept on the device");
   });
 
   it("drops a saved draft whose question closed or whose session is gone", async () => {
@@ -1305,6 +1307,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       quiet = new Store(home);
       for (const q of quiet.listQuestions()) if (q.status === "open") quiet.dismiss(q.id);
       for (const r of quiet.listResults()) if (!r.seenAt) quiet.markResultSeen(r.id);
+      for (const r of quiet.listReviews()) if (!r.closedAt) quiet.closeReview(r.id);
       ({ base: quietBase, close: closeQuiet } = await serve(quiet));
     });
     after(() => closeQuiet?.());
@@ -2897,6 +2900,244 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       } finally {
         for (const stop of stops) stop();
       }
+    });
+  });
+
+  describe("reviews", () => {
+    /** A review page as a session writes one: `n` cards to keep, a counter, and a button that copies the answers; `tall` makes it scroll. */
+    const reviewHtml = (n: number, tall = false) => `<!doctype html><html><head><title>cards</title><style>article { ${tall ? "height: 600px;" : ""} }</style></head><body>
+<header><span id="count" data-agent-desk-progress></span><button id="copy" data-agent-desk-answers>Copy answers</button></header>
+${Array.from({ length: n }, (_, i) => `<article data-i="${i}"><button class="keep">Keep ${i}</button></article>`).join("\n")}
+<script>
+const answers = JSON.parse(localStorage.getItem("answers") || "{}");
+const paint = () => { document.getElementById("count").textContent = Object.keys(answers).length + "/" + ${n}; for (const a of document.querySelectorAll("article")) a.dataset.kept = answers[a.dataset.i] ? "yes" : ""; };
+document.body.addEventListener("click", (e) => {
+  const b = e.target.closest(".keep");
+  if (!b) return;
+  answers[b.parentElement.dataset.i] = "yes";
+  localStorage.setItem("answers", JSON.stringify(answers));
+  paint();
+});
+document.getElementById("copy").addEventListener("click", () => navigator.clipboard.writeText("kept: " + Object.keys(answers).sort().join(", ")));
+paint();
+</script></body></html>`;
+    /** A session in web-shop, and a review it publishes. */
+    function publish(sid: string, title: string, session: Partial<Parameters<Store["upsertSession"]>[0]> = {}, html = reviewHtml(3), at?: Store) {
+      store.upsertSession({ id: sid, provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: `${title} session`, ...session });
+      return (at ?? store).publishReview({ sessionId: sid, title, html });
+    }
+    /** The desk with a review open, its page loaded in its frame. */
+    async function openReview(title: string, page?: Page): Promise<Page> {
+      const p = page ?? (await open());
+      await p.click(".rv-tile", title);
+      await p.waitFor(`${arrived("review")} && document.querySelector('#review iframe')`);
+      await p.inFrame("/review/", "true");
+      return p;
+    }
+    const tile = (title: string) => `[...document.querySelectorAll('.rv-tile')].find((t) => t.textContent.includes(${JSON.stringify(title)}))`;
+    /** A real click on the card's button inside the frame, as the developer's. */
+    const keepInFrame = (page: Page, i: number) => page.inFrame("/review/", `document.querySelector('[data-i="${i}"] .keep').click(), true`);
+
+    it("lists each review in To review with its round, progress and last change, and on its session's card", async () => {
+      const first = publish("rv-list", "Hero copy");
+      store.publishReview({ sessionId: "rv-list", title: "hero copy ", html: reviewHtml(5) });
+      store.changeReviewState(first.id, { ops: [{ op: "set", key: "answers", value: '{"0":"yes","1":"yes"}' }], progress: "2 of 5" }, "remote");
+      const page = await open();
+      await page.waitFor(tile("Hero copy"));
+      const text = await page.eval<string>(`${tile("Hero copy")}.textContent`);
+      assert.match(text, /Round 2/);
+      assert.match(text, /2 of 5/);
+      assert.match(text, /Last change on your phone/);
+      assert.match(text, /New/, "not opened yet");
+      assert.equal(await page.eval<string>(`${tile("Hero copy")}.querySelector('.rv-meter i').style.width`), "40%");
+      assert.match(await page.eval<string>(`${cardOf("Hero copy session")}.querySelector('.rv-sline').textContent`), /Review · hero copy\s*2 of 5/);
+      // Not a question: Needs you does not count it, To review does.
+      assert.equal(await page.eval<boolean>("document.querySelector('.col-needs').textContent.includes('Hero copy')"), false);
+      store.closeReview(first.id);
+      await page.waitFor(`!${tile("Hero copy")} && !${cardOf("Hero copy session")}?.querySelector('.rv-sline')`);
+    });
+
+    it("says calmly when a review was left alone for two days, on its tile and in the summary of the time away", async () => {
+      const before = new Store(store.paths.home, () => new Date(Date.now() - 3 * 24 * 3600_000));
+      const r = publish("rv-still", "Footer links", {}, reviewHtml(3), before);
+      const page = await browser.newPage(1400, 900);
+      pages.push(page);
+      await page.send("Page.addScriptToEvaluateOnNewDocument", { source: `localStorage.setItem("agent-desk:last-looked", String(Date.now() - 120 * 60000));` });
+      await page.goto(base + "/");
+      await page.waitFor(tile("Footer links"));
+      assert.match(await page.eval<string>(`${tile("Footer links")}.querySelector('.rv-foot').textContent`), /^Untouched since /);
+      await page.waitFor("[...document.querySelectorAll('.away [data-key=\"reviews\"] .away-line')].some((l) => l.textContent.includes('Footer links · untouched since'))");
+      await page.click(".away .away-line", "Footer links");
+      await page.waitFor(arrived("review"));
+      store.closeReview(r.id);
+    });
+
+    it("opens a review filling the window in a sandbox, keeps what is marked in it, and closes with Escape or going back", async () => {
+      const r = publish("rv-open", "Button labels");
+      const page = await openReview("Button labels");
+      const box = await page.eval<{ w: number; h: number; vw: number; vh: number }>("(() => { const r = document.getElementById('review').getBoundingClientRect(); return { w: r.width, h: r.height, vw: innerWidth, vh: innerHeight }; })()");
+      assert.deepEqual([box.w, box.h], [box.vw, box.vh], "the review fills the window");
+      assert.equal(await page.eval<string>("document.querySelector('#review iframe').getAttribute('sandbox')"), "allow-scripts");
+      assert.equal(await page.eval<string>("new URL(document.querySelector('#review iframe').src).pathname"), `/review/${r.id}`);
+      assert.equal(await page.eval<string>("location.hash"), `#rv=${r.id}`);
+      assert.match(await page.eval<string>("document.querySelector('.rv-bar').textContent"), /Button labels.*web-shop.*0 of 3/);
+      await keepInFrame(page, 1);
+      await page.waitFor("document.querySelector('.rv-count').textContent === '1 of 3'");
+      await page.waitFor("document.querySelector('.rv-saved').textContent.startsWith('Saved')");
+      assert.deepEqual(store.reviewState(r.id).data, { answers: '{"1":"yes"}' });
+      assert.deepEqual(store.getReview(r.id)?.progress, { done: 1, total: 3 });
+      // Escape, with the desk's bar focused (inside the frame, the keys are the page's own).
+      await page.click(".rv-name");
+      await page.press("Escape");
+      await page.waitFor("!document.getElementById('review').open && location.hash === ''");
+      await page.waitFor(`${tile("Button labels")}.textContent.includes('1 of 3')`);
+      assert.equal(await page.eval<boolean>(`${tile("Button labels")}.textContent.includes('New')`), false, "opened: no longer new");
+      assert.ok(store.getReview(r.id)?.openedAt);
+      await openReview("Button labels", page);
+      assert.equal(await page.inFrame<string>("/review/", "document.querySelector('[data-i=\"1\"]').dataset.kept"), "yes", "the page opens with what was kept");
+      await page.eval("history.back()");
+      await page.waitFor("!document.getElementById('review').open");
+      store.closeReview(r.id);
+    });
+
+    it("sends to the session that asked exactly the line shown, with the answers the page copied, and keeps it in To review", async () => {
+      const r = publish("rv-send", "Error messages", { state: "working", takesMessagesWhileWorking: true });
+      const page = await openReview("Error messages");
+      await keepInFrame(page, 0);
+      await page.waitFor("document.querySelector('.rv-count').textContent === '1 of 3'");
+      await page.click(".rv-send");
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('#review-send pre')`);
+      assert.equal(await page.eval<boolean>("document.querySelector('#review-send input[value=session]').checked"), true);
+      assert.equal(await page.eval<boolean>("document.querySelector('.rv-keep input').checked"), true, "1 of 3: kept to go on later");
+      await page.waitFor("document.querySelector('.rv-answers pre')?.textContent === 'kept: 0'");
+      const line = await page.eval<string>("document.querySelector('#review-send .rv-line-text').textContent");
+      assert.equal(line, `Review «Error messages» sent from agent-desk (round 1, 1 of 3 reviewed). Read the answers with: agent-desk review ${r.id}`);
+      await page.click("#review-send button[type=submit]");
+      await page.waitFor("!document.getElementById('review-send').open");
+      assert.deepEqual(store.takeInbox("rv-send").map((e) => e.answer), [line], "delivered word for word");
+      assert.equal(store.getReview(r.id)?.sends.length, 1);
+      assert.equal(await page.eval<boolean>("document.getElementById('review').open"), true, "kept: the review stays open to go on");
+      await page.click(".rv-back");
+      await page.waitFor(`${tile("Error messages")}?.querySelector('.rv-sent')?.textContent.includes('Sent to the session')`);
+      // Kept as a decision in History, never in Needs you.
+      assert.equal(await page.eval<boolean>("document.querySelector('.col-needs').textContent.includes('Error messages')"), false);
+      await page.click("#views button", "History");
+      await page.waitFor("[...document.querySelectorAll('.hitem')].some((h) => h.querySelector('.k-review') && h.textContent.includes('Error messages') && h.textContent.includes('kept: 0'))");
+      store.closeReview(r.id);
+    });
+
+    it("offers only another conversation when the session that asked has ended, copies the line, and leaves To review when not kept", async () => {
+      const r = publish("rv-ended", "Pricing table");
+      store.updateSession("rv-ended", (s) => ({ ...s, state: "ended" }));
+      const page = await browser.newPage(1400, 900);
+      pages.push(page);
+      await page.send("Page.addScriptToEvaluateOnNewDocument", { source: "window.copied = []; Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => void copied.push(t) } });" });
+      await page.goto(base + "/");
+      await page.waitFor(tile("Pricing table"));
+      await openReview("Pricing table", page);
+      await page.click(".rv-send");
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('#review-send pre')`);
+      assert.equal(await page.eval<boolean>("document.querySelector('#review-send input[value=session]').disabled"), true);
+      assert.equal(await page.eval<boolean>("document.querySelector('#review-send input[value=other]').checked"), true);
+      assert.match(await page.eval<string>("document.querySelector('.rv-opt.off small').textContent"), /ended/);
+      const line = await page.eval<string>("document.querySelector('#review-send .rv-line-text').textContent");
+      assert.equal(line, `Pick up the review «Pricing table» from agent-desk (round 1, 0 of 3 reviewed): agent-desk review ${r.id}`);
+      await page.click(".rv-keep input");
+      await page.click("#review-send button[type=submit]", "Copy the line");
+      await page.waitFor("!document.getElementById('review').open");
+      assert.deepEqual(await page.eval<string[]>("copied"), [line]);
+      assert.equal(store.getReview(r.id)?.sends.at(-1)?.to, null);
+      assert.ok(store.getReview(r.id)?.closedAt, "not kept: it leaves To review");
+      await page.waitFor(`!${tile("Pricing table")}`);
+    });
+
+    it("switches to another conversation, saying why, when the session stops taking messages before Send", async () => {
+      const r = publish("rv-refused", "Toast texts", { state: "working", takesMessagesWhileWorking: true });
+      const page = await openReview("Toast texts");
+      await page.click(".rv-send");
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('#review-send pre')`);
+      store.updateSession("rv-refused", (s) => ({ ...s, takesMessagesWhileWorking: false }));
+      await page.click("#review-send button[type=submit]", "Send");
+      await page.waitFor("document.querySelector('#review-send input[value=other]')?.checked && document.querySelector('#review-send input[value=session]').disabled");
+      assert.match(await page.eval<string>("document.querySelector('.rv-opt.off small').textContent"), /not taking messages/);
+      await page.waitFor("[...document.querySelectorAll('#toasts .toast')].some((t) => t.textContent.includes('not taking messages'))");
+      // The browser logs every refused request; this refusal is what the test is about.
+      const refused = page.errors.findIndex((e) => /409 \(Conflict\) .*\/api\/reviews\/[\w-]+\/send$/.test(e));
+      assert.ok(refused >= 0, `the desk refused the send (${page.errors.join("; ")})`);
+      page.errors.splice(refused, 1);
+      assert.equal(store.getReview(r.id)?.sends.length, 0, "nothing sent");
+      store.closeReview(r.id);
+    });
+
+    it("shows what another window changed as a chip, and updates the page on a tap at the same place", async () => {
+      const r = publish("rv-sync", "Long list", {}, reviewHtml(12, true));
+      const a = await openReview("Long list");
+      const b = await openReview("Long list");
+      // Scroll events come with a frame drawn: only the tab in front draws.
+      await a.send("Page.bringToFront");
+      await a.inFrame("/review/", "scrollTo(0, (document.documentElement.scrollHeight - innerHeight) / 2), true");
+      await a.waitFor(`Math.abs(JSON.parse(localStorage.getItem('agent-desk:reviews') ?? '{}')[${JSON.stringify(r.id)}]?.at - 0.5) < 0.05`);
+      // Opening it alone changes nothing the page shows: no chip.
+      await new Promise((r) => setTimeout(r, 800));
+      assert.equal(await a.eval<boolean>("!!document.querySelector('.rv-sync')"), false);
+      await b.send("Page.bringToFront");
+      await keepInFrame(b, 7);
+      await a.send("Page.bringToFront");
+      await a.waitFor("document.querySelector('.rv-sync')?.textContent.includes('New changes')");
+      assert.equal(await a.inFrame<string>("/review/", "document.querySelector('[data-i=\"7\"]').dataset.kept"), "", "the page does not move under the developer");
+      await a.click(".rv-sync button", "Update");
+      await a.waitFor("!document.querySelector('.rv-sync')");
+      await a.waitFor("document.querySelectorAll('#review iframe').length === 1");
+      // The new frame has the other window's change, at the same place.
+      const after = await a.inFrame<{ kept: string; at: number }>("/review/", "new Promise((r) => setTimeout(() => r({ kept: document.querySelector('[data-i=\"7\"]').dataset.kept, at: scrollY / (document.documentElement.scrollHeight - innerHeight) }), 300))");
+      assert.equal(after.kept, "yes");
+      assert.ok(Math.abs(after.at - 0.5) < 0.05, `back at the middle, not ${after.at}`);
+      store.closeReview(r.id);
+    });
+
+    it("keeps what is marked while the desk does not answer, and saves it once it does", async () => {
+      const r = publish("rv-offline", "Offline marks");
+      const page = await openReview("Offline marks");
+      await page.eval(`(() => {
+        window.realFetch = window.fetch;
+        window.fetch = (url, init) => String(url).startsWith("/api/reviews/") && init?.method === "POST" ? Promise.reject(new TypeError("Failed to fetch")) : window.realFetch(url, init);
+      })()`);
+      await keepInFrame(page, 2);
+      await page.waitFor("document.querySelector('.rv-saved').textContent.startsWith('Kept on this device')");
+      assert.match(await page.eval<string>("localStorage.getItem('agent-desk:reviews')"), /"op":"set","key":"answers"/);
+      assert.deepEqual(store.reviewState(r.id).data, {}, "nothing reached the desk");
+      await page.eval("window.fetch = window.realFetch");
+      await fetchNow(page);
+      await page.waitFor("!(localStorage.getItem('agent-desk:reviews') ?? '').includes('\"ops\"')");
+      assert.deepEqual(store.reviewState(r.id).data, { answers: '{"2":"yes"}' });
+      await page.waitFor("document.querySelector('.rv-saved').textContent.startsWith('Saved')");
+      store.closeReview(r.id);
+    });
+
+    it("fills a phone's screen under a slim bar, counts reviews on its tab, and sends from a sheet at the bottom", async () => {
+      const r = publish("rv-phone", "Phone copy", { state: "working", takesMessagesWhileWorking: true });
+      const page = await browser.newPage(390, 844);
+      pages.push(page);
+      await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+      await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('.tabbar .tcount.review')");
+      await page.tap(".tabbar button", "To review");
+      await page.waitFor(`${tile("Phone copy")} && ${STILL}`);
+      assert.equal(await page.eval<string>("document.querySelector('.tabbar .tcount.review').textContent"), String(await page.eval<number>("document.querySelectorAll('.col-review .rv-tile, .col-review .rtile-wrap').length")));
+      await page.tap(".rv-tile", "Phone copy");
+      await page.waitFor(arrived("review"));
+      await page.inFrame("/review/", "true");
+      const shape = await page.eval<{ w: number; h: number; bar: number; frame: number }>(`(() => ({
+        w: document.getElementById('review').getBoundingClientRect().width, h: document.getElementById('review').getBoundingClientRect().height,
+        bar: document.querySelector('.rv-head').getBoundingClientRect().height, frame: document.querySelector('#review iframe').getBoundingClientRect().height }))()`);
+      assert.deepEqual([shape.w, shape.h], [390, 844]);
+      assert.ok(shape.bar <= 64 && shape.frame >= 844 - 64, `a slim bar (${shape.bar}px) over the page (${shape.frame}px)`);
+      await page.tap(".rv-send");
+      await page.waitFor(arrived("review-send"));
+      const sheet = await page.eval<{ bottom: number; width: number }>("(() => { const r = document.getElementById('review-send').getBoundingClientRect(); return { bottom: r.bottom, width: r.width }; })()");
+      assert.deepEqual([Math.round(sheet.bottom), Math.round(sheet.width)], [844, 390], "a sheet from the bottom edge");
+      store.closeReview(r.id);
     });
   });
 });

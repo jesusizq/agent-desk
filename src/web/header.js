@@ -10,7 +10,7 @@ import { projectMark } from "./pieces.js";
 import { mergedOf, openProject, projectsInView, sum, worthWarning } from "./projects.js";
 import { offlineNotice, post, run } from "./server.js";
 import { openSession } from "./session.js";
-import { CONTEXT_WARN, data, inbox, inProject, isLive, isNew, label, metricsOf, onDesk, openItems, page, toReview, ui } from "./state.js";
+import { CONTEXT_WARN, data, inbox, inProject, isLive, isNew, label, metricsOf, onDesk, openItems, openReviews, page, toReview, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 
@@ -93,7 +93,7 @@ function appBadge(n) {
 
 /** On a phone, the parts of the desk and the history sit in a bar at the bottom, under the thumb. @param {number} needs */
 function renderTabbar(needs) {
-  const review = toReview().length;
+  const review = toReview().length + openReviews().length;
   /** @type {[typeof ui.tab | "history", import("./dom.js").IconName, number, string][]} */
   const tabs = [
     ["inbox", "inbox", needs, "accent"],

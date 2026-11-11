@@ -14,8 +14,9 @@ const COLS = { needs: "Needs you", sessions: "Sessions", review: "To review" };
 /** @param {number} c */
 const contextAt = (c) => `Context ${Math.round(c)}%`;
 const CLEAR = "All clear";
-/** @param {boolean} resultsToo */
-const clearRest = (resultsToo) => (resultsToo ? "nothing needs you, nothing new to review" : "nothing needs you");
+/** @param {boolean} resultsToo @param {number} [reviews] reviews open, at the developer's pace */
+const clearRest = (resultsToo, reviews = 0) =>
+  reviews ? `nothing needs you · ${reviews === 1 ? "1 review open" : `${reviews} reviews open`}, at your pace` : resultsToo ? "nothing needs you, nothing new to review" : "nothing needs you";
 
 export const TEXT = {
   appName: "Agent Desk",
@@ -80,7 +81,7 @@ export const TEXT = {
   },
   /** @param {string} label @param {number} v @param {string} at when it resets, as a clock time */
   planChip: (label, v, at) => `${label} limit ${Math.round(v)}%${at ? ` · resets ${at}` : ""}`,
-  kinds: { question: "Question", permission: "Permission", waiting: "Your turn", decision: "Decision", dismissed: "Dismissed", result: "Result", failed: "Failed" },
+  kinds: { question: "Question", permission: "Permission", waiting: "Your turn", decision: "Decision", dismissed: "Dismissed", result: "Result", failed: "Failed", review: "Review" },
   /** @param {string} t */
   askedAt: (t) => `Asked at ${t}`,
   goTo: "Go to session",
@@ -91,8 +92,9 @@ export const TEXT = {
   noTerminal: "This session did not say which terminal it runs in",
   remoteNoLink: "Opened from another device: answer here, or go to the computer",
   keysHint: "oldest first · ↑ ↓ · 1–9 picks an option, Enter sends it · Ctrl+Enter sends · Enter goes to the session",
-  /** @param {boolean} resultsToo */
-  allClear: (resultsToo) => `${CLEAR}: ${clearRest(resultsToo)}.`,
+  /** @param {boolean} resultsToo @param {number} [reviews] */
+  allClear: (resultsToo, reviews = 0) =>
+    reviews ? `${CLEAR}: nothing needs you. ${reviews === 1 ? "One review is" : `${reviews} reviews are`} open in To review, at your pace.` : `${CLEAR}: ${clearRest(resultsToo)}.`,
   // The desk when nothing needs the developer: Needs you is one line, the sessions take the centre.
   quiet: {
     clear: CLEAR,
@@ -263,12 +265,16 @@ export const TEXT = {
     title: "While you were away",
     /** @param {string} t */
     since: (t) => `since ${t}`,
-    /** @param {number} done @param {number} failed @param {number} answered */
-    summary: (done, failed, answered) => [counts(done, failed), answered && `${answered} answered in the terminal`].filter(Boolean).join(", ") || "new questions",
+    /** @param {number} done @param {number} failed @param {number} answered @param {number} [stale] reviews left alone for days */
+    summary: (done, failed, answered, stale = 0) =>
+      [counts(done, failed), answered && `${answered} answered in the terminal`, stale && `${plural(stale, "review", "reviews")} waiting for you`].filter(Boolean).join(", ") || "new questions",
     waits: COLS.needs,
     failed: "Failed",
     finished: "Finished",
     answered: "Answered in the terminal",
+    reviews: "Reviews waiting",
+    /** @param {string} title @param {string} day */
+    untouched: (title, day) => `${title} · untouched since ${day}`,
     /** @param {number} n */
     more: (n) => `+${n} more`,
     dismiss: "Dismiss this summary",
@@ -389,6 +395,7 @@ export const TEXT = {
     /** @param {number} n */
     entries: (n) => plural(n, "entry", "entries"),
     answer: "Answer: ",
+    answers: "Answers sent: ",
     viaDesk: " (from the desk)",
     understood: "Understood as: ",
     /** @param {string} q */
@@ -406,6 +413,78 @@ export const TEXT = {
     noConnection: "Can't reach the desk: check this device's connection and Tailscale, then try again.",
     wrong: "That PIN is not right. Try again.",
     tooMany: "Too many wrong PINs. Try again in 15 minutes.",
+  },
+  review: {
+    group: "Reviews",
+    results: "Results",
+    new: "New",
+    /** @param {number} n */
+    round: (n) => `Round ${n}`,
+    /** @param {number} done @param {number} total */
+    count: (done, total) => `${done} of ${total}`,
+    notStarted: "Not started",
+    open: "Open",
+    continue: "Continue",
+    /** @param {string} where @param {string} t */
+    lastChange: (where, t) => `Last change on ${where} · ${t}`,
+    /** @param {string} t */
+    published: (t) => `Published ${t} by the session`,
+    /** @param {string} day */
+    untouched: (day) => `Untouched since ${day}`,
+    where: { thisComputer: "this computer", yourComputer: "your computer", phone: "your phone" },
+    /** @param {string} t @param {string | null} read when the session read it, if it did after this send */
+    sentSession: (t, read) => `Sent to the session ${t} · ${read ? `read ${read}` : "not read yet"} · you can go on and send again`,
+    /** @param {string} t @param {string | null} read */
+    sentOther: (t, read) => `Copied for another conversation ${t} · ${read ? `read ${read}` : "not read yet"}`,
+    line: "Review",
+    back: "Desk",
+    backTitle: "Back to the desk (Esc)",
+    frameTitle: "The review page",
+    saved: "Saved",
+    /** On this computer, what is saved reaches the phone too: said where the bar has the room. */
+    savedEverywhere: " · on your phone too",
+    saving: "Saving…",
+    /** @param {string} why */
+    notSaved: (why) => `Not saved: ${why}`,
+    offlineSaved: "Kept on this device: saved to the desk once it answers",
+    /** @param {"phone" | "computer" | null} from */
+    sync: (from) => (from ? `New changes from your ${from}` : "New changes made elsewhere"),
+    update: "Update",
+    send: "Send",
+    /** @param {string} provider */
+    sendTo: (provider) => ` to ${provider}`,
+    sheet: {
+      title: "Send the review",
+      /** @param {number} total */
+      complete: (total) => `All ${total} reviewed.`,
+      /** @param {string} count @param {"phone" | "computer"} other */
+      partial: (count, other) => `${count} reviewed. Send what you have now and go on later, here or on your ${other}.`,
+      none: "Nothing reviewed yet.",
+      session: "To the session that asked",
+      sessionNow: "waiting: it gets it now",
+      sessionNext: "working: it gets it at its next step",
+      ended: "It ended: no message reaches it. Send it to another conversation.",
+      notTaking: "It is not taking messages from the desk right now. Send it to another conversation.",
+      other: "To another conversation",
+      /** @param {string} provider */
+      otherHint: (provider) => `Copy one line and paste it in any ${provider} session, today or in a few days`,
+      sessionLine: "What the session receives, word for word",
+      otherLine: "The line you paste in the other conversation",
+      answers: "The answers it will read",
+      /** @param {number} n */
+      noSummary: (n) => `The page has not handed over its summary: the session reads everything the page saved (${plural(n, "entry", "entries")}).`,
+      keep: "Keep it in To review to go on later",
+      cancel: "Cancel",
+      go: "Send",
+      copyLine: "Copy the line",
+      /** @param {string} where */
+      sent: (where) => `Sent to ${where}`,
+      copied: "Copied: paste it in the other conversation",
+      copyFailed: "Copy failed: select the line and copy it",
+      changed: "The review changed meanwhile: check the line and send again",
+    },
+    /** @param {string} what */
+    badMessage: (what) => `The review page sent something the desk does not take: ${what}`,
   },
   zoom: { in: "Zoom in", out: "Zoom out", fit: "Fit", previous: "Previous image (←)", next: "Next image (→)" },
 };

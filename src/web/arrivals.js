@@ -48,7 +48,7 @@ function placeArrival() {
     if (open) el.showPopover();
     if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
   }
-  const head = host.querySelector(":scope > .dhead");
+  const head = host.querySelector(":scope > :is(.dhead, .rv-head)");
   el.style.setProperty("--dialog-head", `${head ? Math.round(head.getBoundingClientRect().bottom) : 0}px`);
   el.dataset.edge = host === document.body ? "bottom" : "top";
 }

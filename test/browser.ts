@@ -106,6 +106,8 @@ export class Browser {
 export class Page {
   /** Uncaught exceptions, console errors and browser errors (CSP, failed loads), in order. */
   readonly errors: string[] = [];
+  /** The sessions attached to this page's out-of-process frames (a sandboxed iframe runs in its own process), by target. */
+  private readonly frames = new Map<string, string>();
 
   private readonly browser: Browser;
   private readonly sessionId: string;
@@ -136,6 +138,36 @@ export class Page {
       if (entry.level === "error") this.errors.push(`${entry.text} ${entry.url ?? ""}`.trim());
     } else if (m.method === "Runtime.consoleAPICalled" && p.type === "error") {
       this.errors.push((p.args as { value?: unknown; description?: string }[]).map((a) => String(a.value ?? a.description)).join(" "));
+    }
+  }
+
+  /**
+   * The value of an expression run in this page's one frame whose address holds `url`, once it has
+   * loaded. Such a frame (a sandboxed iframe) runs in a process of its own: it is reached as its own target.
+   */
+  async inFrame<T>(url: string, expression: string): Promise<T> {
+    const end = Date.now() + WAIT_MS;
+    for (;;) {
+      const { targetInfos } = await this.browser.send<{ targetInfos: { targetId: string; type: string; url: string; parentFrameId?: string }[] }>("Target.getTargets");
+      // A frame replaced lingers a moment as a target: only once it is gone is the one left the page's.
+      const found = targetInfos.filter((t) => t.type === "iframe" && t.parentFrameId === this.targetId && t.url.includes(url));
+      const target = found.length === 1 ? found[0] : undefined;
+      if (target) {
+        let session = this.frames.get(target.targetId);
+        if (!session) {
+          session = (await this.browser.send<{ sessionId: string }>("Target.attachToTarget", { targetId: target.targetId, flatten: true })).sessionId;
+          this.frames.set(target.targetId, session);
+        }
+        type Evaluated = { result: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text: string } };
+        const ready = await this.browser.send<Evaluated>("Runtime.evaluate", { expression: "document.readyState === 'complete'", returnByValue: true }, session).catch(() => null);
+        if (ready?.result.value === true) {
+          const r = await this.browser.send<Evaluated>("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, session);
+          if (r.exceptionDetails) throw new Error(`${expression}: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+          return r.result.value as T;
+        }
+      }
+      if (Date.now() > end) throw new Error(`no loaded frame at ${url} in the page after ${WAIT_MS} ms`);
+      await new Promise((r) => setTimeout(r, 50));
     }
   }
 

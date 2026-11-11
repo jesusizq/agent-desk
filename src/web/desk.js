@@ -9,10 +9,11 @@ import { ago, firstLine, headline, heat, hm, stamp } from "./format.js";
 import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
 import { badge, bar, beacon, dot, emptyState, goLink, LOCAL_URL, localLink, planGauge, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
 import { openResult } from "./result.js";
+import { reviewLine, reviewTile } from "./review.js";
 import { imageUrl, post, run } from "./server.js";
 import { baseBranchOf } from "./projects.js";
 import { openSession } from "./session.js";
-import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
+import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, openReviews, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -151,7 +152,7 @@ function inboxColumn({ items, failures, count }, resolved, quiet) {
   const rows = [...items.filter((it) => it !== selected).map(questionRow), ...failures.map(failureRow)];
   const reviewEmpty = !data.results.some((r) => inProject(r.sessionId) && isNew(r));
   // Earlier results are offered once, by To review.
-  const clear = emptyState("allclear", TEXT.allClear(reviewEmpty), { mark: dot("done") });
+  const clear = emptyState("allclear", TEXT.allClear(reviewEmpty, openReviews().length), { mark: dot("done") });
   return column("needs", count || null, count || resolved ? [selected ? nextCard(selected) : null, rows] : clear, {
     aside: items.length > 1 ? h("span", { class: "keys-only faint" }, TEXT.keysHint) : null,
     list: true,
@@ -165,7 +166,7 @@ function allClearLine() {
     { class: "all-clear", role: "status", "data-key": "clear-line" },
     dot("done"),
     h("b", {}, TEXT.quiet.clear),
-    h("span", { class: "clear-rest" }, TEXT.quiet.rest(!toReview().length)),
+    h("span", { class: "clear-rest" }, TEXT.quiet.rest(!toReview().length, openReviews().length)),
   );
 }
 
@@ -176,7 +177,7 @@ function showEarlierResults() {
 }
 
 /** A result not seen yet as a tile: its first picture and its title; × marks it seen without opening it. @param {Result} r */
-function reviewTile(r) {
+function resultTile(r) {
   const first = r.images[0];
   const s = S(r.sessionId);
   return h(
@@ -200,12 +201,28 @@ function dismissButton(r) {
   return h("button", { class: "rdismiss icon-btn", "aria-label": label, title: label, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(post(`/api/results/${r.id}/seen`))) }, icon("x"));
 }
 
-/** Finished work not looked at yet; failures wait in the inbox instead, and what was seen is in History. */
+/**
+ * The reviews sessions published, at the developer's pace, then finished work not looked at yet;
+ * failures wait in the inbox instead, and what was seen is in History.
+ */
 function reviewColumn() {
   const list = toReview();
-  if (list.length) return column("review", list.length, h("div", { class: "rtiles", "data-list": true }, list.map(reviewTile)), { quiet: true });
+  const reviews = openReviews();
   const earlier = h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory);
-  return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: earlier }), { quiet: true });
+  if (!list.length && !reviews.length) return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: earlier }), { quiet: true });
+  const results = list.length ? h("div", { class: "rtiles", "data-list": true, "data-key": "results" }, list.map(resultTile)) : null;
+  if (!reviews.length) return column("review", list.length, results, { quiet: true });
+  return column(
+    "review",
+    list.length + reviews.length,
+    h(
+      "div",
+      { class: "rv-list", "data-key": "reviews" },
+      h("div", { class: "rv-group" }, TEXT.review.group),
+      h("div", { class: "rv-tiles", "data-list": true }, reviews.map(reviewTile)),
+      results ? [h("div", { class: "rv-group" }, TEXT.review.results), results] : h("div", { class: "rv-earlier" }, earlier),
+    ),
+  );
 }
 
 /** @param {Session} s */
@@ -280,6 +297,7 @@ function sessionCard(s, rich) {
     ),
     shown,
     shown.length && !rich ? null : quietLine(s),
+    openReviews().filter((r) => r.sessionId === s.id).map(reviewLine),
     matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
     rich ? agentLines(as) : working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
     rich ? workLine(s, m) : m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
@@ -394,7 +412,7 @@ export function board() {
   const box = inbox();
   const resolved = resolvedItem();
   const quiet = !box.count && !resolved && !ONE_COLUMN.matches;
-  const reviewEmpty = !toReview().length;
+  const reviewEmpty = !toReview().length && !openReviews().length;
   return h(
     "main",
     { class: `board${quiet ? " quiet" : ""}${reviewEmpty ? " review-empty" : ""}`, "data-tab": ui.tab },

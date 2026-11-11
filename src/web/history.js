@@ -6,6 +6,7 @@ import { attachedImages } from "./conversation.js";
 import { dayLabel } from "./format.js";
 import { badge, emptyState } from "./pieces.js";
 import { openResult } from "./result.js";
+import { openReview } from "./review.js";
 import { data, inProject, label, page, S, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").DeskState} DeskState */
@@ -18,7 +19,7 @@ function highlight(text, q) {
 }
 /**
  * @typedef {{ at: string, sid: string, type: "decision" | "result", kind: keyof typeof TEXT.kinds,
- *   title: string, answer?: string, viaDesk?: boolean, images?: string[], note?: string, result?: Result, where: string, hay: string }} Entry
+ *   title: string, answer?: string, viaDesk?: boolean, images?: string[], note?: string, result?: Result, review?: string, where: string, hay: string }} Entry
  */
 // History draws this many entries at first, and this many more on demand: a search redraws only those.
 const HISTORY_PAGE = 50;
@@ -33,7 +34,9 @@ function historyEntries() {
       at: x.closedAt ?? x.askedAt,
       sid: x.sessionId,
       type: "decision",
-      kind: x.status === "dismissed" ? "dismissed" : x.kind === "permission" ? "permission" : "decision",
+      // A review sent from the desk: its answers, kept as a decision (never in Needs you).
+      kind: x.review ? "review" : x.status === "dismissed" ? "dismissed" : x.kind === "permission" ? "permission" : "decision",
+      ...(x.review ? { review: x.review.id } : {}),
       title: x.text,
       ...(x.answer ? { answer: x.answer.text, viaDesk: x.answer.via === "desk", images: x.answer.images ?? [] } : {}),
       ...(x.interpretation ? { note: x.interpretation } : {}),
@@ -87,17 +90,23 @@ export function historyView() {
       entries.length ? h("div", { class: "faint hcount" }, t.entries(entries.length)) : null,
       entries.length
         ? h("div", { class: "hlist" }, shown.map((e) => {
-            const open = e.result;
+            const result = e.result;
+            const review = e.review && data.reviews.some((r) => r.id === e.review) ? e.review : undefined;
+            const open = result ? () => openResult(result) : review ? () => openReview(review) : null;
             return h(
               open ? "button" : "div",
-              { class: `hitem${open ? " open" : ""}`, onclick: open ? () => openResult(open) : null },
+              { class: `hitem${open ? " open" : ""}`, onclick: open },
               h("div", { class: "hwhen" }, dayLabel(e.at)),
               h(
                 "div",
                 {},
                 h("div", { class: "meta" }, badge(e.kind), highlight(e.where, q)),
                 h("div", { class: "hq" }, highlight(e.title, q)),
-                e.answer !== undefined ? h("div", { class: "ha" }, t.answer, h("b", {}, highlight(e.answer, q)), e.viaDesk ? t.viaDesk : "") : null,
+                e.answer !== undefined
+                  ? e.kind === "review"
+                    ? h("div", { class: "ha rv-ha" }, t.answers, h("span", {}, highlight(e.answer, q)))
+                    : h("div", { class: "ha" }, t.answer, h("b", {}, highlight(e.answer, q)), e.viaDesk ? t.viaDesk : "")
+                  : null,
                 e.images?.length ? attachedImages(e.images) : null,
                 e.note ? h("div", { class: "hi" }, e.type === "decision" ? t.understood : "", highlight(e.note, q)) : null,
               ),

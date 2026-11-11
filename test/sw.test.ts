@@ -6,6 +6,8 @@ import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import * as vm from "node:vm";
+import { REVIEW_CSP } from "../src/server/security.ts";
+import { reviewDocument } from "../src/server/server.ts";
 import { Browser, findChrome } from "./browser.ts";
 
 const chrome = findChrome();
@@ -90,6 +92,27 @@ describe("service worker requests", () => {
   });
 });
 
+describe("service worker reviews", () => {
+  /** The worker's own top-level names, as it runs. */
+  const worker = () => {
+    const context = vm.createContext({ self: { addEventListener: () => {} }, URL });
+    vm.runInContext(SW.toString(), context);
+    return (name: string) => vm.runInContext(name, context) as unknown;
+  };
+
+  it("serves a review offline under the same sandbox as the desk", () => {
+    assert.equal(worker()("REVIEW_CSP"), REVIEW_CSP);
+  });
+
+  it("builds a review's page offline byte for byte as the desk does", () => {
+    const inject = worker()("injectReview") as (html: string, state: unknown, shim: string) => string;
+    const state = { data: { "a</script><script>alert(1)": "<b>x</b>" }, summary: "ok", rev: 3 };
+    for (const html of ["<!doctype html><html><head><title>t</title></head><body>x</body></html>", '<HEAD lang="en"><meta charset="utf-8">', "<header>no head</header>", "<head/><p>"]) {
+      assert.equal(inject(html, state, "/*shim*/"), reviewDocument(html, state, "/*shim*/"), html);
+    }
+  });
+});
+
 describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROME)" }, () => {
   let browser: Browser;
   let server: http.Server;
@@ -98,10 +121,34 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
   /** Set, the desk answers as to a device that entered the PIN: with when its unlock ends. Unset, as to this computer. */
   let unlockEnds: number | undefined;
   const SAVED_TEXT = "the desk";
+  const REVIEW = "rv-offline";
+  const REVIEW_HTML = "<!doctype html><html><head><title>cards</title></head><body>cards</body></html>";
+  const REVIEW_SHIM = "/* the shim */";
+  let reviewSaved: { data: Record<string, string>; rev: number } = { data: {}, rev: 0 };
 
   before(async () => {
     server = http.createServer((req, res) => {
       if (req.url === "/sw.js") return res.writeHead(200, { "Content-Type": "text/javascript" }).end(SW);
+      if (req.url?.startsWith("/review") || req.url?.startsWith("/api/reviews/")) {
+        if (mode === "dropped") return req.socket.destroy();
+        const unlock = unlockEnds === undefined ? {} : { "X-Agent-Desk-Unlock-Ends": String(unlockEnds) };
+        if (req.url === "/review-shim.js") return res.writeHead(200, { "Content-Type": "text/javascript", ...unlock }).end(REVIEW_SHIM);
+        if (req.url === `/review/${REVIEW}/raw`) return res.writeHead(200, { "Content-Security-Policy": REVIEW_CSP, "Content-Type": "text/html", ...unlock }).end(REVIEW_HTML);
+        if (req.url === `/review/${REVIEW}`) return res.writeHead(200, { "Content-Security-Policy": REVIEW_CSP, "Content-Type": "text/html", ...unlock }).end(reviewDocument(REVIEW_HTML, reviewSaved, REVIEW_SHIM));
+        if (req.url === `/api/reviews/${REVIEW}/state` && req.method === "GET") return res.writeHead(200, { "Content-Type": "application/json", ...unlock }).end(JSON.stringify(reviewSaved));
+        if (req.url === `/api/reviews/${REVIEW}/state` && req.method === "POST") {
+          let body = "";
+          req.on("data", (c: Buffer) => (body += c.toString()));
+          req.on("end", () => {
+            const { ops } = JSON.parse(body) as { ops: { op: string; key: string; value: string }[] };
+            for (const o of ops) if (o.op === "set") reviewSaved.data[o.key] = o.value;
+            reviewSaved.rev++;
+            res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ rev: reviewSaved.rev }));
+          });
+          return;
+        }
+        return res.writeHead(404).end();
+      }
       if (req.url === "/" || req.url === "/api/state") {
         if (mode === "hung") return; // never answered: a computer asleep
         if (mode === "gateway") return res.writeHead(502).end("Bad Gateway");
@@ -207,5 +254,31 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
     mode = "up";
     assert.equal(await fetched("/"), "desk", "an answer under an unlock already ended by this device's clock is shown");
     assert.equal(await savedCount(), 0, "but not saved");
+  });
+
+  it("opens a review offline from what the device kept, with the changes made since, under the review's sandbox", async () => {
+    unlockEnds = Date.now() + 3600_000;
+    reviewSaved = { data: { a: "1" }, rev: 1 };
+    const { page, savedCount } = await openDesk();
+    /** What the worker answers for a review route: its status, CSP and text, or "failed". */
+    const get = (route: string, init = "{}") =>
+      page.eval<{ status: number; csp: string | null; text: string } | "failed">(`fetch(${JSON.stringify(route)}, ${init}).then(async (r) => ({ status: r.status, csp: r.headers.get("Content-Security-Policy"), text: await r.text() }), () => "failed")`);
+    const save = (key: string, value: string) => get(`/api/reviews/${REVIEW}/state`, `{ method: "POST", headers: { "Content-Type": "application/json" }, body: ${JSON.stringify(JSON.stringify({ ops: [{ op: "set", key, value }] }))} }`);
+    // What the desk page fetches when it opens a review on a device with a worker (src/web/review.js).
+    for (const route of [`/review/${REVIEW}/raw`, "/review-shim.js", `/api/reviews/${REVIEW}/state`]) assert.notEqual(await get(route), "failed");
+    await save("b", "2");
+    mode = "dropped";
+    assert.equal(await save("c", "3"), "failed", "offline, the change does not reach the desk");
+    const offline = await get(`/review/${REVIEW}`);
+    assert.notEqual(offline, "failed");
+    if (offline === "failed") return;
+    assert.equal(offline.csp, REVIEW_CSP);
+    assert.equal(offline.text, reviewDocument(REVIEW_HTML, { data: { a: "1", b: "2", c: "3" }, rev: 2 }, REVIEW_SHIM), "the page with every change kept, sent or not");
+
+    mode = "locked";
+    assert.match(await page.eval<string>("fetch('/api/state').then((r) => r.text())"), /locked/);
+    assert.equal(await savedCount(), 0, "the PIN ended: the review's copies go with the rest");
+    mode = "dropped";
+    assert.equal(await get(`/review/${REVIEW}`), "failed");
   });
 });
