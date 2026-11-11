@@ -19,7 +19,10 @@ answers given on the page back to the session that asked.
 | `PostToolUse`, `PostToolUseFailure` (`Agent`, `Task`) | the call's result settles its launch: the sub-agent it names (`tool_response.agentId`) is the one paired with that launch; a failed call (`error`) leaves a launch no sub-agent started failed, with the error as its activity (done, "Interrupted before it started", when interrupted). A background launch (`status: async_launched`) stays working until its sub-agent stops |
 | `PostToolUse` (`deliver`) | while `.inbox-pending` exists in the store, hands the session the messages written to it on the desk while it works, as context it reads before its next step; a sub-agent's tool call leaves them |
 | `Notification` (`elicitation_dialog`, `agent_needs_input`) | a question with the notification's text |
-| `PreToolUse` (`Agent`, `Task`), `SubagentStart`, `SubagentStop` | one agent per launch, whose goal is the description given to the Agent tool (for agents launched otherwise, such as a workflow's, the label Claude Code notes in `<session>/subagents/…/agent-<id>.meta.json`), done when it stops, or when a turn starts or ends and its transcript ends interrupted (an interrupted agent gets no `SubagentStop`). The record the session made with `agent-desk agent "<label>"` before the hooks knew the label becomes that agent's, so each agent has one record; one that no sub-agent takes is ended when a turn starts or ends while none of the session's sub-agents runs |
+| `PreToolUse` (`Agent`, `Task`), `SubagentStart`, `SubagentStop` | one agent per launch, named after the description given to the Agent tool (for agents launched otherwise, such as a workflow's, the label Claude Code notes in `<session>/subagents/…/agent-<id>.meta.json`), with the prompt's opening sentence as its summary when it reads as one (a sentence of its own line, 4 words to 160 characters, no code, path, link, markup, label or role), and the sub-agent that launched it when one did; done when it stops, or when a turn starts or ends and its transcript ends interrupted (an interrupted agent gets no `SubagentStop`). The session never registers one: `agent-desk agent` only adds to these records |
+| `PreToolUse` (`SendMessage`) | a message to one of the session's sub-agents (`to` its id) works its record again, its activity the message's `summary` (else its first line), whether it resumes a stopped agent or redirects a running one; its `SubagentStart` and `SubagentStop` follow under the same id. Recorded before the message goes, so a resumed agent's stop always comes after it |
+| `PostToolUse` (`TaskStop`) | stopping a sub-agent (`task_type: local_agent`) ends its record, done with "Stopped by the session"; `PostToolUse` always starts the adapter for it |
+| `UserPromptSubmit`, `Stop` | a record still open (working, waiting, blocked, idle) with no sub-agent behind it is done, "Not seen running": one that never followed a sub-agent (made by an earlier `agent-desk agent`) at either; at `Stop`, which lists what still runs in the background (`background_tasks`), also a launch no sub-agent took and a sub-agent no longer listed. A background sub-agent still listed stays, so does one a workflow still running launched (Claude Code lists the workflow, not its agents), and one a listed sub-agent launched |
 | `SessionEnd` | the session ends; what was still open is dismissed |
 
 Every event also refreshes the session's permission mode in its metrics.
@@ -82,6 +85,11 @@ button in the session panel.
 - Those notes and the transcript's entries are Claude Code's internal files, not a documented
   interface: if they move or change shape, the corrections stop and agents launched outside the
   Agent tool lose their goal.
+- `Stop`'s `background_tasks` (`id`, `type`: `subagent`, `workflow`…, `description`) lists only the
+  tasks running in the background (read from Claude Code 2.1.322, not documented). Without it, the
+  turn's end closes only records that never followed a sub-agent. A workflow's agents are not listed
+  one by one: they stay open while any workflow runs. A sub-agent addressed by a name rather than its
+  id (`SendMessage`) is marked working by its own `SubagentStart` only.
 - Claude Code shows the AskUserQuestion dialog in the terminal while the `PermissionRequest` hook
   waits (verified 2026-10-29), so it can be answered in either place. For permission prompts this is
   not documented and not verified here.

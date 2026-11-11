@@ -7,8 +7,9 @@ import { createInterface } from "node:readline";
 import * as path from "node:path";
 import { parseArgs, type ParseArgsConfig } from "node:util";
 import { compact, InputError, int, localUrl, nonEmpty, oneOf } from "../core/check.ts";
-import { ID_PATTERN, id, slug } from "../core/ids.ts";
-import { AGENT_STATES, type Agent, type Review, type ReviewProgress, reviewStatus, reviewTitle } from "../core/model.ts";
+import { ID_PATTERN, id } from "../core/ids.ts";
+import { AGENT_STATES, type Review, type ReviewProgress, reviewStatus, reviewTitle } from "../core/model.ts";
+import { sessionListeners, urlPort } from "../core/ports.ts";
 import { ancestors, sessionFinished } from "../core/proc.ts";
 import { locateProject } from "../project/locate.ts";
 import { storeHome } from "../store/paths.ts";
@@ -28,9 +29,12 @@ Posting (from a session; the session is found from the calling process, or --ses
   agent-desk result "<title>" [--summary "<text>"] [--image <path>[::caption]]... [--compare <i>,<j>]
                     [--url http://localhost:PORT/...] [--failed] [--assumption "<text>"]...
                     [--decision "<text>"]... [--check "<criterion> => <how it was verified>"]...
-  agent-desk agent "<name or description>" [--summary "<what it must deliver>"] [--goal "<text>"] [--state ${AGENT_STATES.join("|")}]
-                    [--activity "<text>"] [--branch <name>] [--commit <sha>] [--after "<name>"]...
+  agent-desk agent ["<description>"] [--summary "<what it must deliver>"] [--goal "<text>"] [--state ${AGENT_STATES.join("|")}]
+                    [--activity "<text>"] [--branch <name>] [--commit <sha>] [--after "<description>"]...
+                    adds to a sub-agent the hooks recorded when it was launched (by its description, or the
+                    latest launched or resumed); refused when no such sub-agent was launched
   agent-desk service <name> <http://localhost:PORT/...>    agent-desk service <name> --stop
+                    names a server; the desk already shows those listening in the session's processes
   agent-desk interpret "<how the answer given this turn was understood>"
                     refused when no question was answered in this turn
   agent-desk unanswered [--question <id>]
@@ -125,16 +129,20 @@ const COMMANDS: Record<string, Command> = {
       },
       1,
     );
-    const name = slug(nonEmpty(positionals[0], "agent name"));
-    const fields: Partial<Omit<Agent, "sessionId" | "name">> = {};
-    if (values.goal !== undefined) fields.goal = values.goal;
-    if (values.summary !== undefined) fields.summary = values.summary;
-    if (values.state !== undefined) fields.state = oneOf(AGENT_STATES)(values.state, "--state");
-    if (values.activity !== undefined) fields.activity = values.activity;
-    if (values.branch !== undefined) fields.branch = values.branch;
-    if (values.commit !== undefined) fields.commit = values.commit;
-    if (values.after !== undefined) fields.after = values.after.map(slug);
-    const agent = store.upsertAgent(resolveSession(store, values.session), name, fields);
+    const name = positionals[0] === undefined ? undefined : nonEmpty(positionals[0], "agent name", 2000);
+    const agent = store.reportAgent(
+      resolveSession(store, values.session),
+      name,
+      compact({
+        goal: values.goal,
+        summary: values.summary,
+        state: values.state === undefined ? undefined : oneOf(AGENT_STATES)(values.state, "--state"),
+        activity: values.activity,
+        branch: values.branch,
+        commit: values.commit,
+        after: values.after,
+      }),
+    );
     print(`agent ${agent.name}: ${agent.state}`);
   },
 
@@ -147,8 +155,12 @@ const COMMANDS: Record<string, Command> = {
       print(`service ${name} removed`);
       return;
     }
-    const s = store.addService({ sessionId, name, url: localUrl(positionals[1], "service url") });
+    const url = localUrl(positionals[1], "service url");
+    const own = store.getSession(sessionId)?.process;
+    const detected = own !== undefined && (sessionListeners([own])[0] ?? []).some((l) => l.port === urlPort(url));
+    const s = store.addService(compact({ sessionId, name, url, detected: detected || undefined }));
     print(`service ${s.name}: ${s.url}`);
+    print(detected ? "Listening in this session's processes: shown under this name until it stops." : `Not listening in this session's processes (a container's port, or a server started apart): shown until agent-desk service ${JSON.stringify(s.name)} --stop.`);
   },
 
   interpret(args, store) {

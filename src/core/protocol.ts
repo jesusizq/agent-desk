@@ -156,6 +156,13 @@ export type Agent = {
    * launch that never started, and keeps the launch apart from the agent its adapter paired with it.
    */
   launch?: string;
+  /**
+   * The provider's id of the sub-agent whose call launched this one, when a sub-agent launched it: it
+   * runs while that one runs, even where the provider lists only the agents its session launched.
+   */
+  launchedBy?: string;
+  /** When the session last sent it a message (resuming it, or redirecting it while it ran). */
+  resumedAt?: string;
   /** Short title of the task (the description it was launched with). */
   goal?: string;
   /** One sentence from the orchestrating session: what this agent must deliver. */
@@ -217,6 +224,12 @@ export type Service = {
   name: string;
   url: string;
   startedAt: string;
+  /**
+   * The desk found its port listening in the session's own processes (src/core/ports.ts): it is shown
+   * only while it still listens there. Without it, a server the session named that the desk cannot
+   * see (a container's port) is shown until the session stops it.
+   */
+  detected?: boolean;
 };
 
 export const SUGGESTION_REASONS = ["context-full"] as const;

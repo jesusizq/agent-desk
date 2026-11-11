@@ -12,10 +12,10 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | --- | --- | --- |
 | `sessions/<session>.json` | `Session`: provider label, project (`name`, `dir`, and `worktree` when the session works in a linked git worktree of it; see below), title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded (`activityIsCall` when that activity is the tool call its adapter recorded, "Bash: npm test", rather than words the session or the adapter wrote: the page leaves calls off its session cards), when its latest tool calls failed in a row and the latest of them (`failedAt`, `failedWhat`: a successful call or the end of the turn empties them; the page warns at three), whether its latest call started or awaits a job of its own (`waitsForJob`: a background command or agent, a monitor, a wait; the page then shows it waiting on its job, never quiet), when its latest turn ended (`turnEndedAt`: an answer given after it belongs to the turn now running), last message of the turn, how many messages its conversation has received (`messageCount`, counted by the store as each is added, so a page showing the conversation sees one added mid-turn), whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
 | `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer, how it was given (`via`: `terminal`, `desk`) and whether it is only `probable` (see below), interpretation, `setAside`: the replies that closed it without answering it (see below), `dialog` when it is a provider dialog whose answer only the hook waiting for it takes, `several` when more than one option can be picked (the answer names them, separated by `, `), `group` (`id`, `index` from 0, `size` from 2 to 10) shared by questions asked together, which the session waits for all of | hooks, `agent-desk ask`, the page |
-| `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded (`activityIsCall` as on `Session`; the store drops the mark whenever an activity is written without it, so `agent-desk agent --activity` always reads as the session's words), when its latest tool calls failed in a row and the latest of them, and whether its latest call started or awaits a job of its own (as on `Session`), branch, commit, `after` (agents it builds on), times, `ref`, the provider's id of the agent an adapter follows (none on a record only the session reported), and `launch`, the provider's id of the call that launched it, when the adapter follows launches. An adapter that learns an agent's name late renames its record (`Store.renameAgent`); a record already under that name without `ref` is merged into it, keeping its goal, summary, branch, commit and `after` | hooks, `agent-desk agent` |
+| `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded (`activityIsCall` as on `Session`; the store drops the mark whenever an activity is written without it, so `agent-desk agent --activity` always reads as the session's words), when its latest tool calls failed in a row and the latest of them, and whether its latest call started or awaits a job of its own (as on `Session`), branch, commit, `after` (agents it builds on), times, `resumedAt` (when the session last sent it a message), `ref`, the provider's id of the agent an adapter follows, `launch`, the provider's id of the call that launched it, when the adapter follows launches, and `launchedBy`, the `ref` of the sub-agent that launched it, when one did. Records are made by adapters only (see Sub-agents). An adapter that learns an agent's name late renames its record (`Store.renameAgent`); a record already under that name without `ref` (made by an earlier CLI) is merged into it, keeping its goal, summary, branch, commit and `after` | hooks; `agent-desk agent` adds to them |
 | `results/<result>.json` | `Result`: title, summary, status, local URL, image ids, before/after pair, assumptions, taste decisions, checks, when it was seen (`seenAt`) | `agent-desk result` |
 | `images/<image>.<png\|jpg\|webp\|gif>` | a copy of each reported image, and each image the developer attaches to an answer or message on the page; type checked by its first bytes, 20 MB at most. One that no live result, answer or message shows is archived with the rest | `agent-desk result`, the page |
-| `services/<service>.json` | a local server of a session and its URL | `agent-desk service` |
+| `services/<service>.json` | a local server the session named, its URL, and `detected` when its port was listening in the session's processes as it was named (see Local servers) | `agent-desk service` |
 | `metrics/<session>.json` | what the session's status line shows; every field optional | status-line wrapper, hooks |
 | `inbox/<session>/<question>.json` | an answer given on the page, waiting for the session; an unreadable one is set aside as `.<name>.rejected` | the page |
 | `inbox/<session>/.listener.<pid>.json` | a process waiting for that session's answers | the adapter's waiter |
@@ -85,6 +85,46 @@ Anything else keeps the folder as its own project: a main checkout, a submodule 
 `.git/modules/`, has no `commondir`), a worktree of a bare repository or of a repository whose git
 folder lives elsewhere (`--separate-git-dir`), and git files that are missing, unreadable or
 inconsistent.
+
+## Sub-agents
+
+An adapter records each sub-agent from the session's own calls and its provider's hooks, with no
+call of the model; Claude Code's is in `adapters/claude-code/README.md`. A message the session sends
+an agent works the same record again, its stop ends it, and the session stopping an agent ends it as
+done, "Stopped by the session" (done, not failed: the session meant it, and ended records are told
+apart by their activity). At each turn's start and end, a record still open with no sub-agent running
+behind it is done, "Not seen running", so no record says it works when nothing does.
+
+`agent-desk agent` adds only what the hooks cannot know (`--summary`, `--after`, `--branch`,
+`--commit`, `--state blocked --activity "<why>"`) to an existing record of the calling session
+(`Store.reportAgent`, under the agents lock):
+
+- **Which record:** the one named after `"<description>"` (its record's name, or the description it
+  was launched with, compared as their slugs), the latest launched or resumed (`resumedAt`) when
+  several are; without it, the session's latest launched or resumed.
+- **None matching** is an input error (exit 2) saying no such sub-agent was launched and listing the
+  session's; nothing is made. A workflow's agent is found once it started and its label is known.
+- **`--after`** names other agents of the session the same way; one that matches none is an input
+  error. They are stored by record name.
+- **`--state`** cannot change an ended record (`done`, `failed`): its state belongs to the hooks.
+
+## Local servers
+
+The server shows as a running session's services the TCP ports in LISTEN state held by the
+processes it started through a shell (`src/core/ports.ts`), named after the command
+(`python3 -m http.server`, `vite`, `next dev`), at `http://localhost:<port>/` (`127.0.0.1` for a port
+bound to that address only; a port bound to any other address is left out). It reads only the
+session's process tree, from its recorded pid down (`/proc/<pid>/stat`, `/proc/<pid>/task/<tid>/children`,
+`/proc/<pid>/fd`, `/proc/<pid>/cmdline`), and `/proc/net/tcp`, `/proc/net/tcp6` and `/proc/stat`; it
+runs nothing and binds nothing. A direct child of the session's process that is no shell (a tool
+server the provider runs for itself) is left out with its own children. A detected server is not
+stored: it goes from the page when its process stops or the session ends.
+
+`agent-desk service <name> <url>` stays for two cases: naming a detected server or giving its path
+(the stored service, marked `detected`, replaces the detected one of its port and goes when that port
+closes), and a server the scan cannot see (a container's port, owned by the container runtime; a
+server started with `nohup … &`, which leaves the session's process tree when its shell exits),
+shown until `--stop`.
 
 ## What needs the developer
 
@@ -256,8 +296,8 @@ typed while it works, both reach the session. When the session ends, the questio
 | --- | --- |
 | `ask "<question>" --option A --option B [--context T]` | an open question with options |
 | `result "<title>" --summary S --image <path>[::caption] [--compare 0,1] [--url U] [--failed] [--assumption A] [--decision D] [--check "<criterion> => <verification>"]` | a result; images are copied; refused without `--image` or `--url`, unless `--failed` |
-| `agent "<description>" [--summary] [--goal] [--state] [--activity] [--branch] [--commit] [--after "<description>"]` | creates or updates the agent named after the description (the same name the hooks give it) |
-| `service <name> <url>` / `service <name> --stop` | a local server of the session |
+| `agent ["<description>"] [--summary] [--goal] [--state] [--activity] [--branch] [--commit] [--after "<description>"]` | adds to a sub-agent its adapter recorded (see Sub-agents); never makes one |
+| `service <name> <url>` / `service <name> --stop` | names a local server of the session, or one the desk cannot see (see Local servers) |
 | `interpret "<text>"` | how the session understood the answer of the turn now running (see below) |
 | `unanswered [--question <id>]` | the developer's reply did not answer the question: it opens again (see below) |
 | `scan <project dir> [--if-older-than S]` | measures the project's checkouts with read-only git and a file walk; sizes are re-measured at most hourly |

@@ -126,6 +126,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       syncPermissionMarker(store, problems);
       if (input.event !== "PermissionDenied") recordActivity(input, ctx, problems);
       if (input.event !== "PermissionDenied" && (f.tool_name === "Agent" || f.tool_name === "Task")) launchReturned(input, ctx);
+      if (input.event === "PostToolUse" && f.tool_name === "TaskStop") stoppedBySession(input, ctx);
       return { code: 0 };
 
     case "Notification": {
@@ -138,6 +139,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
 
     case "PreToolUse":
       if (f.tool_name === "Agent" || f.tool_name === "Task") launchAgent(input, ctx);
+      if (f.tool_name === "SendMessage") messageAgent(input, ctx);
       return { code: 0 };
 
     case "SubagentStart":
@@ -253,7 +255,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     }),
   );
   recordTurnTexts(input, store, message);
-  settleAgents(input, ctx, problems);
+  settleAgents(input, ctx, problems, runningTasks(input.raw.background_tasks));
   if (message) store.addMessage({ sessionId: sid, from: "session", text: message });
   const tasks = Array.isArray(input.raw.background_tasks) ? input.raw.background_tasks : [];
   const shells = tasks.filter((t) => typeof t === "object" && t !== null && (t as Fields).type === "shell").length;
@@ -442,13 +444,14 @@ export function endsInterrupted(transcript: string): boolean {
  *   (settleLaunch);
  * - an interrupted sub-agent gets no SubagentStop: one still working whose transcript ends
  *   interrupted;
- * - an agent the session reported with `agent-desk agent` that no sub-agent took (its name is not
- *   the label of any), once no sub-agent the hooks follow may still run. Should its sub-agent start
- *   later after all, it takes the sub-agent's state again with its label (settleName).
+ * - a record still open with no sub-agent running behind it (`runs`): one that never followed
+ *   a sub-agent (an earlier `agent-desk agent` made it) at either end; at the turn's end, when Claude
+ *   Code lists what still runs in the background (`running`), also a launch no sub-agent took and a
+ *   sub-agent no longer listed, as no other may run once the turn is over.
  * Like every change to which record follows which sub-agent, it ends with one record per sub-agent
  * (pairing), which also mends two records an older adapter left following the same one.
  */
-function settleAgents(input: Common, ctx: HookContext, problems: string[]): void {
+function settleAgents(input: Common, ctx: HookContext, problems: string[], running?: RunningTasks): void {
   const { store } = ctx;
   const sid = input.sessionId;
   pairing(store, sid, () => {
@@ -461,12 +464,58 @@ function settleAgents(input: Common, ctx: HookContext, problems: string[]): void
       }
     }
     const agents = store.listAgents(sid);
-    const followed = agents.filter((a) => a.ref !== undefined);
-    if (followed.length === 0 || followed.some((a) => a.state !== "done" && a.state !== "failed")) return;
     for (const agent of agents) {
-      if (agent.ref === undefined && agent.state === "working") store.updateAgent(sid, agent.name, { state: "done", activity: "No sub-agent of the session runs any more" });
+      if (!OPEN.has(agent.state) || (agent.ref !== undefined && (running === undefined || runs(agent, agents, running)))) continue;
+      store.updateAgent(sid, agent.name, { state: "done", activity: NOT_SEEN_RUNNING }, (a) => OPEN.has(a.state) && a.ref === agent.ref);
     }
   });
+}
+
+/** States of an agent that may still be at work. */
+const OPEN: ReadonlySet<Agent["state"]> = new Set(["working", "waiting", "blocked", "idle"]);
+const NOT_SEEN_RUNNING = "Not seen running";
+const STOPPED_BY_SESSION = "Stopped by the session";
+
+/** What Claude Code lists as still running in the background when a turn ends (Stop's `background_tasks`). */
+type RunningTasks = { agents: Map<string, string>; workflows: boolean };
+
+/** The sub-agents (id to description) and whether a workflow runs, from Stop's `background_tasks`; undefined when it has none. */
+function runningTasks(value: unknown): RunningTasks | undefined {
+  if (value === undefined || value === null) return undefined;
+  const tasks = list(value, "hook input.background_tasks", (v, w) => fields(v, w), 10_000);
+  const agents = new Map<string, string>();
+  let workflows = false;
+  for (const [i, t] of tasks.entries()) {
+    const where = `hook input.background_tasks[${i}]`;
+    const type = text(t.type ?? "", `${where}.type`, 100);
+    if (type === "workflow") workflows = true;
+    if (type !== "subagent") continue;
+    const agentId = text(t.id ?? "", `${where}.id`, 200);
+    if (!AGENT_ID.test(agentId)) throw new InputError(`${where}.id: expected letters, digits, _ or -, got ${JSON.stringify(agentId)}`);
+    agents.set(agentId, text(t.description ?? "", `${where}.description`, 10_000).trim());
+  }
+  return { agents, workflows };
+}
+
+/**
+ * Whether a sub-agent may run behind the record: its own is listed; or it awaits its start and a
+ * listed sub-agent of its description no record follows yet will take it; or it was not launched
+ * with the Agent tool (a workflow's, which Claude Code lists only as its workflow) while a workflow
+ * runs; or the sub-agent that launched it runs, as it then waits for it in the foreground.
+ */
+function runs(agent: Agent, agents: Agent[], running: RunningTasks, seen = new Set<string>()): boolean {
+  const ref = agent.ref;
+  if (ref === undefined || seen.has(ref)) return false;
+  seen.add(ref);
+  if (ref.startsWith(PENDING)) {
+    return [...running.agents].some(([id, description]) => description === agent.goal && !agents.some((a) => a.ref === id));
+  }
+  if (running.agents.has(ref) || (agent.launch === undefined && running.workflows)) return true;
+  const by = agent.launchedBy;
+  if (by === undefined) return false;
+  if (running.agents.has(by)) return true;
+  const parent = agents.find((a) => a.ref === by);
+  return parent !== undefined && runs(parent, agents, running, seen);
 }
 
 /**
@@ -672,14 +721,69 @@ function launchAgent(input: Common, ctx: HookContext): void {
   const toolInput = fields(input.raw.tool_input ?? {}, "hook input.tool_input");
   const description = text(toolInput.description ?? "", "tool_input.description", 2000).trim() || "agent";
   const type = text(toolInput.subagent_type ?? "general-purpose", "tool_input.subagent_type", 200);
+  const prompt = text(toolInput.prompt ?? "", "tool_input.prompt", 10_000_000);
   const toolUseId = text(input.raw.tool_use_id ?? "", "hook input.tool_use_id", 200);
+  const by = text(input.raw.agent_id ?? "", "hook input.agent_id", 200);
   ctx.store.addAgent(input.sessionId, slug(description), compact({
     type,
     ref: `${PENDING}${toolUseId}`,
     launch: toolUseId || undefined,
+    launchedBy: by || undefined,
     goal: description,
+    summary: plainSummary(prompt, description),
     state: "working" as const,
   }));
+}
+
+const ROLE = /^(?:you are|you're|act as|eres|actúa como|actua como)\b/i;
+
+/**
+ * The prompt's opening sentence, when it reads as a plain summary of the task: a sentence of its own
+ * line of 4 words or more and at most 160 characters, no code, path, link, markup or label, no role
+ * ("You are…"), not the description again. Otherwise none: a wrong summary is worse than none.
+ */
+export function plainSummary(prompt: string, description: string): string | undefined {
+  const line = firstLine(prompt.trim().split(/\n\s*\n/)[0] ?? "");
+  if (/^(?:[#>*+|-]|\d+[.)]|```)/.test(line)) return undefined;
+  const end = /[.!?](?=\s|$)/.exec(line);
+  const sentence = end ? line.slice(0, end.index + 1) : line;
+  const plain = !/[`<>{}[\]|\\$:@]|:\/\/|~\/|\S\/\S/.test(sentence) && !ROLE.test(sentence);
+  const sized = sentence.length >= 20 && sentence.length <= 160 && sentence.split(/\s+/).length >= 4;
+  return plain && sized && !sameWords(sentence, description) ? sentence : undefined;
+}
+
+/**
+ * A message the session sends one of its sub-agents (SendMessage, to its id) resumes it, or redirects
+ * it while it runs: the same record works again, on what the message is about, until its stop.
+ * Recorded before the message goes, so the stop of a resumed agent always comes after it.
+ */
+function messageAgent(input: Common, ctx: HookContext): void {
+  const toolInput = fields(input.raw.tool_input ?? {}, "hook input.tool_input");
+  const to = text(toolInput.to ?? "", "tool_input.to", 300).trim();
+  if (!AGENT_ID.test(to) || !ctx.store.listAgents(input.sessionId).some((a) => a.ref === to)) return;
+  const about = text(toolInput.summary ?? "", "tool_input.summary", 200).trim() || firstLine(text(toolInput.message ?? "", "tool_input.message", 10_000_000));
+  const at = new Date().toISOString();
+  updateByRef(ctx.store, input.sessionId, to, () => ({
+    state: "working",
+    activity: about ? bounded(about, 200) : "Message from the session",
+    activityAt: at,
+    resumedAt: at,
+    failedAt: undefined,
+    failedWhat: undefined,
+    waitsForJob: undefined,
+  }));
+}
+
+/** The session stopped one of its sub-agents (TaskStop of its id): its record ends, whatever it was doing. */
+function stoppedBySession(input: Common, ctx: HookContext): void {
+  const response = input.raw.tool_response;
+  const r = typeof response === "object" && response !== null && !Array.isArray(response) ? (response as Fields) : {};
+  const type = optional(r.task_type, "hook input.tool_response.task_type", (v, w) => text(v, w, 100));
+  if (type !== undefined && type !== "local_agent") return;
+  const toolInput = fields(input.raw.tool_input ?? {}, "hook input.tool_input");
+  const stopped = optional(r.task_id, "hook input.tool_response.task_id", (v, w) => text(v, w, 200)) ?? text(toolInput.task_id ?? toolInput.shell_id ?? "", "tool_input.task_id", 200);
+  if (!AGENT_ID.test(stopped)) return;
+  updateByRef(ctx.store, input.sessionId, stopped, (agent) => (OPEN.has(agent.state) ? { state: "done", activity: STOPPED_BY_SESSION, activityIsCall: undefined, waitsForJob: undefined } : undefined));
 }
 
 /** The Agent call that launched the record's agent; a record from an older adapter names it only while unpaired. */
@@ -939,10 +1043,9 @@ function settlePairing(input: Common, ctx: HookContext, agentId: string, label: 
 
 /**
  * A sub-agent that started before Claude Code noted its label was named after its type
- * ("workflow-subagent-3"); once the label is known, it takes the label's name, the one the session
- * reports it under (`agent-desk agent "<label>"`). A record the session already made under that
- * name, which follows no sub-agent, becomes this agent's: one record, with the session's summary,
- * branch and `after`, and this agent's id, state and times.
+ * ("workflow-subagent"); once the label is known, it takes the label's name. A record under that name
+ * which follows no sub-agent (an earlier `agent-desk agent` made it) becomes this agent's: one
+ * record, with the session's summary, branch and `after`, and this agent's id, state and times.
  */
 function settleName(input: Common, ctx: HookContext, agentId: string, label: string | undefined): void {
   if (!label) return;

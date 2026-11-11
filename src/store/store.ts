@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { compact, fields, InputError, int, isoTime, list, oneOf, optional, text } from "../core/check.ts";
-import { id, newId } from "../core/ids.ts";
+import { id, newId, slug } from "../core/ids.ts";
 import { addSamples, type PlanHistory } from "../core/limits.ts";
 import { isAlive, procInfo, sessionFinished } from "../core/proc.ts";
 import {
@@ -674,6 +674,47 @@ export class Store {
   }
 
   /**
+   * What the session adds to a sub-agent its adapter recorded (`agent-desk agent`): merged into the
+   * record named `name` (its record's name, or the description it was launched with), the latest
+   * launched or resumed when several match; without `name`, into the session's latest launched or
+   * resumed. It never makes a record: none matching is an input error, and so is an `after` naming
+   * no agent of the session. An ended record keeps the state its hooks gave it.
+   */
+  reportAgent(sessionId: string, name: string | undefined, fields: AgentFields): Agent {
+    this.requireSession(sessionId);
+    return this.withAgentsLocked(sessionId, () => {
+      const agents = this.listAgents(sessionId);
+      const latest = (found: Agent[]) => found.reduce<Agent | undefined>((best, a) => (best === undefined || lastLaunched(a) >= lastLaunched(best) ? a : best), undefined);
+      const known = () => {
+        const newest = [...agents].sort((a, b) => lastLaunched(b).localeCompare(lastLaunched(a)));
+        if (newest.length === 0) return "no sub-agent was launched in this session yet";
+        const more = newest.length > KNOWN_SHOWN ? ` and ${newest.length - KNOWN_SHOWN} earlier` : "";
+        return `this session's sub-agents, latest launched or resumed first: ${newest.slice(0, KNOWN_SHOWN).map((a) => a.name).join(", ")}${more}`;
+      };
+      const named = (value: string) => {
+        const key = slug(value);
+        return latest(agents.filter((a) => a.name === key)) ?? latest(agents.filter((a) => a.goal !== undefined && slug(a.goal) === key));
+      };
+      const agent = name === undefined ? latest(agents) : named(name);
+      if (!agent) {
+        const hint = name !== undefined && agents.length > 0 ? `; leave the name out to add to the latest launched or resumed, ${latest(agents)?.name}` : "";
+        throw new InputError(`${name === undefined ? "no sub-agent" : `no sub-agent ${JSON.stringify(name)}`} was launched in this session, so there is nothing to add to: sub-agents are recorded by the session's hooks when they are launched, and a workflow's agent when it starts (${known()})${hint}`);
+      }
+      if (fields.state !== undefined && fields.state !== agent.state && ENDED.has(agent.state)) {
+        throw new InputError(`sub-agent ${agent.name} already stopped (${agent.state}${agent.activity ? `: ${agent.activity}` : ""}); its state is recorded by the hooks, so --state cannot set it to ${fields.state}`);
+      }
+      const after = fields.after?.map((other) => {
+        const found = named(other);
+        if (!found || found.name === agent.name) throw new InputError(`--after: no other sub-agent ${JSON.stringify(other)} in this session (${known()})`);
+        return found.name;
+      });
+      const updated = this.updateAgent(sessionId, agent.name, compact({ ...fields, after }));
+      if (!updated) throw new Error(`sub-agent ${agent.name} of session ${sessionId} left the store while it was updated; run the command again`);
+      return updated;
+    });
+  }
+
+  /**
    * Merges `fields` into the agent; undefined, with nothing written, when it is not recorded (e.g.
    * renamed meanwhile) or `when`, checked under the agent's lock, refuses its current record: two
    * writers comparing the same record that way cannot both change it.
@@ -769,7 +810,7 @@ export class Store {
     const activityIsCall = "activity" in fields ? fields.activityIsCall : (fields.activityIsCall ?? current?.activityIsCall);
     const merged = compact({ ...current, ...fields, activityIsCall, sessionId, name, updatedAt: at });
     const state = merged.state ?? "working";
-    const ended = state === "done" || state === "failed";
+    const ended = ENDED.has(state);
     const next = readAgent(
       compact({
         ...merged,
@@ -1110,10 +1151,10 @@ export class Store {
 
   // ── Services, metrics, seen ─────────────────────────────────────────────
 
-  addService(input: { sessionId: string; name: string; url: string }): Service {
+  addService(input: { sessionId: string; name: string; url: string; detected?: boolean }): Service {
     this.requireSession(input.sessionId);
     const existing = this.listServices().find((s) => s.sessionId === input.sessionId && s.name === input.name);
-    const service = readService({ id: existing?.id ?? newId("svc"), ...input, startedAt: this.stamp() });
+    const service = readService(compact({ id: existing?.id ?? newId("svc"), ...input, startedAt: this.stamp() }));
     writeJson(this.paths.service(service.id), service);
     return service;
   }
@@ -1456,6 +1497,12 @@ export class Store {
     }
   }
 }
+
+const ENDED: ReadonlySet<Agent["state"]> = new Set(["done", "failed"]);
+/** Sub-agents named in an error, so a long session's list stays readable. */
+const KNOWN_SHOWN = 10;
+/** When the agent was last launched or resumed. */
+const lastLaunched = (a: Agent) => (a.resumedAt !== undefined && a.resumedAt > a.startedAt ? a.resumedAt : a.startedAt);
 
 /** What the session reported for an agent, which a merge keeps over what its adapter recorded. */
 const reportedOf = (a: Agent) => compact({ goal: a.goal, summary: a.summary, branch: a.branch, commit: a.commit });

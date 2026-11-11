@@ -7,9 +7,9 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { procInfo } from "../src/core/proc.ts";
 import { Push } from "../src/server/push.ts";
-import { createDeskServer } from "../src/server/server.ts";
+import { createDeskServer, deskState } from "../src/server/server.ts";
 import type { Store } from "../src/store/store.ts";
-import { addSession, PNG, serve, tempHome, testStore } from "./helpers.ts";
+import { addSession, PNG, serve, shellListener, tempHome, testStore } from "./helpers.ts";
 
 let store: Store;
 let base: string;
@@ -201,6 +201,32 @@ describe("server", () => {
     assert.equal((await post("/api/sessions/s-end/end", {}, { Origin: "http://evil.example" })).status, 403);
     assert.equal((await post("/api/sessions/s-end/end", {})).status, 200);
     assert.equal(await exited, "SIGTERM");
+  });
+
+  it("shows the servers a running session listens on as its services, under the name it gave one, and drops them when they stop", async () => {
+    const own = testStore();
+    own.upsertSession({ id: "live", provider: "Test", project: { name: "shop", dir: "/work/shop" }, process: { pid: process.pid, start: procInfo(process.pid)?.start ?? "", ancestors: [] } });
+    own.upsertSession({ id: "over", provider: "Test", project: { name: "shop", dir: "/work/shop" }, state: "ended", process: { pid: process.pid, start: procInfo(process.pid)?.start ?? "", ancestors: [] } });
+    const vite = await shellListener();
+    const named = await shellListener();
+    const services = () => deskState(own).services.map((v) => [v.sessionId, v.name, v.url, v.detected]);
+    try {
+      own.addService({ sessionId: "live", name: "storybook", url: `http://localhost:${named.port}/docs`, detected: true });
+      own.addService({ sessionId: "live", name: "db admin", url: "http://localhost:8081/" });
+      assert.deepEqual(services(), [
+        ["live", "storybook", `http://localhost:${named.port}/docs`, true],
+        ["live", "db admin", "http://localhost:8081/", undefined],
+        ["live", "serve", `http://127.0.0.1:${vite.port}/`, true],
+      ], "an ended session's processes are not scanned");
+      const detected = deskState(own).services.find((v) => v.name === "serve");
+      assert.equal(detected?.id, deskState(own).services.find((v) => v.name === "serve")?.id, "a stable id, so the state's version stays");
+      await vite.stop();
+      await named.stop();
+      assert.deepEqual(services(), [["live", "db admin", "http://localhost:8081/", undefined]], "a server the desk cannot see stays until the session stops it");
+    } finally {
+      await vite.stop();
+      await named.stop();
+    }
   });
 
   it("forgets a session only from the page, and never one still running", async () => {

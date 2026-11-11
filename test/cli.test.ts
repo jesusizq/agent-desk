@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { procInfo } from "../src/core/proc.ts";
 import { Store } from "../src/store/store.ts";
-import { PNG, tempHome } from "./helpers.ts";
+import { PNG, shellListener, tempHome } from "./helpers.ts";
 
 const CLI = path.join(import.meta.dirname, "..", "src", "cli", "main.ts");
 const exec = promisify(execFile);
@@ -50,11 +50,61 @@ describe("cli", () => {
     assert.ok(r?.compare);
   });
 
-  it("names agents like the hooks do, so the session can add what only it knows", async () => {
+  it("adds what only the session knows to a sub-agent its hooks recorded, by its description or as the latest launched", async () => {
     const store = sessionOfThisProcess();
-    const out = await cli(store.paths.home, "agent", "Fix pay button", "--after", "Summary bar", "--branch", "agent/pay", "--state", "blocked");
+    const minutes = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+    // As the hooks record launches: named after the description, the latest launched last.
+    store.upsertAgent("me", "summary-bar", { goal: "Summary bar", ref: "a-1", launch: "toolu_1", state: "done", startedAt: minutes(30) });
+    store.upsertAgent("me", "fix-pay-button", { goal: "Fix pay button", ref: "a-2", launch: "toolu_2", startedAt: minutes(20) });
+    store.upsertAgent("me", "map-routes", { goal: "Map routes", ref: "a-3", launch: "toolu_3", startedAt: minutes(10) });
+    const out = await cli(store.paths.home, "agent", "Fix pay button", "--after", "Summary bar", "--branch", "agent/pay", "--state", "blocked", "--activity", "Waits for the summary bar's commit");
     assert.equal(out.code, 0, out.stderr);
-    assert.deepEqual(store.listAgents("me").map((a) => [a.name, a.after, a.branch, a.state]), [["fix-pay-button", ["summary-bar"], "agent/pay", "blocked"]]);
+    assert.equal(out.stdout, "agent fix-pay-button: blocked\n");
+    const pay = store.getAgent("me", "fix-pay-button");
+    assert.deepEqual([pay?.after, pay?.branch, pay?.state, pay?.activity, pay?.ref], [["summary-bar"], "agent/pay", "blocked", "Waits for the summary bar's commit", "a-2"]);
+
+    // Without a name: the latest launched, or resumed (a message sent to it) since.
+    assert.equal((await cli(store.paths.home, "agent", "--summary", "Lists every route")).code, 0);
+    assert.equal(store.getAgent("me", "map-routes")?.summary, "Lists every route");
+    store.updateAgent("me", "summary-bar", { resumedAt: minutes(1) });
+    assert.equal((await cli(store.paths.home, "agent", "--commit", "abc123")).code, 0);
+    assert.equal(store.getAgent("me", "summary-bar")?.commit, "abc123", "an ended record still takes what only the session knows");
+    assert.equal(store.listAgents("me").length, 3, "nothing was created");
+  });
+
+  it("refuses loudly to report a sub-agent that was not launched, or to reopen one that stopped, and creates nothing", async () => {
+    const store = sessionOfThisProcess();
+    const none = await cli(store.paths.home, "agent", "Seal timings", "--summary", "Measures the suite");
+    assert.equal(none.code, 2);
+    assert.match(none.stderr, /no sub-agent "Seal timings" was launched in this session, so there is nothing to add to: sub-agents are recorded by the session's hooks when they are launched.*\(no sub-agent was launched in this session yet\)/);
+    assert.equal((await cli(store.paths.home, "agent", "--summary", "x")).code, 2, "nor without a name");
+    assert.deepEqual(store.listAgents("me"), []);
+
+    store.upsertAgent("me", "escritor-revisor", { goal: "Escritor revisor", ref: "a-8", launch: "toolu_8", state: "done", activity: "Stopped by the session" });
+    const reopened = await cli(store.paths.home, "agent", "Escritor revisor", "--state", "blocked", "--activity", "detenido");
+    assert.equal(reopened.code, 2);
+    assert.match(reopened.stderr, /sub-agent escritor-revisor already stopped \(done: Stopped by the session\); its state is recorded by the hooks/);
+    const other = await cli(store.paths.home, "agent", "Escritor revisor", "--after", "Nobody");
+    assert.equal(other.code, 2);
+    assert.match(other.stderr, /--after: no other sub-agent "Nobody" in this session \(this session's sub-agents, latest launched or resumed first: escritor-revisor\)/);
+    const renamed = await cli(store.paths.home, "agent", "Segunda pasada del revisor", "--summary", "x");
+    assert.match(renamed.stderr, /no sub-agent "Segunda pasada del revisor" was launched .*; leave the name out to add to the latest launched or resumed, escritor-revisor$/m);
+    assert.deepEqual(store.listAgents("me").map((a) => [a.name, a.state, a.activity, a.after]), [["escritor-revisor", "done", "Stopped by the session", []]]);
+  });
+
+  it("names a server the session's processes listen on, which then goes when it stops, and keeps one the desk cannot see", async () => {
+    const store = sessionOfThisProcess();
+    const server = await shellListener();
+    try {
+      const seen = await cli(store.paths.home, "service", "checkout preview", `http://localhost:${server.port}/checkout`);
+      assert.equal(seen.code, 0, seen.stderr);
+      assert.match(seen.stdout, /Listening in this session's processes: shown under this name until it stops/);
+      const apart = await cli(store.paths.home, "service", "containers", "http://localhost:8081/");
+      assert.match(apart.stdout, /Not listening in this session's processes .*shown until agent-desk service "containers" --stop/);
+      assert.deepEqual(store.listServices().map((s) => [s.name, s.detected]).sort(), [["checkout preview", true], ["containers", undefined]]);
+    } finally {
+      await server.stop();
+    }
   });
 
   it("posts a result that has something to see or try, or that failed", async () => {

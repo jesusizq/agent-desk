@@ -175,6 +175,8 @@ export function readAgent(value: unknown, where = "agent"): Agent {
     type: optional(f.type, `${where}.type`, label),
     ref: optional(f.ref, `${where}.ref`, label),
     launch: optional(f.launch, `${where}.launch`, label),
+    launchedBy: optional(f.launchedBy, `${where}.launchedBy`, label),
+    resumedAt: optional(f.resumedAt, `${where}.resumedAt`, isoTime),
     goal: optional(f.goal, `${where}.goal`, line),
     summary: optional(f.summary, `${where}.summary`, line),
     state: oneOf(AGENT_STATES)(f.state, `${where}.state`),
@@ -237,13 +239,14 @@ function readCheck(value: unknown, where: string): Check {
 
 export function readService(value: unknown, where = "service"): Service {
   const f = fields(value, where);
-  return {
+  return compact({
     id: id(f.id, `${where}.id`),
     sessionId: id(f.sessionId, `${where}.sessionId`),
     name: label(f.name, `${where}.name`),
     url: localUrl(f.url, `${where}.url`),
     startedAt: isoTime(f.startedAt, `${where}.startedAt`),
-  };
+    detected: optional(f.detected, `${where}.detected`, bool),
+  });
 }
 
 export function readMetrics(value: unknown, where = "metrics"): Metrics {

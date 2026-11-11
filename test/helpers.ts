@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
@@ -32,4 +33,32 @@ export async function serve(store: Store, remote?: Parameters<typeof createDeskS
   const real = createDeskServer(store, port, remote, feed);
   await new Promise<void>((r) => real.listen(port, "127.0.0.1", r));
   return { base: `http://127.0.0.1:${port}`, port, close: () => new Promise((r) => (real.close(() => r()), real.closeAllConnections())) };
+}
+
+/**
+ * A throwaway local server run as a session runs one: a shell this process starts runs `node serve.mjs`,
+ * which listens on `host` (a free port) until it is stopped.
+ */
+export async function shellListener(host = "127.0.0.1", throughShell = true): Promise<{ port: number; pid: number; stop: () => Promise<void> }> {
+  const dir = tempHome();
+  const script = path.join(dir, "serve.mjs");
+  fs.writeFileSync(script, `import { createServer } from "node:http";\nconst s = createServer((_q, r) => r.end("ok")).listen(0, ${JSON.stringify(host)}, () => console.log(\`\${process.pid} \${s.address().port}\`));\n`);
+  // "& wait" keeps the shell as the server's parent, as a shell that runs a server in the background does.
+  const child = throughShell ? spawn("sh", ["-c", `"${process.execPath}" "${script}" & wait`], { stdio: ["ignore", "pipe", "inherit"] }) : spawn(process.execPath, [script], { stdio: ["ignore", "pipe", "inherit"] });
+  const line = await new Promise<string>((resolve, reject) => {
+    let out = "";
+    child.stdout.on("data", (d: Buffer) => {
+      out += d;
+      if (out.includes("\n")) resolve(out.trim());
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => reject(new Error(`the listener exited (${code}) before it listened`)));
+  });
+  const [pid, port] = line.split(" ").map(Number);
+  if (!pid || !port) throw new Error(`unexpected listener output ${JSON.stringify(line)}`);
+  const exited = new Promise<void>((r) => child.once("exit", () => r()));
+  let stopping: Promise<void> | undefined;
+  // Idempotent, so a test can stop it midway and again in its `finally`.
+  const stop = () => (stopping ??= (process.kill(pid, "SIGTERM"), exited));
+  return { port, pid, stop };
 }

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { deliverWhileWorking, handleHook, type HookContext, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
+import { deliverWhileWorking, handleHook, type HookContext, plainSummary, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import { slug } from "../src/core/ids.ts";
 import type { Store } from "../src/store/store.ts";
@@ -386,7 +386,7 @@ describe("Claude Code hooks", () => {
     const call = (tool_name: string, tool_input: object) => ({ session_id: "cc-1", hook_event_name: "PostToolUse", tool_name, tool_input, tool_response: { stdout: "«ok»\n" } });
     assert.equal(runs(call("Read", { file_path: "a.ts" })), undefined, "sampled: an ordinary call so soon after another starts nothing");
     assert.deepEqual(runs(call("Bash", { command: "npm run e2e", run_in_background: true })), call("Bash", { command: "npm run e2e", run_in_background: true }), "a background launch is never skipped, its input passed whole");
-    for (const tool of ["Monitor", "TaskOutput", "BashOutput"]) assert.ok(runs(call(tool, {})), tool);
+    for (const tool of ["Monitor", "TaskOutput", "BashOutput", "TaskStop"]) assert.ok(runs(call(tool, {})), tool);
     assert.ok(runs(call("Bash", { command: "sleep 120 && tail run.log" })));
     fs.writeFileSync(path.join(home, ".failing"), "");
     assert.ok(runs(call("Read", { file_path: "a.ts" })), "while a streak of failures is open, every call counts");
@@ -575,23 +575,17 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.goal, a.summary]), [["fix-pay-button", "a1", "done", "Fix pay button", "The pay button stays visible"]]);
   });
 
-  it("ends an agent the session reported that no sub-agent took, once none of the session's sub-agents runs", () => {
+  it("closes at a turn's start or end a record an earlier `agent-desk agent` made that no sub-agent took, which its sub-agent may still take later", () => {
     const store = testStore();
     const wf = workflowRun();
     handleHook(event("SessionStart", { source: "startup" }), ctx(store));
+    // What `agent-desk agent` made before it only attached to the hooks' records.
     store.upsertAgent("cc-1", "audit-everything", { summary: "Reported under a name no label has" });
-    handleHook(event("Stop", { last_assistant_message: "Launched.", transcript_path: wf.transcript }), ctx(store));
-    assert.equal(store.getAgent("cc-1", "audit-everything")?.state, "working", "no sub-agent followed here: nothing to go by");
+    handleHook(event("UserPromptSubmit", { prompt: "go on", transcript_path: wf.transcript }), ctx(store));
+    const closed = store.getAgent("cc-1", "audit-everything");
+    assert.deepEqual([closed?.state, closed?.activity], ["done", "Not seen running"]);
 
-    handleHook(event("SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
-    handleHook(event("Stop", { last_assistant_message: "Running.", transcript_path: wf.transcript }), ctx(store));
-    assert.equal(store.getAgent("cc-1", "audit-everything")?.state, "working", "a sub-agent still runs");
-    wf.note("w1", "audit:components");
-    handleHook(event("SubagentStop", { agent_id: "w1", agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, "agent-w1.jsonl"), last_assistant_message: "Audited." }), ctx(store));
-    handleHook(event("UserPromptSubmit", { prompt: "<task-notification>done</task-notification>", transcript_path: wf.transcript }), ctx(store));
-    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.state]), [["audit-everything", "done"], ["audit-components", "done"]]);
-
-    // Ended too early: its sub-agent starts after all, and the record follows it again.
+    // Its sub-agent starts after all: the record follows it again under its label.
     wf.note("w2", "audit everything");
     handleHook(event("SubagentStart", { agent_id: "w2", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
     const again = store.getAgent("cc-1", "audit-everything");
@@ -615,7 +609,7 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state]), [["fix-core", undefined, "working"], ["workflow-subagent", "w1", "done"]]);
   });
 
-  it("keeps one record per agent while the hooks of several workflow agents run at once", async () => {
+  it("keeps one record per agent while the hooks of several workflow agents run at once, and the session adds to each once it is recorded", async () => {
     const home = tempHome();
     const wf = workflowRun();
     const { hook, run, all } = hookProcesses(home, wf.transcript);
@@ -624,12 +618,15 @@ describe("Claude Code hooks", () => {
     const label = (id: string) => `audit:${id}`;
     await all([hook({ hook_event_name: "SessionStart", source: "startup" })]);
     await all(ids.map((id) => hook({ hook_event_name: "SubagentStart", agent_id: id, agent_type: "workflow-subagent" })));
-    // Two reported before their labels are noted, two while their first tool calls rename them.
-    await all(ids.slice(0, 2).map((id) => report(label(id))));
+    // Reported before Claude Code noted its label: no record goes by it yet, and none is made.
+    const early = await report(label("w1"));
+    assert.equal(early.code, 2);
+    assert.match(early.stderr, /no sub-agent "audit:w1" was launched in this session/);
     for (const id of ids) wf.note(id, label(id));
+    await all(ids.map((id) => hook({ hook_event_name: "PostToolUse", agent_id: id, tool_name: "Bash", tool_input: { command: "step 1" } })));
     await all([
-      ...ids.flatMap((id) => [1, 2, 3].map((n) => hook({ hook_event_name: "PostToolUse", agent_id: id, tool_name: "Bash", tool_input: { command: `step ${n}` } }))),
-      ...ids.slice(2).map((id) => report(label(id))),
+      ...ids.flatMap((id) => [2, 3].map((n) => hook({ hook_event_name: "PostToolUse", agent_id: id, tool_name: "Bash", tool_input: { command: `step ${n}` } }))),
+      ...ids.map((id) => report(label(id))),
     ]);
     await all(ids.map((id) => hook({ hook_event_name: "SubagentStop", agent_id: id, agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, `agent-${id}.jsonl`), last_assistant_message: "Done." })));
     const { Store } = await import("../src/store/store.ts");
@@ -1043,6 +1040,131 @@ describe("Claude Code hooks", () => {
       "```\nwhy?\n```",
     ];
     for (const paragraph of whole) assert.deepEqual(splitQuestion(paragraph), { question: paragraph, rest: "" }, paragraph);
+  });
+});
+
+describe("sub-agents, from the session's own calls and hooks", () => {
+  const stop = (background_tasks?: object[], extra: Record<string, unknown> = {}) => event("Stop", { last_assistant_message: "Done.", ...(background_tasks ? { background_tasks } : {}), ...extra });
+  const subagent = (id: string, description: string) => ({ id, type: "subagent", status: "running", description, agent_type: "general-purpose" });
+  const rows = (store: Store) => store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.activity]);
+
+  it("records a launch under its description, with the prompt's opening sentence as its summary only when it reads as one", () => {
+    const store = testStore();
+    handleHook(launch("toolu_1", "Audit checkout links", { prompt: "Check every link of the checkout pages and list the broken ones.\n\nDetails follow." }), ctx(store));
+    handleHook(launch("toolu_2", "Dashboard con passkey", { prompt: "Tu worktree: `~/Projects/wt/dashboard` (rama agent/dashboard). Haz el dashboard." }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a-1", agent_type: "general-purpose" }), ctx(store));
+    const agents = store.listAgents("cc-1");
+    assert.deepEqual(agents.map((a) => [a.name, a.goal, a.summary, a.ref]), [
+      ["audit-checkout-links", "Audit checkout links", "Check every link of the checkout pages and list the broken ones.", "a-1"],
+      ["dashboard-con-passkey", "Dashboard con passkey", undefined, "tool:toolu_2"],
+    ]);
+  });
+
+  it("derives a summary without the model only when it is plain", () => {
+    const yes = (prompt: string) => assert.equal(plainSummary(prompt, "Task"), prompt.split("\n")[0], prompt);
+    const no = (prompt: string) => assert.equal(plainSummary(prompt, "Fix the pay button now"), undefined, prompt);
+    yes("Measure the suite's timings on a quiet machine and report the slowest ten.");
+    yes("Revisa las 100 notas y propón mejoras sin inventar nada.");
+    for (const p of ["Fix it.", "You are a senior reviewer for this repository.", "Context: the checkout breaks on phones.", "Read `src/app.ts` and fix the bar.", "See https://localhost:5173 for the page.", "Edit src/checkout/bar.tsx to keep the bar visible.", "# Task\nFix the bar", "- fix the bar on phones and tablets", "Fix the pay button now.", `${"Long words ".repeat(20)}end.`]) no(p);
+  });
+
+  it("keeps a background launch that still runs after the turn ends, and closes it once it stops", () => {
+    const store = testStore();
+    handleHook(launch("toolu_bg", "Long audit", { run_in_background: true }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "bg-1", agent_type: "general-purpose" }), ctx(store));
+    handleHook(event("PostToolUse", { tool_name: "Agent", tool_use_id: "toolu_bg", tool_input: { description: "Long audit", run_in_background: true }, tool_response: { isAsync: true, status: "async_launched", agentId: "bg-1" } }), ctx(store));
+    handleHook(stop([subagent("bg-1", "Long audit"), { id: "b1", type: "shell", status: "running", description: "npm run dev" }]), ctx(store));
+    assert.deepEqual(rows(store), [["long-audit", "bg-1", "working", undefined]], "listed as running: live");
+    handleHook(event("SubagentStop", { agent_id: "bg-1", agent_type: "general-purpose", last_assistant_message: "Audited." }), ctx(store));
+    handleHook(stop([]), ctx(store));
+    assert.deepEqual(rows(store), [["long-audit", "bg-1", "done", "Audited."]]);
+  });
+
+  it("works the same record again when the session sends its agent a message, and closes it at its stop", () => {
+    const store = testStore();
+    handleHook(launch("toolu_w", "Escritor mejoras", { run_in_background: true }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a37", agent_type: "general-purpose" }), ctx(store));
+    handleHook(event("SubagentStop", { agent_id: "a37", agent_type: "general-purpose", last_assistant_message: "Written." }), ctx(store));
+    const finished = store.getAgent("cc-1", "escritor-mejoras");
+    handleHook(event("PreToolUse", { tool_name: "SendMessage", tool_use_id: "toolu_m", tool_input: { to: "a37", summary: "Tanda 1 de respuestas del autor", message: "Las respuestas del autor a las notas 1 a 11." } }), ctx(store));
+    const resumed = store.getAgent("cc-1", "escritor-mejoras");
+    assert.deepEqual([resumed?.state, resumed?.activity, resumed?.endedAt, resumed?.startedAt], ["working", "Tanda 1 de respuestas del autor", undefined, finished?.startedAt]);
+    assert.ok(resumed?.resumedAt);
+    // The resumed agent starts and stops under the same id: still one record.
+    handleHook(event("SubagentStart", { agent_id: "a37", agent_type: "general-purpose" }), ctx(store));
+    handleHook(stop([subagent("a37", "Escritor mejoras")]), ctx(store));
+    assert.deepEqual(rows(store), [["escritor-mejoras", "a37", "working", "Tanda 1 de respuestas del autor"]]);
+    // What only the session knows goes to the agent it just resumed.
+    store.reportAgent("cc-1", undefined, { summary: "Final version of notes 1-11" });
+    handleHook(event("SubagentStop", { agent_id: "a37", agent_type: "general-purpose", last_assistant_message: "Notes 1-11 rewritten." }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.state, a.activity, a.summary]), [["escritor-mejoras", "done", "Notes 1-11 rewritten.", "Final version of notes 1-11"]]);
+
+    // A message to the main thread or another session, or with no summary, touches nothing else.
+    handleHook(event("PreToolUse", { tool_name: "SendMessage", tool_input: { to: "main", message: "done" } }), ctx(store));
+    handleHook(event("PreToolUse", { tool_name: "SendMessage", tool_input: { to: "miniaturz-90", summary: "Ask", message: "x" } }), ctx(store));
+    assert.equal(store.getAgent("cc-1", "escritor-mejoras")?.state, "done");
+    handleHook(event("PreToolUse", { tool_name: "SendMessage", tool_input: { to: "a37", message: "Rebase onto main before you deliver.\nThen push." } }), ctx(store));
+    assert.equal(store.getAgent("cc-1", "escritor-mejoras")?.activity, "Rebase onto main before you deliver.");
+  });
+
+  it("closes the record of an agent the session stopped, and never lets the session mark it running again", () => {
+    const store = testStore();
+    handleHook(launch("toolu_p", "Escritor revisor del prologo", { run_in_background: true }), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a8d7", agent_type: "general-purpose" }), ctx(store));
+    handleHook(event("PostToolUse", { tool_name: "TaskStop", tool_input: { task_id: "b-shell" }, tool_response: { message: "Successfully stopped task: b-shell (npm run dev)", task_id: "b-shell", task_type: "local_bash" } }), ctx(store));
+    assert.equal(store.getAgent("cc-1", "escritor-revisor-del-prologo")?.state, "working", "a shell's stop is not the agent's");
+    handleHook(event("PostToolUse", { tool_name: "TaskStop", tool_input: { task_id: "a8d7" }, tool_response: { message: "Successfully stopped task: a8d7 (Escritor revisor del prologo)", task_id: "a8d7", task_type: "local_agent" } }), ctx(store));
+    assert.deepEqual(rows(store), [["escritor-revisor-del-prologo", "a8d7", "done", "Stopped by the session"]]);
+    assert.throws(() => store.reportAgent("cc-1", "Escritor revisor del prologo", { state: "blocked", activity: "detenido por el autor" }), /already stopped \(done: Stopped by the session\)/);
+    store.reportAgent("cc-1", "Escritor revisor del prologo", { summary: "Stopped: its brief was biased" });
+    handleHook(stop([]), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.state, a.activity, a.summary]), [["done", "Stopped by the session", "Stopped: its brief was biased"]]);
+  });
+
+  it("records a workflow's agents by themselves, named after their labels, and keeps them while their workflow runs", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    handleHook(event("SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    wf.note("w1", "review:aliases batch 4");
+    handleHook(event("PostToolUse", { agent_id: "w1", tool_name: "Bash", tool_input: { command: "npm test" }, transcript_path: wf.transcript }), ctx(store));
+    store.reportAgent("cc-1", "review:aliases batch 4", { branch: "review/aliases" });
+    handleHook(stop([{ id: "wf_1", type: "workflow", status: "running", description: "review", name: "review" }], { transcript_path: wf.transcript }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.goal, a.branch]), [["review-aliases-batch-4", "w1", "working", "review:aliases batch 4", "review/aliases"]]);
+    handleHook(stop([], { transcript_path: wf.transcript }), ctx(store));
+    assert.deepEqual(rows(store), [["review-aliases-batch-4", "w1", "done", "Not seen running"]], "its workflow no longer runs, and it got no stop");
+  });
+
+  it("closes at the turn's end every record no running sub-agent is behind, and keeps those that run", () => {
+    const store = testStore();
+    handleHook(event("SessionStart", { source: "startup" }), ctx(store));
+    // Ghosts as an earlier adapter and the CLI left them.
+    store.upsertAgent("cc-1", "revisar-correos", {});
+    store.upsertAgent("cc-1", "independent-audit-2", { goal: "Independent audit", ref: "tool:toolu_old", launch: "toolu_old" });
+    store.upsertAgent("cc-1", "cerrar-fugas", { goal: "Cerrar fugas", ref: "a5345", launch: "toolu_f", activity: "SubagentHandback", activityIsCall: true });
+    store.upsertAgent("cc-1", "prologo", { goal: "Prologo", ref: "a8d7", launch: "toolu_p", state: "blocked", activity: "detenido por el autor" });
+    // Live: a background agent, a foreground one it launched, and a launch whose sub-agent is listed but not paired yet.
+    store.upsertAgent("cc-1", "long-audit", { goal: "Long audit", ref: "bg-1", launch: "toolu_bg", state: "waiting" });
+    store.upsertAgent("cc-1", "nested-check", { goal: "Nested check", ref: "n-1", launch: "toolu_n", launchedBy: "bg-1" });
+    store.upsertAgent("cc-1", "queued-audit", { goal: "Queued audit", ref: "tool:toolu_q", launch: "toolu_q" });
+    handleHook(event("UserPromptSubmit", { prompt: "status?" }), ctx(store));
+    assert.equal(store.getAgent("cc-1", "revisar-correos")?.state, "done", "at the turn's start, only a record that never followed a sub-agent is closed");
+    assert.equal(store.getAgent("cc-1", "cerrar-fugas")?.state, "working");
+    handleHook(stop(), ctx(store));
+    assert.equal(store.getAgent("cc-1", "cerrar-fugas")?.state, "working", "without Claude Code's list of what runs, nothing that followed a sub-agent is closed");
+    handleHook(stop([subagent("bg-1", "Long audit"), subagent("q-1", "Queued audit")]), ctx(store));
+    assert.deepEqual(rows(store), [
+      ["revisar-correos", undefined, "done", "Not seen running"],
+      ["independent-audit-2", "tool:toolu_old", "done", "Not seen running"],
+      ["cerrar-fugas", "a5345", "done", "Not seen running"],
+      ["prologo", "a8d7", "done", "Not seen running"],
+      ["long-audit", "bg-1", "waiting", undefined],
+      ["nested-check", "n-1", "working", undefined],
+      ["queued-audit", "tool:toolu_q", "working", undefined],
+    ]);
+    // A closed launch is paired again when its call names its sub-agent after all.
+    handleHook(event("PostToolUse", { tool_name: "Agent", tool_use_id: "toolu_old", tool_input: { description: "Independent audit" }, tool_response: { status: "async_launched", agentId: "ia-1" } }), ctx(store));
+    assert.deepEqual([store.getAgent("cc-1", "independent-audit-2")?.ref, store.getAgent("cc-1", "independent-audit-2")?.state], ["ia-1", "working"]);
+    assert.throws(() => handleHook(stop([{ id: "../x", type: "subagent" }]), ctx(store)), /background_tasks\[0\]\.id: expected letters/);
   });
 });
 

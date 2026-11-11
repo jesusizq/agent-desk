@@ -37,7 +37,7 @@ export function ancestors(pid: number, max = 64): ProcInfo[] {
   return out;
 }
 
-const SHELLS = new Set(["sh", "bash", "dash", "zsh", "fish", "ksh", "tcsh", "csh", "nu", "env"]);
+export const SHELLS: ReadonlySet<string> = new Set(["sh", "bash", "dash", "zsh", "fish", "ksh", "tcsh", "csh", "nu", "env"]);
 
 /**
  * The session's own process as seen from a hook it spawned: the nearest ancestor that is not a
