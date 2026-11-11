@@ -35,6 +35,8 @@ export class StorePaths {
   /** Present while some inbox holds an entry: a cheap test for hooks that run on every tool call. */
   get inboxMarker() { return path.join(this.home, ".inbox-pending"); }
   get projectsDir() { return path.join(this.home, "projects"); }
+  get handoffsDir() { return path.join(this.home, "handoffs"); }
+  handoff(sessionId: string) { return this.inside(this.handoffsDir, `${id(sessionId, "session id")}.json`); }
   get messagesDir() { return path.join(this.home, "messages"); }
   messageDir(sessionId: string) { return this.inside(this.messagesDir, id(sessionId, "session id")); }
   message(sessionId: string, messageId: string) { return this.inside(this.messageDir(sessionId), `${id(messageId, "message id")}.json`); }

@@ -3,7 +3,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isCode } from "../store/fsx.ts";
-import { procInfo, type ProcInfo, SHELLS } from "./proc.ts";
+import { createHash } from "node:crypto";
+import { readService, type Service, type Session } from "./model.ts";
+import { procInfo, type ProcInfo, sessionFinished, SHELLS } from "./proc.ts";
 
 /** A port listening in a session's processes, with the local URL that reaches it. */
 export type Listener = { port: number; url: string; pid: number; name: string; startedAt: string };
@@ -48,6 +50,30 @@ export function sessionListeners(roots: readonly { pid: number; start?: string }
     }
     return [...found.values()].sort((a, b) => a.port - b.port);
   });
+}
+
+/**
+ * The services the page shows: each running session's listening ports (src/core/ports.ts), under the
+ * name and path the session gave one with `agent-desk service`; a named one that was found listening
+ * goes when its port closes, and one the desk cannot see stays until the session stops it.
+ */
+export function liveServices(stored: Service[], sessions: Session[], problems: string[]): Service[] {
+  const running = sessions.filter((s): s is Session & { process: NonNullable<Session["process"]> } => s.process !== undefined && !sessionFinished(s));
+  let found: ReturnType<typeof sessionListeners>;
+  try {
+    found = sessionListeners(running.map((s) => s.process));
+  } catch (error) {
+    problems.push(`local servers of the sessions: ${(error as Error).message}`);
+    return stored.filter((v) => !v.detected);
+  }
+  const listening = new Map(running.map((s, i) => [s.id, found[i] ?? []]));
+  const named = stored.filter((v) => !v.detected || listening.get(v.sessionId)?.some((l) => l.port === urlPort(v.url)));
+  const detected = [...listening].flatMap(([sessionId, listeners]) =>
+    listeners
+      .filter((l) => !stored.some((v) => v.sessionId === sessionId && urlPort(v.url) === l.port))
+      .map((l) => readService({ id: `port-${l.port}-${createHash("sha256").update(sessionId).digest("hex").slice(0, 16)}`, sessionId, name: l.name, url: l.url, startedAt: l.startedAt, detected: true }, `local server on port ${l.port}`)),
+  );
+  return [...named, ...detected];
 }
 
 /** The port a local URL reaches. */

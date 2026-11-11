@@ -139,7 +139,25 @@ export type Question = {
    * never opened again, so a review never shows in Needs you.
    */
   review?: { id: string; round: number };
+  /**
+   * Answered questions of the same project that read like this one, best first (at most 3), found when
+   * it was asked: the developer can answer it again with one of their answers, never automatically.
+   */
+  past?: PastDecision[];
 };
+
+/** A question answered before in the same project, as a new question that reads like it shows it. */
+export type PastDecision = {
+  questionId: string;
+  text: string;
+  answer: string;
+  at: string;
+  /** The answer was the developer's next message in the terminal, which may be about something else. */
+  probable?: boolean;
+};
+
+/** Past decisions shown with a question. */
+export const PAST_SHOWN = 3;
 
 export const AGENT_STATES = ["working", "waiting", "blocked", "idle", "done", "failed"] as const;
 export type AgentState = (typeof AGENT_STATES)[number];
@@ -190,6 +208,8 @@ export type Agent = {
   waitsForJob?: boolean;
   branch?: string;
   commit?: string;
+  /** The linked git worktree its tool calls ran in, as its adapter saw them. */
+  worktree?: string;
   /** Names of agents of the same session this one builds on or waits for. */
   after: string[];
   startedAt: string;
@@ -290,15 +310,42 @@ export type Worktree = {
   /** Branch checked out, absent when detached. */
   branch?: string;
   head: string;
-  /** Bytes on disk, everything under the path (build folders and dependencies included). */
-  bytes: number;
+  /** Bytes on disk, everything under the path (build folders and dependencies included); absent until measured. */
+  bytes?: number;
   /** When `bytes` was measured; sizes are re-measured less often than branches. */
-  sizedAt: string;
+  sizedAt?: string;
   main: boolean;
   /** For non-main worktrees: whether its head is already in the main checkout's branch. */
   merged?: boolean;
   /** Commits on this worktree's head not yet in the main branch. */
   ahead?: number;
+  /** Commits of the main branch not yet in this worktree's head. */
+  behind?: number;
+  /** Files changed and not committed (staged, unstaged or untracked); 0 when clean. */
+  dirty?: number;
+  /** Its head commit's subject and commit time. */
+  subject?: string;
+  committedAt?: string;
+  /** Live processes whose working folder is in this checkout (not a nested one), by command name. */
+  busy?: string[];
+  /** What failed while reading its git state, said instead of a guess. */
+  error?: string;
+};
+
+/**
+ * A branch an agent was said to work on that no checkout has: whether it exists, and where it stands
+ * against the main branch when it does.
+ */
+export type BranchState = {
+  name: string;
+  exists: boolean;
+  head?: string;
+  merged?: boolean;
+  ahead?: number;
+  behind?: number;
+  subject?: string;
+  committedAt?: string;
+  error?: string;
 };
 
 /** What a project's checkouts look like on disk, measured from outside the project. */
@@ -309,13 +356,48 @@ export type ProjectScan = {
   /** The main checkout's branch, the one others are compared against. */
   baseBranch?: string;
   worktrees: Worktree[];
+  /** Branches the project's agents were said to work on, checked out nowhere. */
+  branches?: BranchState[];
   totalBytes: number;
   /** Total at the first scan of the day, to tell how much it grew today. */
   dayStart: { day: string; bytes: number };
+  /** When git was read (branches, commits, changes); sizes carry their own time. */
   measuredAt: string;
   /** Files or folders that could not be measured, reported instead of skipped. */
   problems: string[];
 };
+
+/** Where one branch of a session's work stands: an agent's checkout or branch, or a checkout of its project. */
+export type BranchRow = {
+  /** The agent that works or worked on it, by record name. */
+  agent?: { name: string; goal?: string; state: AgentState };
+  branch?: string;
+  /** The checkout's folder; absent for a branch checked out nowhere. */
+  path?: string;
+  main?: boolean;
+  /** The session itself works in this checkout. */
+  session?: boolean;
+  /** `found` in the last scan; `missing`: no such branch; `unread`: named after the last scan read git. */
+  status: "found" | "missing" | "unread";
+  head?: string;
+  merged?: boolean;
+  ahead?: number;
+  behind?: number;
+  dirty?: number;
+  subject?: string;
+  committedAt?: string;
+  busy?: string[];
+  error?: string;
+};
+
+/**
+ * A session's branches as the last scan of its project read them (`checkedAt`): its agents' first,
+ * then the project's other checkouts; `hidden` counts the merged, clean and idle ones left out.
+ */
+export type SessionBranches = { sessionId: string; projectId: string; baseBranch?: string; checkedAt: string; rows: BranchRow[]; hidden: number };
+
+/** The mechanical half of a session's handoff, recorded by its adapter before its context is compacted. */
+export type Handoff = { sessionId: string; at: string; trigger: "manual" | "auto"; text: string };
 
 /** A filesystem holding active projects that is running out of space. */
 export type DiskWarning = { dir: string; projects: string[]; freeBytes: number; totalBytes: number };
@@ -384,6 +466,8 @@ export type DeskState = {
   disk: DiskWarning[];
   projects: ProjectScan[];
   reviews: Review[];
+  /** Each running session's branches, from its project's last scan. */
+  branches: SessionBranches[];
   /** Changes when the server restarts; the page reloads itself to pick up new code. */
   build: string;
 };

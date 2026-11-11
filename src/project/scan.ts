@@ -1,26 +1,19 @@
 // Measures a project's checkouts: which worktrees exist, their branches, how much disk each one takes
 // and whether its work already reached the main branch. Runs git read-only; never writes to the project.
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { promisify } from "node:util";
 import { slug } from "../core/ids.ts";
-import type { ProjectScan, Worktree } from "../core/model.ts";
+import { BUSY_KEPT, type BranchState, type ProjectScan, type Worktree } from "../core/model.ts";
+import { aheadBehind, branchHead, branchRef, changedFiles, git, isAncestor, lastCommit } from "./git.ts";
+import { workingIn } from "./busy.ts";
 
-const run = promisify(execFile);
-const GIT_TIMEOUT_MS = 10_000;
 /** Walking every file is the expensive part (about 2 minutes for 85 GB); branches are cheap. */
 const SIZE_EVERY_MS = 60 * 60_000;
 
 /** Stable id of a project in the store: readable name plus a hash of its folder. */
 export function projectId(dir: string): string {
   return `${slug(path.basename(dir))}-${createHash("sha256").update(path.resolve(dir)).digest("hex").slice(0, 8)}`;
-}
-
-async function git(dir: string, ...args: string[]): Promise<string> {
-  const { stdout } = await run("git", ["-C", dir, ...args], { timeout: GIT_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
-  return stdout;
 }
 
 type Listed = { path: string; head: string; branch?: string };
@@ -70,46 +63,90 @@ export async function diskUsage(dir: string, exclude: Set<string>, problems: str
   return total;
 }
 
-/** Scans a project; `previous` carries the day's starting total forward. */
-export async function scanProject(dir: string, previous: ProjectScan | undefined, now = new Date()): Promise<ProjectScan> {
-  const listed = parseWorktreeList(await git(dir, "worktree", "list", "--porcelain"));
+export type ScanOptions = {
+  /** Walk the checkouts' files for their sizes when due (hourly); without it, known sizes are kept and new checkouts wait. */
+  sizes?: boolean;
+  /** Branches the project's agents were said to work on: where each stands when no checkout has it. */
+  branches?: readonly string[];
+  /** Per git command. */
+  timeoutMs?: number;
+};
+
+/**
+ * Scans a project: its checkouts with their branch, where each stands against the main branch, its
+ * uncommitted changes, last commit and the processes working in it, and their sizes; `previous`
+ * carries the sizes and the day's starting total forward. A checkout whose git state cannot be read
+ * says why in its `error`, and the scan goes on with the others.
+ */
+export async function scanProject(dir: string, previous: ProjectScan | undefined, now = new Date(), options: ScanOptions = {}): Promise<ProjectScan> {
+  const { sizes = true, timeoutMs } = options;
+  const listed = parseWorktreeList(await git(dir, ["worktree", "list", "--porcelain"], timeoutMs));
   const main = listed[0];
   if (!main) throw new Error(`${dir}: git lists no worktree`);
+  const base = main.branch;
   const problems: string[] = [];
   const paths = new Set(listed.map((w) => path.resolve(w.path)));
-  const worktrees: Worktree[] = [];
   const known = new Map((previous?.worktrees ?? []).map((w) => [path.resolve(w.path), w]));
+  const busy = workingIn([...paths], BUSY_KEPT);
+  const worktrees: Worktree[] = [];
   for (const [i, w] of listed.entries()) {
     const isMain = i === 0;
     const before = known.get(path.resolve(w.path));
-    const fresh = before && now.getTime() - Date.parse(before.sizedAt) < SIZE_EVERY_MS;
+    const due = !before?.sizedAt || now.getTime() - Date.parse(before.sizedAt) >= SIZE_EVERY_MS;
     const exclude = new Set([...paths].filter((p) => p !== path.resolve(w.path)));
-    const bytes = fresh ? before.bytes : await diskUsage(path.resolve(w.path), exclude, problems);
-    const sizedAt = fresh ? before.sizedAt : now.toISOString();
-    const entry: Worktree = { path: w.path, head: w.head, bytes, sizedAt, main: isMain, ...(w.branch ? { branch: w.branch } : {}) };
-    if (!isMain && main.branch) {
-      entry.merged = await git(dir, "merge-base", "--is-ancestor", w.head, main.branch).then(
-        () => true,
-        (error: { code?: number }) => {
-          if (error.code === 1) return false; // not an ancestor: the documented "no" answer
-          throw error;
-        },
-      );
-      entry.ahead = Number((await git(dir, "rev-list", "--count", `${main.branch}..${w.head}`)).trim());
+    const size = sizes && due ? { bytes: await diskUsage(path.resolve(w.path), exclude, problems), sizedAt: now.toISOString() } : { bytes: before?.bytes, sizedAt: before?.sizedAt };
+    const entry: Worktree = { path: w.path, head: w.head, main: isMain, ...(w.branch ? { branch: w.branch } : {}) };
+    if (size.bytes !== undefined && size.sizedAt !== undefined) Object.assign(entry, size);
+    try {
+      Object.assign(entry, await headState(dir, w.head, isMain ? undefined : base, timeoutMs));
+      const own = path.resolve(w.path);
+      const nested = [...paths].filter((p) => p.startsWith(`${own}/`)).map((p) => path.relative(own, p));
+      entry.dirty = await changedFiles(w.path, nested, timeoutMs);
+    } catch (error) {
+      entry.error = (error as Error).message;
+      problems.push(entry.error);
     }
+    const working = busy.get(path.resolve(w.path)) ?? [];
+    if (working.length) entry.busy = working;
     worktrees.push(entry);
   }
-  const totalBytes = worktrees.reduce((n, w) => n + w.bytes, 0);
+  const checkedOut = new Set(worktrees.flatMap((w) => (w.branch ? [w.branch] : [])));
+  const branches: BranchState[] = [];
+  for (const name of new Set(options.branches ?? [])) {
+    if (checkedOut.has(name)) continue;
+    branches.push(await branchState(dir, name, base, timeoutMs));
+  }
+  const totalBytes = worktrees.reduce((n, w) => n + (w.bytes ?? 0), 0);
   const day = now.toISOString().slice(0, 10);
   return {
     id: projectId(dir),
     name: path.basename(dir),
     dir: path.resolve(dir),
-    ...(main.branch ? { baseBranch: main.branch } : {}),
+    ...(base ? { baseBranch: base } : {}),
     worktrees,
+    ...(branches.length ? { branches } : {}),
     totalBytes,
     dayStart: previous && previous.dayStart.day === day ? previous.dayStart : { day, bytes: totalBytes },
     measuredAt: now.toISOString(),
     problems: problems.slice(0, 20),
   };
+}
+
+/** A head's last commit and, against the main branch when given, whether it is merged and how far ahead and behind it is. */
+async function headState(dir: string, head: string, base: string | undefined, timeoutMs: number | undefined) {
+  const last = await lastCommit(dir, head, timeoutMs);
+  if (base === undefined) return last;
+  return { ...last, merged: await isAncestor(dir, head, base, timeoutMs), ...(await aheadBehind(dir, base, head, timeoutMs)) };
+}
+
+/** Where a branch no checkout has stands; one whose name git could not take, or that is gone, does not exist. */
+async function branchState(dir: string, name: string, base: string | undefined, timeoutMs: number | undefined): Promise<BranchState> {
+  const ref = branchRef(name);
+  if (ref === undefined) return { name, exists: false, error: `${JSON.stringify(name)} is not a branch name git takes` };
+  try {
+    const head = await branchHead(dir, ref, timeoutMs);
+    return head === undefined ? { name, exists: false } : { name, exists: true, head, ...(await headState(dir, head, base, timeoutMs)) };
+  } catch (error) {
+    return { name, exists: false, error: (error as Error).message };
+  }
 }

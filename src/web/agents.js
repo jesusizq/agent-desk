@@ -1,13 +1,15 @@
 // @ts-check
 // A session's agents: whether they are stuck, what they do, their rows and the flow between them.
-import { h, svgEl } from "./dom.js";
+import { h, icon, svgEl } from "./dom.js";
 import { TEXT } from "./text.js";
 import { ago, hm } from "./format.js";
 import { dot } from "./pieces.js";
+import { openProject } from "./projects.js";
 import { agentOf, data, waitingOn } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Agent} Agent */
+/** @typedef {import("../core/protocol.ts").BranchRow} BranchRow */
 
 const ATTENTION = ["failed", "blocked", "idle", "working", "waiting", "done"];
 
@@ -279,8 +281,57 @@ function flowGraph(s) {
   return flow;
 }
 
-/** Its agents: the flow when they depend on each other, then one row each on a time axis. @param {Session} s */
+/** Its agents: the flow when they depend on each other, then one row each on a time axis, then where their branches stand. @param {Session} s */
 export function agentsPart(s) {
   const flow = flowGraph(s);
-  return [flow ? h("div", { class: "rsec flow-sec" }, h("h4", {}, TEXT.flow), h("div", { class: "flow-wrap" }, flow)) : null, h("div", { class: "rsec atl-sec" }, agentList(s))];
+  return [flow ? h("div", { class: "rsec flow-sec" }, h("h4", {}, TEXT.flow), h("div", { class: "flow-wrap" }, flow)) : null, h("div", { class: "rsec atl-sec" }, agentList(s)), branchesPart(s)];
 }
+
+// Past this age the rows say they may have changed since: a scan runs at the end of each turn and as agents stop.
+const STALE_MS = 10 * 60_000;
+
+/**
+ * Where the session's branches stand, as its project's last scan read them: one row per checkout or
+ * branch, its agent first, with how old the reading is. Null before any scan. @param {Session} s
+ */
+export function branchesPart(s) {
+  const b = data.branches.find((x) => x.sessionId === s.id);
+  if (!b || (b.rows.length === 0 && b.hidden === 0)) return null;
+  const t = TEXT.branches;
+  const stale = Date.now() - Date.parse(b.checkedAt) > STALE_MS;
+  return h(
+    "div",
+    { class: "rsec branches-sec", "data-key": "branches" },
+    h("h4", {}, TEXT.branches.title, h("span", { class: `bage${stale ? " stale" : ""}`, title: hm(b.checkedAt) }, (stale ? t.stale : t.read)(ago(b.checkedAt)))),
+    h("div", { class: "alist blist" }, b.rows.map((r) => branchRow(s, r, b.baseBranch))),
+    b.hidden ? h("button", { class: "linkish faint bhidden", onclick: () => openProject(b.projectId) }, t.hidden(b.hidden)) : null,
+  );
+}
+
+/** A checkout or branch: its name with its state, whose it is and its last commit, and how far it is from the base. @param {Session} s @param {BranchRow} r @param {string | undefined} base */
+function branchRow(s, r, base) {
+  const t = TEXT.branches;
+  const agent = r.agent ? agentOf(s.id, r.agent.name) : undefined;
+  const mark = agent ? agentDot(agent, true) : icon("branch", "i bmark");
+  const name = r.branch ?? (r.head ? t.detached(r.head.slice(0, 7)) : "?");
+  const who = [r.agent ? (r.agent.goal ?? r.agent.name) : r.main ? t.main : r.path ? shortPath(r.path) : "", r.session ? t.you : ""].filter(Boolean).join(" · ");
+  const found = r.status === "found" && !r.error;
+  const tags = found
+    ? [
+        r.dirty !== undefined ? h("span", { class: `btag${r.dirty ? " dirty" : ""}` }, r.dirty ? t.changed(r.dirty) : t.clean) : null,
+        r.merged ? h("span", { class: "btag" }, t.merged) : null,
+        r.busy?.length ? h("span", { class: "btag busy", title: t.inUse(r.busy.join(", ")) }, h("span", { class: "up" }), r.busy.join(", ")) : null,
+      ]
+    : [h("span", { class: `btag${r.status === "unread" ? "" : " bad"}` }, r.error ? t.error(r.error) : r.status === "missing" ? (r.branch ? t.missing : t.gone) : t.unread)];
+  const last = found && r.subject !== undefined && r.committedAt ? t.last(r.subject, ago(r.committedAt)) : "";
+  const counts = found && r.ahead !== undefined ? h("span", { class: "num bcounts", title: t.counts(r.ahead, r.behind ?? 0, base ?? "") }, h("span", { class: r.ahead ? "" : "faint" }, `+${r.ahead}`), " ", h("span", { class: "faint" }, `−${r.behind ?? 0}`)) : h("span", { class: "num faint" });
+  return h(
+    "div",
+    { class: `arow brow${found ? "" : " off"}`, title: r.path ?? "", "data-key": `branch-${r.path ?? r.branch ?? r.agent?.name ?? ""}` },
+    h("span", { class: "awhat" }, h("span", { class: "aname" }, mark, h("span", { class: "agoal bname" }, name), tags), who || last ? h("span", { class: "adoing" }, [who, last].filter(Boolean).join(" · ")) : null),
+    counts,
+  );
+}
+
+/** A checkout's folder by its last two parts: worktrees sit in deep folders whose start is the project's. @param {string} p */
+const shortPath = (p) => p.split("/").filter(Boolean).slice(-2).join("/");

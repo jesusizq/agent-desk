@@ -276,6 +276,55 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("shows where the session's branches stand under its agents, with how old the reading is", async () => {
+    const page = await open();
+    await page.click(".scard", "checkout redesign");
+    await page.click("#session .pchips button.chip", "agents");
+    await page.waitFor("document.querySelectorAll('#session .branches-sec .brow').length === 4");
+    const rows = await page.eval<string[]>("[...document.querySelectorAll('#session .branches-sec .brow')].map((r) => r.innerText.replace(/\\s+/g, ' ').trim())");
+    assert.match(rows[0] ?? "", /^main clean vite main checkout · this session · «Merge the cart redesign» · 1 h 3\d min ago$/);
+    assert.match(rows[2] ?? "", /^agent\/summary 3 changed files vitest Order summary beside the cart · «Order summary beside the cart on desktop» · \d+ min ago \+4 −0$/);
+    assert.match(rows[3] ?? "", /^agent\/cart-rebase branch not found Rebase the cart on the new summary/);
+    assert.match(await page.eval<string>("document.querySelector('#session .branches-sec .bage').textContent"), /^read from git [23] min ago$/);
+    assert.equal(await page.eval<string>("document.querySelector('#session .bhidden').textContent"), "1 more checkout merged, clean and idle");
+    // An old reading says so: rows that may no longer hold are never shown as current.
+    const scan = store.listProjectScans().find((p) => p.name === "web-shop");
+    assert.ok(scan);
+    try {
+      store.putProjectScan({ ...scan, measuredAt: new Date(Date.now() - 40 * 60_000).toISOString() });
+      await fetchNow(page);
+      await page.waitFor("document.querySelector('#session .branches-sec .bage.stale')?.textContent === 'read from git 40 min ago · may have changed since'");
+    } finally {
+      store.putProjectScan(scan);
+    }
+    await page.press("Escape");
+  });
+
+  it("shows a question's past decisions quietly, and answers with one, verbatim, only when it is clicked", async () => {
+    store.upsertSession({ id: "deciding", provider: "Test", project: { name: "billing", dir: "/home/demo/Projects/billing" }, title: "past decisions", state: "waiting" });
+    store.ask({ sessionId: "deciding", kind: "question", text: "Bill new customers monthly or yearly by default?" });
+    store.closeOpen("deciding", { answer: "Monthly, with a yearly plan two months cheaper" });
+    const q = store.ask({ sessionId: "deciding", kind: "question", text: "Default billing period for new customers: monthly or yearly?", options: ["Monthly", "Yearly"] });
+    assert.equal(q.past?.length, 1);
+    const stop = store.listen("deciding");
+    try {
+      const page = await open();
+      await page.click(".scard", "past decisions");
+      await page.waitFor("document.querySelector('#session .panel-question .past-row')");
+      assert.equal(await page.eval<string>("document.querySelector('#session .past-head').textContent"), "Decided before");
+      assert.match(await page.eval<string>("document.querySelector('#session .past-row').innerText.replace(/\\s+/g, ' ')"), /^Monthly, with a yearly plan two months cheaper \d+ \w+ · Bill new customers monthly or yearly by default\?/);
+      assert.equal(store.getQuestion(q.id)?.status, "open", "nothing is answered by itself");
+      await page.click("#session .past-row");
+      for (let i = 0; i < 100 && store.getQuestion(q.id)?.status === "open"; i++) await new Promise((r) => setTimeout(r, 50));
+      assert.deepEqual(store.takeInbox("deciding").map((e) => e.answer), ["Monthly, with a yearly plan two months cheaper"], "sent as it was answered then");
+      await page.press("Escape");
+    } finally {
+      stop();
+      store.updateSession("deciding", (x) => ({ ...x, state: "ended" }));
+      store.forgetSession("deciding");
+    }
+  });
+
   it("brings an unanswered question up once more after 15 minutes", async () => {
     const page = await browser.newPage(1400, 900);
     pages.push(page);

@@ -23,6 +23,10 @@ and step away. When you come back, one browser tab shows:
   goes back to the session with one click.
 - **What is happening now:** each session, its agents, what each one is doing, which are blocked and
   which failed, and which sessions wrote something you have not read.
+- **Where each branch stands:** under a session's agents, each agent's branch and worktree read from
+  git (commits ahead and behind, uncommitted files, last commit, what runs in it), with how old the
+  reading is; `agent-desk status` prints the same for the session, and before a compaction it is
+  kept for the session to get back.
 - **What was said,** so a question makes sense without scrolling back through the terminal.
 - **Warnings before something breaks:** a context nearly full, a disk nearly full, worktrees piling
   up (how much each takes, which are already merged into the main branch, and the commands to remove
@@ -148,6 +152,11 @@ interpretation (`agent-desk interpret`) goes only on an answer given in the sess
 
 It also lists the decisions sessions reported with their results, and the ones archived after 60
 days. `--json` gives the whole records; details in [docs/protocol.md](docs/protocol.md#cli).
+
+A new question does not wait for that: when it arrives, the project's answered questions that read
+like it (plain word matching, nothing leaves the machine) are printed by `agent-desk ask` and shown on
+its card as **Decided before**, with date and answer. One click sends that answer again, verbatim;
+nothing is answered without you. Details in [docs/protocol.md](docs/protocol.md#past-decisions).
 
 ## Reviews
 

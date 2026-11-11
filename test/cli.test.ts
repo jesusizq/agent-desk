@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -30,6 +30,46 @@ function sessionOfThisProcess(): Store {
 }
 
 describe("cli", () => {
+  it("prints where the session's work stands, git read again, as text or as records", async () => {
+    const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+    const git = (dir: string, ...args: string[]) => execFileSync("git", ["-C", dir, ...args], { env });
+    const repo = path.join(fs.realpathSync(tempHome()), "shop");
+    fs.mkdirSync(repo);
+    git(repo, "init", "-q", "-b", "main");
+    git(repo, "commit", "-q", "--allow-empty", "-m", "first");
+    git(repo, "worktree", "add", "-q", "-b", "agent/pay", path.join(repo, ".claude", "worktrees", "pay"));
+    git(path.join(repo, ".claude", "worktrees", "pay"), "commit", "-q", "--allow-empty", "-m", "Pay button");
+    const store = new Store(tempHome());
+    const own = procInfo(process.pid);
+    store.upsertSession({ id: "me", provider: "Test", project: { name: "shop", dir: repo }, title: "checkout", process: { pid: process.pid, ...(own ? { start: own.start } : {}), ancestors: [] } });
+    store.upsertAgent("me", "pay", { goal: "Pay button", branch: "agent/pay", state: "working" });
+    store.upsertAgent("me", "rebase", { goal: "Rebase", branch: "agent/rebase", state: "blocked", after: ["pay"] });
+
+    const out = await cli(store.paths.home, "status");
+    assert.equal(out.code, 0, out.stderr);
+    const lines = out.stdout.trimEnd().split("\n");
+    assert.match(lines[0] ?? "", /^Where session "checkout" \(me\) stands in shop \(.*\/shop\), \d{4}-\d\d-\d\d \d\d:\d\dZ:$/);
+    assert.deepEqual(lines.slice(1, 5), [
+      "Branches (git read <1 min ago; compared with main):",
+      "- main checkout, this session's · main · clean · last «first» <1 min ago",
+      "- agent pay (working) · agent/pay · .claude/worktrees/pay · 1 ahead, 0 behind · clean · last «Pay button» <1 min ago",
+      "- agent rebase (blocked) · agent/rebase · branch not found",
+    ]);
+    assert.ok(lines.includes("- rebase (blocked, <1 min): Rebase · after pay"));
+    assert.ok(store.listProjectScans()[0]?.worktrees.length === 2, "what it read is kept for the desk");
+
+    const json = await cli(store.paths.home, "status", "--json");
+    assert.equal(json.code, 0, json.stderr);
+    const parsed = JSON.parse(json.stdout) as { branches: { rows: { branch?: string; ahead?: number }[] }; agents: unknown[]; problems: string[] };
+    assert.deepEqual(parsed.branches.rows.map((r) => [r.branch, r.ahead]), [["main", undefined], ["agent/pay", 1], ["agent/rebase", undefined]]);
+    assert.equal(parsed.agents.length, 2);
+    assert.deepEqual(parsed.problems, []);
+
+    const outside = await cli(tempHome(), "status");
+    assert.equal(outside.code, 2);
+    assert.match(outside.stderr, /does not run inside a registered session/);
+  });
+
   it("finds the calling session from its process ancestry", async () => {
     const store = sessionOfThisProcess();
     const out = await cli(store.paths.home, "ask", "Bars or line?", "--option", "Bars", "--option", "Line");

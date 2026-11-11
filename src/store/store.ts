@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { compact, fields, InputError, int, isoTime, list, oneOf, optional, text } from "../core/check.ts";
 import { id, newId, slug } from "../core/ids.ts";
 import { addSamples, type PlanHistory } from "../core/limits.ts";
+import { type Answered, pastDecisions } from "../core/match.ts";
 import { isAlive, procInfo, sessionFinished } from "../core/proc.ts";
 import {
   type Agent,
@@ -12,6 +13,7 @@ import {
   type InboxEntry,
   type Metrics,
   type ConversationEntry,
+  type Handoff,
   type ProjectScan,
   type Question,
   type QuestionGroup,
@@ -28,6 +30,7 @@ import {
   readPlanHistory,
   type PlanWindow,
   readConversationEntry,
+  readHandoff,
   readProjectScan,
   readQuestion,
   readResult,
@@ -270,9 +273,29 @@ export class Store {
       several: input.several || undefined,
       group: input.group,
       writing: input.writing || undefined,
+      past: input.kind === "permission" ? undefined : this.pastFor(input.sessionId, input.text, input.options ?? []),
     });
     writeJson(this.paths.question(question.id, "open"), question);
     return question;
+  }
+
+  /**
+   * Answered questions of the session's project that read like this one (src/core/match.ts), for the
+   * session and the developer to see before it is answered; undefined when none does.
+   */
+  private pastFor(sessionId: string, text: string, options: readonly string[]): Question["past"] {
+    const session = this.getSession(sessionId);
+    if (!session) return undefined;
+    // Unreadable records are named on the page and by `decisions`; a question is asked all the same.
+    const problems: string[] = [];
+    const members = projectSessions(this.everySession(problems), { dir: session.project.dir });
+    const answered = this.everyRecord(this.paths.questionDir("closed"), readQuestion, problems).flatMap((q): Answered[] =>
+      members.has(q.sessionId) && q.status === "answered" && q.kind !== "permission" && q.review === undefined && q.answer !== undefined && q.answer.via !== "review" && q.answer.text.trim() !== ""
+        ? [{ id: q.id, text: q.text, options: q.options, answer: q.answer }]
+        : [],
+    );
+    const found = pastDecisions({ text, options }, answered);
+    return found.length ? found : undefined;
   }
 
   /** The session's turn ended: what it asked during the turn is complete, and can be shown. */
@@ -1285,6 +1308,20 @@ export class Store {
     return this.readAll(this.paths.projectsDir, readProjectScan, problems);
   }
 
+  // ── Handoffs ──────────────────────────────────────────────────────────
+
+  putHandoff(handoff: Handoff): Handoff {
+    const next = readHandoff(handoff);
+    writeJson(this.paths.handoff(next.sessionId), next);
+    return next;
+  }
+
+  getHandoff(sessionId: string): Handoff | undefined {
+    const file = this.paths.handoff(sessionId);
+    const raw = readJson(file);
+    return raw === undefined ? undefined : readHandoff(raw, file);
+  }
+
   // ── Archive ─────────────────────────────────────────────────────────────
 
   /**
@@ -1316,6 +1353,7 @@ export class Store {
       for (const service of this.listServices().filter((v) => v.sessionId === s.id)) this.moveToArchive(this.paths.service(service.id));
       this.moveToArchive(this.paths.agentDir(s.id));
       this.moveToArchive(this.paths.metrics(s.id));
+      this.moveToArchive(this.paths.handoff(s.id));
       this.moveToArchive(this.paths.messageDir(s.id));
       fs.rmSync(this.paths.sessionInbox(s.id), { recursive: true, force: true }); // listener marks only; answers were withdrawn at the end
       this.moveToArchive(this.paths.session(s.id));
@@ -1504,8 +1542,8 @@ const KNOWN_SHOWN = 10;
 /** When the agent was last launched or resumed. */
 const lastLaunched = (a: Agent) => (a.resumedAt !== undefined && a.resumedAt > a.startedAt ? a.resumedAt : a.startedAt);
 
-/** What the session reported for an agent, which a merge keeps over what its adapter recorded. */
-const reportedOf = (a: Agent) => compact({ goal: a.goal, summary: a.summary, branch: a.branch, commit: a.commit });
+/** What the session reported for an agent, and where it worked, which a merge keeps over what its adapter recorded last. */
+const reportedOf = (a: Agent) => compact({ goal: a.goal, summary: a.summary, branch: a.branch, commit: a.commit, worktree: a.worktree });
 
 const ANSWER_MAX = 20_000;
 const MESSAGES_KEPT = 500;

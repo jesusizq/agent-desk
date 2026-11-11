@@ -309,8 +309,45 @@ export const TEXT = {
     /** @param {number} n */
     ahead: (n) => plural(n, "commit ahead", "commits ahead"),
     detached: "detached",
+    notMeasured: "not measured yet",
     copyCleanup: "Copy the commands to remove them",
     cleanupNote: "The desk never removes anything: paste them in a terminal if you agree.",
+  },
+  branches: {
+    title: "Branches",
+    /** @param {string} t */
+    read: (t) => `read from git ${t} ago`,
+    /** @param {string} t */
+    stale: (t) => `read from git ${t} ago · may have changed since`,
+    main: "main checkout",
+    you: "this session",
+    /** @param {string} head */
+    detached: (head) => `detached at ${head}`,
+    clean: "clean",
+    /** @param {number} n */
+    changed: (n) => plural(n, "changed file", "changed files"),
+    merged: "merged",
+    /** @param {string} names */
+    inUse: (names) => `in use: ${names}`,
+    /** @param {string} subject @param {string} t */
+    last: (subject, t) => `«${subject}» · ${t} ago`,
+    /** @param {number} ahead @param {number} behind @param {string} base */
+    counts: (ahead, behind, base) => `${plural(ahead, "commit", "commits")} ahead of ${base}, ${behind} behind`,
+    missing: "branch not found",
+    gone: "checkout gone",
+    unread: "not read yet",
+    /** @param {string} why */
+    error: (why) => `git could not be read: ${why}`,
+    /** @param {number} n */
+    hidden: (n) => `${plural(n, "more checkout", "more checkouts")} merged, clean and idle`,
+  },
+  past: {
+    title: "Decided before",
+    /** @param {string} day */
+    on: (day) => day,
+    /** @param {string} answer */
+    use: (answer) => `Answer with “${answer}”, as decided before`,
+    probable: "typed next in the terminal: it may have been about something else",
   },
   offline: {
     title: "Offline",

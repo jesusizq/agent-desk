@@ -37,7 +37,7 @@ describe("project scan", () => {
     assert.deepEqual([by.done?.merged, by.done?.ahead], [true, 0]);
     assert.deepEqual([by.wip?.merged, by.wip?.ahead], [false, 1]);
     assert.ok((by.wip?.bytes ?? 0) >= 6000, "the worktree's files are counted");
-    assert.equal(scan.totalBytes, scan.worktrees.reduce((n, w) => n + w.bytes, 0));
+    assert.equal(scan.totalBytes, scan.worktrees.reduce((n, w) => n + (w.bytes ?? 0), 0));
     assert.deepEqual(scan.dayStart, { day: "2026-10-28", bytes: scan.totalBytes });
 
     fs.writeFileSync(path.join(root, "shop-wip", "big.bin"), Buffer.alloc(100_000));

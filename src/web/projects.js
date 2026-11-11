@@ -12,7 +12,7 @@ import { data, ui } from "./state.js";
 
 const WARN_BYTES = 5e9;
 /** @param {Worktree[]} ws */
-export const sum = (ws) => ws.reduce((n, w) => n + w.bytes, 0);
+export const sum = (ws) => ws.reduce((n, w) => n + (w.bytes ?? 0), 0);
 /** @param {ProjectScan} p */
 export const mergedOf = (p) => p.worktrees.filter((w) => !w.main && w.merged);
 export const projectsInView = () => data.projects.filter((p) => ui.project === null || p.name === ui.project);
@@ -33,13 +33,13 @@ export function openProject(projectId) {
   const d = dialog("session");
   const t = TEXT.worktrees;
   const base = baseOf(p);
-  const merged = mergedOf(p).sort((a, b) => b.bytes - a.bytes);
+  const merged = mergedOf(p).sort((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0));
   const open = p.worktrees.filter((w) => !w.main && !w.merged).sort((a, b) => (b.ahead ?? 0) - (a.ahead ?? 0));
   const main = p.worktrees.filter((w) => w.main);
   const name = (/** @type {Worktree} */ w) => w.path.split("/").at(-1) ?? w.path;
   /** @param {Worktree[]} ws @param {(w: Worktree) => string} note */
   const rows = (ws, note) =>
-    h("div", { class: "alist wt-list" }, ws.map((w) => h("div", { class: "arow", title: w.path }, h("span", { class: "awhat" }, h("span", { class: "agoal" }, w.branch ?? t.detached), h("span", { class: "adoing" }, `${name(w)} · ${note(w)}`)), h("span", { class: "num faint" }, gb(w.bytes)))));
+    h("div", { class: "alist wt-list" }, ws.map((w) => h("div", { class: "arow", title: w.path }, h("span", { class: "awhat" }, h("span", { class: "agoal" }, w.branch ?? t.detached), h("span", { class: "adoing" }, `${name(w)} · ${note(w)}`)), h("span", { class: "num faint" }, w.bytes === undefined ? t.notMeasured : gb(w.bytes)))));
   const grew = p.totalBytes - p.dayStart.bytes;
   // Paths come from git's own listing; quoted for the shell the developer pastes them into.
   const cleanup = merged.map((w) => `git -C '${p.dir.replace(/'/g, "'\\''")}' worktree remove '${w.path.replace(/'/g, "'\\''")}'`).join("\n");

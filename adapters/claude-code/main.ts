@@ -5,7 +5,7 @@ import { sessionProcess } from "../../src/core/proc.ts";
 import { tmuxLocation } from "../../src/core/tmux.ts";
 import { storeHome } from "../../src/store/paths.ts";
 import { Store } from "../../src/store/store.ts";
-import { deliverWhileWorking, handleHook, type HookOutput, readHookInput, waitForAnswer, waitForDialog, waitForPermission } from "./hooks.ts";
+import { deliverWhileWorking, handleHook, type HookOutput, readHookInput, recordHandoff, waitForAnswer, waitForDialog, waitForPermission } from "./hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "./statusline.ts";
 
 const WAIT_POLL_MS = 500;
@@ -17,7 +17,8 @@ const PERMISSION_POLL_MS = 300;
 const PERMISSION_WAIT_MS = 590_000;
 
 const CLI = path.join(import.meta.dirname, "..", "..", "src", "cli", "main.ts");
-const SCAN_EVERY_S = 600;
+// Branches move with every commit: read again at most every minute; sizes are walked hourly (scan.ts).
+const SCAN_EVERY_S = 60;
 
 /** A detached `agent-desk scan`, so measuring folders never delays the end of a turn. */
 function startScan(projectDir: string): void {
@@ -45,7 +46,9 @@ async function main(argv: string[]): Promise<void> {
 
   if (command === "hook") {
     const hook = readHookInput(input);
-    const out = handleHook(hook, { store, env: process.env, sessionProcess: () => sessionProcess(), startScan, tmuxLocation: () => tmuxLocation(process.env) });
+    const ctx = { store, env: process.env, sessionProcess: () => sessionProcess(), startScan, tmuxLocation: () => tmuxLocation(process.env) };
+    if (hook.event === "PreCompact") finish(await recordHandoff(hook, ctx));
+    const out = handleHook(hook, ctx);
     if (hook.event === "PermissionRequest" && (out.questionId || out.dialog)) {
       const stop = new AbortController();
       for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(signal, () => stop.abort());

@@ -11,6 +11,7 @@ import { ATTACHED_IMAGES_MAX, data, page, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Question} Question */
 /** @typedef {import("../core/protocol.ts").ConversationEntry} ConversationEntry */
+/** @typedef {import("../core/protocol.ts").PastDecision} PastDecision */
 /** @typedef {import("./state.js").Item} Item */
 /** @typedef {import("./dom.js").Child} Child */
 
@@ -39,6 +40,7 @@ function answerForm(q, middle = null) {
     images: !textOnly,
     middle,
     several: q.several === true,
+    past: q.past ?? [],
     off: listening ? null : TEXT.notListening,
   });
 }
@@ -65,9 +67,11 @@ const denial = (decide, reason) => (!reason.trim() || reason.trim() === decide.a
  * Sent from a session's conversation, it shows there with how its delivery goes; elsewhere the card
  * it answers says it is answered.
  * @param {string} key `answer-<question id>` or `message-<session id>` @param {string[]} options @param {string} sid
- * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, several?: boolean, decide?: Decide | null, off?: string | null }} [how] `middle` is shown between the options and the box
+ * With `past` (answers the developer gave before to questions that read like this one), each is sent
+ * with one click, verbatim, as an option is.
+ * @param {{ placeholder?: string, hint?: string, images?: boolean, middle?: Child, several?: boolean, decide?: Decide | null, past?: PastDecision[], off?: string | null }} [how] `middle` is shown between the options and the box
  */
-export function replyBox(key, options, sid, { placeholder: asked = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, decide = null, off: why = null } = {}) {
+export function replyBox(key, options, sid, { placeholder: asked = options.length ? TEXT.answerPlaceholder : TEXT.replyPlaceholder, hint = TEXT.sendHint, images = true, middle = null, several = false, decide = null, past = [], off: why = null } = {}) {
   // Offline, nothing can be sent: every box turns inert, and what is written in it stays.
   const off = ui.offline ? TEXT.offline.answer : why;
   const placeholder = ui.offline ? TEXT.offline.placeholder : asked;
@@ -247,6 +251,29 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
     decision,
     opts.length && several ? h("div", { class: "opts-note faint" }, TEXT.pickSeveral) : null,
     opts.length ? h("div", { class: `opts${several ? " several" : " sends"}`, role: several ? "group" : null, "aria-label": several ? TEXT.pickSeveral : null }, opts) : null,
+    past.length
+      ? h(
+          "div",
+          { class: "past", role: "group", "aria-label": TEXT.past.title },
+          h("div", { class: "past-head" }, icon("history"), TEXT.past.title),
+          past.map((p) =>
+            h(
+              "button",
+              {
+                class: "past-row",
+                "data-key": `past-${p.questionId}`,
+                title: [p.answer, p.probable ? `(${TEXT.past.probable})` : ""].filter(Boolean).join("\n"),
+                "aria-label": TEXT.past.use(p.answer),
+                disabled: off !== null || busy || uploading,
+                onclick: (e) => send(e, p.answer, !byFinger(e)),
+              },
+              h("span", { class: "past-a" }, p.answer),
+              h("span", { class: "past-q" }, `${pastDay(p.at)} · ${headline(p.text)}`),
+              h("span", { class: "opt-go", "aria-hidden": "true" }, icon("send")),
+            ),
+          ),
+        )
+      : null,
     attached.length || uploading
       ? h(
           "div",
@@ -304,6 +331,12 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
       ),
     ),
   );
+}
+
+/** The day of a past decision, with its year when it is not this one. @param {string} iso */
+function pastDay(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(TEXT.locale, d.getFullYear() === new Date().getFullYear() ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
 }
 
 /**

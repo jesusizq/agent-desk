@@ -1,5 +1,5 @@
 // Validators that read protocol records back from untrusted files and input.
-import { bool, compact, fields, InputError, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
+import { bool, compact, type Fields, fields, InputError, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
 import { id } from "./ids.ts";
 import type { PlanHistory, PlanWindowHistory } from "./limits.ts";
 import {
@@ -21,8 +21,12 @@ import {
   type Check,
   type ConversationEntry,
   type InboxEntry,
+  type BranchState,
+  type Handoff,
+  type PastDecision,
   type ProjectScan,
   type Worktree,
+  PAST_SHOWN,
   type Metrics,
   type PlanWindow,
   type Question,
@@ -131,6 +135,18 @@ export function readQuestion(value: unknown, where = "question"): Question {
     several: optional(f.several, `${where}.several`, bool),
     group: optional(f.group, `${where}.group`, readGroup),
     review: optional(f.review, `${where}.review`, readReviewRef),
+    past: optional(f.past, `${where}.past`, (v, w) => list(v, w, readPastDecision, PAST_SHOWN)),
+  });
+}
+
+function readPastDecision(value: unknown, where: string): PastDecision {
+  const f = fields(value, where);
+  return compact({
+    questionId: id(f.questionId, `${where}.questionId`),
+    text: nonEmpty(f.text, `${where}.text`),
+    answer: text(f.answer, `${where}.answer`),
+    at: isoTime(f.at, `${where}.at`),
+    probable: optional(f.probable, `${where}.probable`, bool),
   });
 }
 
@@ -188,6 +204,7 @@ export function readAgent(value: unknown, where = "agent"): Agent {
     waitsForJob: optional(f.waitsForJob, `${where}.waitsForJob`, bool),
     branch: optional(f.branch, `${where}.branch`, label),
     commit: optional(f.commit, `${where}.commit`, label),
+    worktree: optional(f.worktree, `${where}.worktree`, (v, w) => nonEmpty(v, w, 4096)),
     after: list(f.after ?? [], `${where}.after`, id, 50),
     startedAt: isoTime(f.startedAt, `${where}.startedAt`),
     updatedAt: isoTime(f.updatedAt, `${where}.updatedAt`),
@@ -318,6 +335,7 @@ export function readProjectScan(value: unknown, where = "project"): ProjectScan 
     dir: nonEmpty(f.dir, `${where}.dir`, 4096),
     baseBranch: optional(f.baseBranch, `${where}.baseBranch`, label),
     worktrees: list(f.worktrees, `${where}.worktrees`, readWorktree, 500),
+    branches: optional(f.branches, `${where}.branches`, (v, w) => list(v, w, readBranchState, 500)),
     totalBytes: bytes(f.totalBytes, `${where}.totalBytes`),
     dayStart: { day: label(day.day, `${where}.dayStart.day`), bytes: bytes(day.bytes, `${where}.dayStart.bytes`) },
     measuredAt: isoTime(f.measuredAt, `${where}.measuredAt`),
@@ -331,16 +349,54 @@ function readWorktree(value: unknown, where: string): Worktree {
     path: nonEmpty(f.path, `${where}.path`, 4096),
     branch: optional(f.branch, `${where}.branch`, label),
     head: label(f.head, `${where}.head`),
-    bytes: int(f.bytes, `${where}.bytes`),
-    sizedAt: isoTime(f.sizedAt, `${where}.sizedAt`),
+    bytes: optional(f.bytes, `${where}.bytes`, (v, w) => int(v, w)),
+    sizedAt: optional(f.sizedAt, `${where}.sizedAt`, isoTime),
     main: f.main === true,
-    merged: optional(f.merged, `${where}.merged`, (v, w) => {
-      if (typeof v !== "boolean") throw new Error(`${w}: expected true or false`);
-      return v;
-    }),
-    ahead: optional(f.ahead, `${where}.ahead`, (v, w) => int(v, w)),
+    ...gitState(f, where),
+    busy: optional(f.busy, `${where}.busy`, (v, w) => list(v, w, label, BUSY_KEPT)),
   });
 }
+
+/** How many processes working in a checkout are named. */
+export const BUSY_KEPT = 5;
+
+/** Where a head stands against the main branch, as both a checkout and a branch carry it. */
+function gitState(f: Fields, where: string) {
+  const count = (v: unknown, w: string) => int(v, w);
+  return {
+    merged: optional(f.merged, `${where}.merged`, bool),
+    ahead: optional(f.ahead, `${where}.ahead`, count),
+    behind: optional(f.behind, `${where}.behind`, count),
+    dirty: optional(f.dirty, `${where}.dirty`, count),
+    subject: optional(f.subject, `${where}.subject`, line),
+    committedAt: optional(f.committedAt, `${where}.committedAt`, isoTime),
+    error: optional(f.error, `${where}.error`, line),
+  };
+}
+
+function readBranchState(value: unknown, where: string): BranchState {
+  const f = fields(value, where);
+  const { dirty: _dirty, ...state } = gitState(f, where);
+  return compact({
+    name: label(f.name, `${where}.name`),
+    exists: bool(f.exists, `${where}.exists`),
+    head: optional(f.head, `${where}.head`, label),
+    ...state,
+  });
+}
+
+export function readHandoff(value: unknown, where = "handoff"): Handoff {
+  const f = fields(value, where);
+  return {
+    sessionId: id(f.sessionId, `${where}.sessionId`),
+    at: isoTime(f.at, `${where}.at`),
+    trigger: oneOf(["manual", "auto"] as const)(f.trigger, `${where}.trigger`),
+    text: text(f.text, `${where}.text`, HANDOFF_MAX),
+  };
+}
+
+/** The most a handoff says, in characters: what a compacted session reads first stays short. */
+export const HANDOFF_MAX = 3000;
 
 export function readSeen(value: unknown, where = "seen"): Seen {
   return { since: isoTime(fields(value, where).since, `${where}.since`) };

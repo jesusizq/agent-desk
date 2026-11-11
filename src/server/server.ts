@@ -8,8 +8,9 @@ import { fields, InputError, int, oneOf, optional, text } from "../core/check.ts
 import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
-import { type DeskState, type DiskWarning, imageIds, readService, type ReviewState, type Service, type Session } from "../core/model.ts";
-import { sessionListeners, urlPort } from "../core/ports.ts";
+import { sessionBranches } from "../core/branches.ts";
+import { type DeskState, type DiskWarning, imageIds, type ReviewState, type Session } from "../core/model.ts";
+import { liveServices } from "../core/ports.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
@@ -87,32 +88,13 @@ export function deskState(store: Store, now = new Date()): DeskState {
     listening: snap.sessions.filter((s) => store.isListening(s.id, snap.problems)).map((s) => s.id),
     disk: diskWarnings(snap.sessions, snap.problems),
     planForecasts: planForecasts(store.planHistory(snap.problems), now),
+    branches: snap.sessions.flatMap((s) => {
+      if (sessionFinished(s)) return [];
+      const shown = sessionBranches(s, snap.agents, snap.projects.find((p) => path.resolve(p.dir) === path.resolve(s.project.dir)));
+      return shown ? [shown] : [];
+    }),
     build: BUILD,
   };
-}
-
-/**
- * The services the page shows: each running session's listening ports (src/core/ports.ts), under the
- * name and path the session gave one with `agent-desk service`; a named one that was found listening
- * goes when its port closes, and one the desk cannot see stays until the session stops it.
- */
-function liveServices(stored: Service[], sessions: Session[], problems: string[]): Service[] {
-  const running = sessions.filter((s): s is Session & { process: NonNullable<Session["process"]> } => s.process !== undefined && !sessionFinished(s));
-  let found: ReturnType<typeof sessionListeners>;
-  try {
-    found = sessionListeners(running.map((s) => s.process));
-  } catch (error) {
-    problems.push(`local servers of the sessions: ${(error as Error).message}`);
-    return stored.filter((v) => !v.detected);
-  }
-  const listening = new Map(running.map((s, i) => [s.id, found[i] ?? []]));
-  const named = stored.filter((v) => !v.detected || listening.get(v.sessionId)?.some((l) => l.port === urlPort(v.url)));
-  const detected = [...listening].flatMap(([sessionId, listeners]) =>
-    listeners
-      .filter((l) => !stored.some((v) => v.sessionId === sessionId && urlPort(v.url) === l.port))
-      .map((l) => readService({ id: `port-${l.port}-${createHash("sha256").update(sessionId).digest("hex").slice(0, 16)}`, sessionId, name: l.name, url: l.url, startedAt: l.startedAt, detected: true }, `local server on port ${l.port}`)),
-  );
-  return [...named, ...detected];
 }
 
 /** Sessions still marked running whose process has disappeared (closed terminal, crash). */

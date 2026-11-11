@@ -154,6 +154,17 @@
         ]
       }
     ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "agent-desk-claude hook",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

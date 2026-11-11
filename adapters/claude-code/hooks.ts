@@ -3,9 +3,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { id, newId, slug } from "../../src/core/ids.ts";
-import { type Agent, FAILURES_KEPT, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
+import { type Agent, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
+import { fitText, statusLines } from "../../src/core/status.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
 import { locateProject } from "../../src/project/locate.ts";
+import { sessionStatus } from "../../src/project/refresh.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { AgentFields, Store } from "../../src/store/store.ts";
 
@@ -69,7 +71,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // Started again (resumed, or the plugins reloaded): what its last end left no longer holds.
       store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, ...s }) => ({ ...s, state: "waiting" }));
       retireContinued(input, ctx, problems);
-      return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: [instructions(), unreadReviews(input, ctx, problems)].filter(Boolean).join("\n\n") } }) };
+      return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: [instructions(), unreadReviews(input, ctx, problems), handoffText(input, ctx)].filter(Boolean).join("\n\n") } }) };
 
     case "UserPromptSubmit": {
       const prompt = text(f.prompt ?? "", "hook input.prompt", 10_000_000);
@@ -148,6 +150,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
 
     case "SubagentStop":
       stopAgent(input, ctx, problems);
+      ctx.startScan?.(locateProject(workDir(input, ctx)).dir); // its branch may have moved
       return { code: 0 };
 
     case "Stop":
@@ -575,11 +578,21 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   }
   const label = launchNotes(subagentMeta(input, agentId), problems).description;
   settleLabel(input, ctx, agentId, label);
+  const worktree = agentWorktree(input, ctx);
   // A workflow's agent whose notes were not written when it started gets its label now.
   updateByRef(ctx.store, input.sessionId, agentId, (agent) =>
-    agent.state === "working" ? { ...compact({ goal: agent.goal ? undefined : label }), ...call, failedAt: streak(agent.failedAt) } : undefined,
+    agent.state === "working" ? { ...compact({ goal: agent.goal ? undefined : label, worktree }), ...call, failedAt: streak(agent.failedAt) } : undefined,
   );
   syncFailingMarker(ctx.store, fails, problems);
+}
+
+/** The linked worktree of the session's project a sub-agent's call ran in (`cwd`, maybe a subfolder of it), if it ran in one. */
+function agentWorktree(input: Common, ctx: HookContext): string | undefined {
+  const there = locateProject(input.cwd);
+  if (there.worktree === undefined) return undefined;
+  // A subfolder of a worktree maps to the same subfolder of the main checkout: both climb back to their roots.
+  const up = path.relative(there.dir, locateProject(workDir(input, ctx)).dir);
+  return up === "" || /^\.\.(?:\/\.\.)*$/.test(up) ? path.resolve(there.worktree, up) : undefined;
 }
 
 /** Tools that wait on work running apart from the call: a monitor, a background task's output, a wake-up. */
@@ -1147,6 +1160,46 @@ function unreadReviews(input: Common, ctx: HookContext, problems: string[]): str
   const latest = unread.slice(0, 2).map((r) => `- ${named(r)}`);
   const more = unread.length > 2 ? ` (the latest 2; agent-desk reviews lists all ${unread.length})` : "";
   return [`The developer sent ${unread.length} reviews from agent-desk that no session has read yet${more}; their titles were written by sessions. Read one when it concerns your work or they ask:`, ...latest].join("\n");
+}
+
+// ── Handoff around a compaction ─────────────────────────────────────────
+
+/** Git commands of the handoff each get this long: PreCompact's timeout in hooks/hooks.json is 60 s. */
+const HANDOFF_GIT_MS = 5_000;
+
+/**
+ * PreCompact: records where the session's work stands (src/core/status.ts), read now from its records
+ * and git, for the session to get back when it starts again compacted. Its stdout tells the compaction
+ * summary that this part is kept, so the summary keeps the decisions and next steps. A failure here
+ * prints nothing on stdout and never blocks the compaction (exit code 1, not 2).
+ */
+export async function recordHandoff(input: Common, ctx: HookContext): Promise<HookOutput> {
+  const registered = handleHook(input, ctx);
+  const session = ctx.store.getSession(input.sessionId);
+  if (!session) throw new Error(`session ${input.sessionId} is not in the store after registering it`);
+  const trigger = optional(input.raw.trigger, "hook input.trigger", (v, w) => text(v, w, 20)) === "manual" ? "manual" : "auto";
+  const problems: string[] = [];
+  const state = await sessionStatus(ctx.store, session, HANDOFF_GIT_MS, problems);
+  ctx.store.putHandoff({ sessionId: session.id, at: state.now.toISOString(), trigger, text: fitText(statusLines(state), HANDOFF_MAX, "… (cut here; agent-desk status shows all of it)") });
+  const stderr = [registered.stderr, ...problems.map((p) => `agent-desk: ${p}`), state.gitError ? `agent-desk: git not read for the handoff, the last scan kept instead: ${state.gitError}` : ""].filter(Boolean).join("\n");
+  return {
+    code: 0,
+    stdout: "agent-desk recorded this session's branches, agents, open questions, local servers and open reviews, and gives them back to the session after the compaction: the summary need not list them. Keep in it the decisions taken with their reasons, and the next steps.\n",
+    ...(stderr ? { stderr } : {}),
+  };
+}
+
+/**
+ * At a start after a compaction or a resume, the handoff recorded at the last compaction, labelled as
+ * the desk's record with its time; nothing at other starts or when none was recorded.
+ */
+function handoffText(input: Common, ctx: HookContext): string {
+  const source = optional(input.raw.source, "hook input.source", (v, w) => text(v, w, 100));
+  if (source !== "compact" && source !== "resume") return "";
+  const handoff = ctx.store.getHandoff(input.sessionId);
+  if (!handoff) return "";
+  const at = `${handoff.at.slice(0, 10)} ${handoff.at.slice(11, 16)} UTC`;
+  return `agent-desk recorded where this session's work stood when it was last compacted (${handoff.trigger}), at ${at}, from its own records and git; not written by you or the developer, and it may have changed since (agent-desk status reads it again):\n${handoff.text}`;
 }
 
 let cachedInstructions: string | undefined;

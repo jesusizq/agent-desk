@@ -228,6 +228,15 @@ describe("what the page looks like", { skip: skipped() }, () => {
         await page.waitFor("document.querySelectorAll('#session .atimeline .abar').length === 5");
       },
     }),
+    ...desktop("session-branches", {
+      show: async (page) => {
+        await page.click(".scard", "checkout redesign");
+        await page.waitFor(arrived("session"));
+        await page.click("#session .pchips button.chip", "agents");
+        await page.waitFor("document.querySelectorAll('#session .branches-sec .brow').length === 4");
+        await page.eval("document.querySelector('#session .branches-sec').scrollIntoView({ block: 'end' })");
+      },
+    }),
     ...desktop("result-compare", {
       show: async (page) => {
         const r = busy.listResults().find((x) => x.title === "Checkout: before and after");
@@ -252,6 +261,20 @@ describe("what the page looks like", { skip: skipped() }, () => {
       show: async (page) => {
         await page.tap(".tabbar button", "Sessions");
         await page.waitFor(`document.querySelector('.tabbar button[aria-pressed="true"]')?.textContent.includes('Sessions') && ${STILL}`);
+      },
+    },
+    {
+      name: "phone-session-branches",
+      device: "phone",
+      theme: "light",
+      show: async (page) => {
+        await page.tap(".tabbar button", "Sessions");
+        await page.waitFor(STILL);
+        await page.tap(".scard", "checkout redesign");
+        await page.waitFor(arrived("session"));
+        await page.tap("#session .pchips button.chip", "agents");
+        await page.waitFor("document.querySelectorAll('#session .branches-sec .brow').length === 4");
+        await page.eval("document.querySelector('#session .branches-sec').scrollIntoView({ block: 'end' })");
       },
     },
     {

@@ -11,8 +11,8 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | Path | Record | Written by |
 | --- | --- | --- |
 | `sessions/<session>.json` | `Session`: provider label, project (`name`, `dir`, and `worktree` when the session works in a linked git worktree of it; see below), title, state (`working`, `waiting`, `ended`), process ancestry, terminal program, current activity and when it was recorded (`activityIsCall` when that activity is the tool call its adapter recorded, "Bash: npm test", rather than words the session or the adapter wrote: the page leaves calls off its session cards), when its latest tool calls failed in a row and the latest of them (`failedAt`, `failedWhat`: a successful call or the end of the turn empties them; the page warns at three), whether its latest call started or awaits a job of its own (`waitsForJob`: a background command or agent, a monitor, a wait; the page then shows it waiting on its job, never quiet), when its latest turn ended (`turnEndedAt`: an answer given after it belongs to the turn now running), last message of the turn, how many messages its conversation has received (`messageCount`, counted by the store as each is added, so a page showing the conversation sees one added mid-turn), whether its adapter delivers messages while it works (`takesMessagesWhileWorking`) | adapter hooks |
-| `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer, how it was given (`via`: `terminal`, `desk`) and whether it is only `probable` (see below), interpretation, `setAside`: the replies that closed it without answering it (see below), `dialog` when it is a provider dialog whose answer only the hook waiting for it takes, `several` when more than one option can be picked (the answer names them, separated by `, `), `group` (`id`, `index` from 0, `size` from 2 to 10) shared by questions asked together, which the session waits for all of | hooks, `agent-desk ask`, the page |
-| `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded (`activityIsCall` as on `Session`; the store drops the mark whenever an activity is written without it, so `agent-desk agent --activity` always reads as the session's words), when its latest tool calls failed in a row and the latest of them, and whether its latest call started or awaits a job of its own (as on `Session`), branch, commit, `after` (agents it builds on), times, `resumedAt` (when the session last sent it a message), `ref`, the provider's id of the agent an adapter follows, `launch`, the provider's id of the call that launched it, when the adapter follows launches, and `launchedBy`, the `ref` of the sub-agent that launched it, when one did. Records are made by adapters only (see Sub-agents). An adapter that learns an agent's name late renames its record (`Store.renameAgent`); a record already under that name without `ref` (made by an earlier CLI) is merged into it, keeping its goal, summary, branch, commit and `after` | hooks; `agent-desk agent` adds to them |
+| `questions/open/<question>.json`, `questions/closed/<question>.json` | `Question`: kind (`question`, `permission`, `waiting`), text, context, options, status (`open`, `answered`, `dismissed`), answer, how it was given (`via`: `terminal`, `desk`) and whether it is only `probable` (see below), interpretation, `setAside`: the replies that closed it without answering it (see below), `dialog` when it is a provider dialog whose answer only the hook waiting for it takes, `several` when more than one option can be picked (the answer names them, separated by `, `), `group` (`id`, `index` from 0, `size` from 2 to 10) shared by questions asked together, which the session waits for all of, `past`: up to 3 answered questions of the same project that read like it (see Past decisions) | hooks, `agent-desk ask`, the page |
+| `agents/<session>/<agent>.json` | `Agent`: state, goal (short title), summary (what it must deliver), activity and when it was recorded (`activityIsCall` as on `Session`; the store drops the mark whenever an activity is written without it, so `agent-desk agent --activity` always reads as the session's words), when its latest tool calls failed in a row and the latest of them, and whether its latest call started or awaits a job of its own (as on `Session`), branch, commit, `worktree` (the linked worktree of the session's project its calls ran in, as its adapter saw them), `after` (agents it builds on), times, `resumedAt` (when the session last sent it a message), `ref`, the provider's id of the agent an adapter follows, `launch`, the provider's id of the call that launched it, when the adapter follows launches, and `launchedBy`, the `ref` of the sub-agent that launched it, when one did. Records are made by adapters only (see Sub-agents). An adapter that learns an agent's name late renames its record (`Store.renameAgent`); a record already under that name without `ref` (made by an earlier CLI) is merged into it, keeping its goal, summary, branch, commit and `after` | hooks; `agent-desk agent` adds to them |
 | `results/<result>.json` | `Result`: title, summary, status, local URL, image ids, before/after pair, assumptions, taste decisions, checks, when it was seen (`seenAt`) | `agent-desk result` |
 | `images/<image>.<png\|jpg\|webp\|gif>` | a copy of each reported image, and each image the developer attaches to an answer or message on the page; type checked by its first bytes, 20 MB at most. One that no live result, answer or message shows is archived with the rest | `agent-desk result`, the page |
 | `services/<service>.json` | a local server the session named, its URL, and `detected` when its port was listening in the session's processes as it was named (see Local servers) | `agent-desk service` |
@@ -21,7 +21,8 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `inbox/<session>/.listener.<pid>.json` | a process waiting for that session's answers | the adapter's waiter |
 | `.inbox-pending` | present while any inbox holds an entry, so a hook that runs on every tool call tests one file | the store |
 | `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (marked `step`, when its adapter can tell), and each answer of the developer (typed or from the desk), the latest 500 per session | hooks, the page |
-| `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, size on disk, whether merged into the main branch and commits ahead; total and the day's starting total | `agent-desk scan`, started by adapters at the end of a turn |
+| `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, head, size on disk (absent until first measured), whether merged into the main branch, commits ahead and behind, uncommitted files (`dirty`), last commit subject and time, the live processes working in it (`busy`) and what failed reading it (`error`); the branches its agents were said to work on that no checkout has (`branches`: whether each exists, and where it stands); when git was read (`measuredAt`); total and the day's starting total (see Branches) | `agent-desk scan` (started by adapters at the end of a turn and when a sub-agent stops), `agent-desk status`, the `PreCompact` hook |
+| `handoffs/<session>.json` | `Handoff`: where the session's work stood before its context was compacted (`trigger`: `manual`, `auto`), as `agent-desk status` words it, at most 3000 characters, and `at` | the adapter's `PreCompact` hook |
 | `reviews/<review>/review.json` | `Review`: title, project, the session that published the latest round, every round (`n`, `at`, `sessionId`, `bytes`), progress parsed from the page's counter, when its saved state last changed and from where (`local`, `remote`), whether the page has handed over the text it copies (`hasSummary`), each send, the last read through the CLI (`collected`), `openedAt`, `closedAt` | `agent-desk review`, the page |
 | `reviews/<review>/round-<n>.html` | the page of that round, its images inlined; the last 5 rounds are kept | `agent-desk review` |
 | `reviews/<review>/state.json` | `ReviewState`: the page's `localStorage` (`data`, string to string), the text it copied (`summary`) and `rev`, one more at each accepted write; never in `DeskState` | the page |
@@ -125,6 +126,45 @@ stored: it goes from the page when its process stops or the session ends.
 closes), and a server the scan cannot see (a container's port, owned by the container runtime; a
 server started with `nohup … &`, which leaves the session's process tree when its shell exits),
 shown until `--stop`.
+
+## Branches
+
+`src/project/scan.ts` reads each checkout with git (`src/project/git.ts`): `git -C <dir> --no-optional-locks`
+and a fixed argument list, no shell, 10 s per command (5 s in the handoff), never writing in the
+repository. Per checkout: `worktree list --porcelain`, `log -1` of its head, `merge-base --is-ancestor`
+and `rev-list --left-right --count <base>...<head>` against the main checkout's branch, `status
+--porcelain=v1 -z --untracked-files=normal` for its uncommitted files (the checkouts nested in it
+excluded by pathspec, so a worktree under `.claude/worktrees/` is not one of the main checkout's). A branch an agent named
+(`agent-desk agent --branch`) that no checkout has is looked up as `refs/heads/<name>` (`rev-parse
+--verify --quiet`), only when the name is a plain ref name. A command that fails or times out leaves
+its message in that checkout's `error` and in `problems`; the others are read all the same.
+
+`busy` names, by command, this user's processes whose working folder (`/proc/<pid>/cwd`) is in the
+checkout and in no checkout nested in it, shells and the scan's own process chain left out.
+
+Sizes are walked at most hourly by the background scan; `agent-desk status` and the handoff read git
+only, keeping known sizes. One scan of a project runs at a time (`claimScan`); a status read while
+another runs reads git without storing it.
+
+A session's rows (`sessionBranches`, `src/core/branches.ts`, sent as `DeskState.branches` and printed
+by `agent-desk status`): the main checkout, each of its agents with a `worktree` (the deepest
+checkout holding it) or a `branch`, then the project's other checkouts; one merged, clean and idle is
+only counted (`hidden`). An agent whose checkout or branch the scan does not list is `missing` when
+the scan ran after the agent last changed, else `unread`. The page shows `checkedAt` as the rows'
+age.
+
+## Past decisions
+
+When a question that is not a permission prompt is stored (`agent-desk ask`, a turn that ends asking,
+a dialog's questions), the store looks for answered questions of the same project (as `decisions`
+finds it, archive included) that read like it (`src/core/match.ts`): its text and options against
+theirs, as folded words (no case or accents, stop words of English and Spanish and words under three
+letters left out, plurals cut), each weighed by how rare it is among those questions; a match shares
+two words or more (all, for a question of one or two) and scores 0.34 or more. The same question
+answered again counts once, with its latest answer. Answers a review page copied are left out. The
+best three go in `past`, with date and answer verbatim; `agent-desk ask` prints them, and the page
+shows them on the question as "Decided before", each sent as the answer with one click, as an
+option is. Nothing is answered without the developer.
 
 ## What needs the developer
 
@@ -294,7 +334,7 @@ typed while it works, both reach the session. When the session ends, the questio
 
 | Command | Record |
 | --- | --- |
-| `ask "<question>" --option A --option B [--context T]` | an open question with options |
+| `ask "<question>" --option A --option B [--context T]` | an open question with options; prints the past decisions that read like it (see Past decisions) |
 | `result "<title>" --summary S --image <path>[::caption] [--compare 0,1] [--url U] [--failed] [--assumption A] [--decision D] [--check "<criterion> => <verification>"]` | a result; images are copied; refused without `--image` or `--url`, unless `--failed` |
 | `agent ["<description>"] [--summary] [--goal] [--state] [--activity] [--branch] [--commit] [--after "<description>"]` | adds to a sub-agent its adapter recorded (see Sub-agents); never makes one |
 | `service <name> <url>` / `service <name> --stop` | names a local server of the session, or one the desk cannot see (see Local servers) |
@@ -302,6 +342,7 @@ typed while it works, both reach the session. When the session ends, the questio
 | `unanswered [--question <id>]` | the developer's reply did not answer the question: it opens again (see below) |
 | `scan <project dir> [--if-older-than S]` | measures the project's checkouts with read-only git and a file walk; sizes are re-measured at most hourly |
 | `review "<title>" --page <file.html>` | a review, or its next round (see Reviews); its images inlined |
+| `status [--json]` | reads the project's git again (see Branches) and stores it; prints the session's branches, unfinished agents, open questions, local servers and open reviews (`--json`: the same as records) |
 
 What a session reads: `review <id> [--out <new file>]`, a review's answers and saved state (records it as read);
 `reviews`, its project's reviews with id, title, round, progress and `open`, `sent, not read`,
@@ -344,7 +385,7 @@ Tailscale host and login (`SECURITY.md`).
 | Request | Purpose |
 | --- | --- |
 | `GET /` and `/app.js` with the modules it imports (`src/web/*.js`, each listed in `STATIC`), `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
-| `GET /api/state` | `DeskState`: every record (a closed question without its context; reviews without their saved state), plus `gone`, `listening`, `disk`, `planForecasts` (see Plan limits) and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
+| `GET /api/state` | `DeskState`: every record (a closed question without its context; reviews without their saved state), plus `gone`, `listening`, `disk`, `planForecasts` (see Plan limits), `branches` (see Branches) and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
 | `GET /api/events` | server-sent events: `changed` with the state's version (the ETag of `/api/state`) on opening and at each change, never the state itself; a `: ping` comment every 20 s; 32 streams at most (503 past them); a remote device's stream ends when its unlock does |
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |

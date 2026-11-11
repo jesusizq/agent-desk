@@ -487,6 +487,17 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .awhat .adoing { color: var(--faint); }
 .adoing { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .arow .num { text-align: right; white-space: nowrap; }
+.branches-sec h4 .bage { font: 400 0.75rem var(--sans); text-transform: none; letter-spacing: 0; color: var(--faint); }
+.branches-sec h4 .bage.stale { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
+.brow .bmark { width: 16px; height: 16px; flex: none; color: var(--faint); }
+.brow .bname { font: 600 0.7812rem var(--mono); flex: 0 1 auto; min-width: 0; }
+.btag { flex: none; font-weight: 500; font-size: 0.7188rem; color: var(--faint); }
+.btag.dirty { color: color-mix(in srgb, var(--doing) 75%, var(--text)); }
+.btag.bad { color: var(--danger); }
+.btag.busy { color: var(--muted); max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+.brow.off .bname { color: var(--muted); }
+.bcounts { font-size: 0.75rem; }
+.bhidden { margin-top: 6px; font-size: 0.75rem; }
 
 @media (min-width: 701px) and (min-height: 501px) {
   /* On History the page has its own search: the header's keeps its room, so the needs pill does not move. */
@@ -518,6 +529,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   .search { width: 150px; }
 }
 
+@media (max-width: 700px) { .brow .adoing { white-space: normal; } }
 @media (max-width: 700px), (max-height: 500px) {
   /* One column (a phone): the document scrolls (iOS collapses its bars and scrolls to top on a tap of the clock). */
   html, body { height: auto; min-height: 100%; }
@@ -566,6 +578,18 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer .decide button { min-height: 42px; padding: 8px 18px; justify-content: center; font-size: 0.875rem; font-weight: 600; }
 .answer .decide .deny { border-color: color-mix(in srgb, var(--danger) 55%, var(--border-strong)); color: var(--danger); }
 .answer .opts-note { grid-column: 1 / -1; font-size: 0.75rem; margin-bottom: -3px; }
+.answer .past { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.past-head { display: flex; align-items: center; gap: 5px; font: 650 0.6875rem var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--faint); margin-bottom: 2px; }
+.past-head .i { width: 12px; height: 12px; }
+.past-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; align-items: center; text-align: left; border: 0; background: none; padding: 5px 6px; margin: 0 -6px; border-radius: 7px; font: inherit; cursor: pointer; color: var(--muted); }
+.past-row:not([disabled]):hover { background: var(--surface-2); color: var(--text); }
+.past-row[disabled] { cursor: default; }
+.past-a { font-size: 0.8125rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.past-q { grid-column: 1; font-size: 0.7188rem; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.past-row .opt-go { grid-column: 2; grid-row: 1 / span 2; color: var(--faint); opacity: 0; }
+.past-row:not([disabled]):is(:hover, :focus-visible) .opt-go { opacity: 1; }
+@media (hover: none) { .past-row .opt-go { opacity: .7; } }
+.past-row .opt-go svg.i { width: 14px; height: 14px; }
 .answer .opts .tick { display: inline-grid; place-items: center; width: 14px; height: 14px; margin-right: 8px; vertical-align: -1px; border: 1.5px solid var(--border-strong); border-radius: 4px;
   transition: background-color var(--dur-2), border-color var(--dur-2); }
 .answer .opts button[aria-pressed="true"] .tick { background: var(--accent); border-color: var(--accent); }
@@ -1049,6 +1073,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 :root[data-compact] .panel-question .qfull { display: none; }
 :root[data-compact] .chat-footer .answer .opts { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 :root[data-compact] .chat-footer .answer .opts button { flex: none; }
+:root[data-compact] .chat-footer .answer .past { display: none; } /* writing an answer of its own, the box takes their room */
 /* The box takes what the foot's cap leaves (layout.js measures the rest), so the foot never scrolls the Send button away. */
 :root[data-compact] .chat-footer .answer textarea { max-height: min(calc(var(--viewport-height, 100dvh) * .3), calc(var(--viewport-height, 100dvh) * .55 - var(--footer-rest, 0px))); }
 :root[data-keyboard] dialog.sess .pchips { display: none; }

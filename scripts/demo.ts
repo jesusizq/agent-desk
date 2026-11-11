@@ -38,7 +38,7 @@ const agents: [string, string, Parameters<Store["upsertAgent"]>[2], number][] = 
   ["demo-checkout", "pay-button", { goal: "Three pay button variants", state: "done", activity: "3 variants in Storybook", branch: "agent/pay-button", commit: "9c1e0b4" }, 80],
   ["demo-checkout", "e2e", { goal: "Checkout e2e suite", state: "failed", activity: "No space left on device while writing traces", after: ["pay-button"] }, 70],
   ["demo-checkout", "a11y", { goal: "Accessibility audit", activity: "Running axe on 14 pages (9/14)", after: ["pay-button"] }, 30],
-  ["demo-checkout", "cart-rebase", { goal: "Rebase the cart on the new summary", state: "blocked", activity: "Waiting for the summary commit", after: ["summary"] }, 25],
+  ["demo-checkout", "cart-rebase", { goal: "Rebase the cart on the new summary", state: "blocked", activity: "Waiting for the summary commit", branch: "agent/cart-rebase", after: ["summary"] }, 25],
   ["demo-pagos", "webhooks", { goal: "Stripe webhooks", state: "waiting", activity: "stripe listen in the background" }, 60],
   ["demo-pagos", "refunds", { goal: "Partial refunds", activity: "Writing tests for refund.ts" }, 20],
   ["demo-iva", "rounding", { goal: "Per-line rounding", state: "done", activity: "Done on fix/vat-rounding" }, 120],
@@ -46,6 +46,9 @@ const agents: [string, string, Parameters<Store["upsertAgent"]>[2], number][] = 
 ];
 for (const [sid, name, fields, minutes] of agents) store.upsertAgent(sid, name, { ...fields, startedAt: ago(minutes) });
 
+// Asked earlier in the same project: the VAT question below reads like it, so it shows as decided before.
+store.ask({ sessionId: "demo-iva", kind: "question", text: "Round the VAT of credit notes per line or on the total?", options: ["Per line", "On the total"] });
+store.closeOpen("demo-iva", { answer: "Per line, as the customer's PDF does; keep a test that checks the total" });
 store.ask({ sessionId: "demo-iva", kind: "question", text: "Number invoices with one series per year?" });
 store.closeOpen("demo-iva", { answer: "Yes, one series per year" });
 store.interpret("demo-iva", "Format 2026-0001; the counter restarts at 1 every 1 January.");
@@ -56,6 +59,25 @@ store.addResult({ sessionId: "demo-checkout", title: "Checkout: before and after
 store.addResult({ sessionId: "demo-checkout", title: "Three pay button variants", summary: "Same text, sizes and states; only the style changes.", images: [{ path: image("pay-button-a.png"), caption: "A" }, { path: image("pay-button-b.png"), caption: "B" }, { path: image("pay-button-c.png"), caption: "C" }], url: "http://localhost:6006" });
 store.addResult({ sessionId: "demo-checkout", title: "Checkout e2e: failed, disk full", status: "failed", summary: "Ran out of space while writing the Playwright traces." });
 store.addResult({ sessionId: "demo-iva", title: "Migration 0041 applied locally", summary: "The lines table stores each line's VAT rate. 34 tests pass." });
+// The web shop's checkouts as the last scan read them, two minutes ago.
+const shop = "/home/demo/Projects/web-shop";
+store.putProjectScan({
+  id: "web-shop-demo0001",
+  name: "web-shop",
+  dir: shop,
+  baseBranch: "main",
+  worktrees: [
+    { path: shop, branch: "main", head: "a41c09e2", bytes: 1.4e9, sizedAt: ago(30), main: true, dirty: 0, subject: "Merge the cart redesign", committedAt: ago(95), busy: ["vite"] },
+    { path: `${shop}/.claude/worktrees/summary`, branch: "agent/summary", head: "3f2a91c7", bytes: 0.6e9, sizedAt: ago(30), main: false, merged: false, ahead: 4, behind: 0, dirty: 3, subject: "Order summary beside the cart on desktop", committedAt: ago(6), busy: ["vitest"] },
+    { path: `${shop}/.claude/worktrees/pay-button`, branch: "agent/pay-button", head: "9c1e0b48", bytes: 0.4e9, sizedAt: ago(30), main: false, merged: true, ahead: 0, behind: 2, dirty: 0, subject: "Pay button variants A, B and C", committedAt: ago(52) },
+    { path: `${shop}/.claude/worktrees/old-header`, branch: "agent/old-header", head: "77d0e1aa", bytes: 0.3e9, sizedAt: ago(30), main: false, merged: true, ahead: 0, behind: 9, dirty: 0, subject: "Sticky header", committedAt: ago(2900) },
+  ],
+  branches: [{ name: "agent/cart-rebase", exists: false }],
+  totalBytes: 2.7e9,
+  dayStart: { day: new Date(now()).toISOString().slice(0, 10), bytes: 2.7e9 },
+  measuredAt: ago(2),
+  problems: [],
+});
 store.addService({ sessionId: "demo-checkout", name: "vite dev", url: "http://localhost:5173" });
 store.addService({ sessionId: "demo-checkout", name: "storybook", url: "http://localhost:6006" });
 
