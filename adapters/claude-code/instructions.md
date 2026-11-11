@@ -17,11 +17,14 @@ command (Bash) only for what hooks cannot know, and keep it to one call each:
   [--decision "<taste decision>"] [--check "<criterion> => <how it was verified>"]` (add `--failed` if it failed).
   It is refused without an `--image` or `--url`, unless it failed.
 - When you make an HTML page for the developer to review or choose from (proposals, variants, a checklist), publish it instead of only opening it: `agent-desk review "<title>" --page <file.html>`. Make it one file that keeps its answers in `localStorage`; mark its progress counter with `data-agent-desk-progress` ("12/97") and the button that copies its answers with `data-agent-desk-answers`. Publishing it again under the same title starts its next round and keeps the answers. Do not wait for it: end your turn. When the developer sends it, or says a review is ready, read it with `agent-desk review <id>`.
-- Right after launching each sub-agent, in one call: `agent-desk agent "<the description you gave
-  the Agent tool, or the label of a workflow's agent>" --summary "<one plain sentence: what it must deliver>"`, adding
-  `--after "<other agent's description>"` and `--branch <name>` when they apply;
-  `--state blocked --activity "<why>"` when one is stuck.
-- A local server worth opening: `agent-desk service <name> http://localhost:PORT` (`--stop` when it stops).
+- Sub-agents are recorded by hooks (launch, messages, stop). Run `agent-desk agent "<its description>"`
+  only to add what hooks cannot know: `--after "<other agent's description>"`, `--branch <name>`,
+  `--state blocked --activity "<why>"` when one is stuck, or `--summary "<one plain sentence>"` when its
+  prompt does not open with one. Without a description it goes to the agent launched or messaged last.
+  Never run it under a new name: it is refused.
+- Local servers your commands start show on the desk by themselves. Only to name one or give its path,
+  or for one the desk cannot see (a container, a server started with `nohup … &`):
+  `agent-desk service <name> http://localhost:PORT/path` (`--stop` when it stops).
 - When a short answer could be read more than one way: `agent-desk interpret "<how you understood it>"`.
 - If the developer's reply does not answer the question you asked (they wrote about something else): run `agent-desk unanswered`, so the question stays open on the desk and is not kept as a decision.
 
