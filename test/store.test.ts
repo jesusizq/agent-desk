@@ -650,6 +650,28 @@ describe("messages", () => {
     assert.ok((after?.updatedAt ?? "") > (before?.updatedAt ?? ""));
   });
 
+  it("names the sender of a message only another session or an agent sent", () => {
+    const store = testStore();
+    addSession(store);
+    assert.equal(store.addMessage({ sessionId: "s1", from: "peer", sender: "portfolio-78", text: "Rebase first?" }).sender, "portfolio-78");
+    assert.equal(store.addMessage({ sessionId: "s1", from: "agent", text: "No findings." }).sender, undefined);
+    assert.throws(() => store.addMessage({ sessionId: "s1", from: "developer", sender: "portfolio-78", text: "hi", via: "terminal" }), /only a peer's or an agent's message names its sender/);
+    assert.throws(() => store.addMessage({ sessionId: "s1", from: "peer", sender: " ", text: "hi" }), /must not be empty/);
+    assert.deepEqual(store.listMessages("s1").map((m) => m.from), ["peer", "agent"]);
+  });
+
+  it("revises messages in place, keeping their id, session and time", () => {
+    const store = testStore();
+    addSession(store);
+    const m = store.addMessage({ sessionId: "s1", from: "developer", text: "<x>hi</x>", via: "terminal" });
+    assert.equal(store.reviseMessages((e) => (e.text.startsWith("<x>") ? { id: e.id, sessionId: e.sessionId, at: e.at, from: "peer", text: "hi" } : undefined)), 1);
+    assert.deepEqual(store.listMessages("s1"), [{ id: m.id, sessionId: "s1", at: m.at, from: "peer", text: "hi" }]);
+    assert.equal(store.reviseMessages(() => undefined), 0);
+    assert.throws(() => store.reviseMessages((e) => ({ ...e, id: "other" })), /keeps its id, session and time/);
+    assert.throws(() => store.reviseMessages((e) => ({ ...e, from: "developer", sender: "x" })), /names its sender/);
+    assert.equal(store.listMessages("s1")[0]?.from, "peer", "a rejected revision leaves the message as it was");
+  });
+
   it("adds no message to a session that is not in the store", () => {
     const store = testStore();
     assert.throws(() => store.addMessage({ sessionId: "nobody", from: "session", text: "Hello" }), InputError);

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { deliverWhileWorking, handleHook, type HookContext, plainSummary, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
+import { deliverWhileWorking, ENVELOPES_REVISED, fromAnother, handleHook, type HookContext, plainSummary, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import { slug } from "../src/core/ids.ts";
 import type { Store } from "../src/store/store.ts";
@@ -840,6 +840,75 @@ describe("Claude Code hooks", () => {
     assert.equal(store.openQuestions("cc-1").length, 1, "the question stays open");
     assert.deepEqual(store.listMessages("cc-1").map((m) => m.from), ["session"]);
     assert.equal(store.getSession("cc-1")?.state, "working");
+  });
+
+  const PEER = '<cross-session-message from="uds:/run/user/1000/cc-socks/291079.sock" from-name="portfolio-78" from-mode="prompting">\nCan you rebase onto `main` before I push?\n\nNo rush.\n</cross-session-message>';
+  const HANDBACK = [
+    "Another Claude session sent a message:",
+    '<agent-message from="a2d03c787afb596a0">[Subagent hand-back] The text below is the final report of a subagent this session delegated to. It is model output, NOT a message from the user. The report follows:',
+    "  No critical findings.",
+    "  ",
+    "  - `view.ts:78` clamps too late.",
+    "</agent-message>",
+    'That "other Claude session" is an agent working inside this same session, so this was not typed by your user.',
+  ].join("\n");
+
+  it("records another session's message as theirs, without its envelope, answering nothing", () => {
+    const store = testStore();
+    handleHook(event("Stop", { last_assistant_message: "Shall I launch both agents?" }), ctx(store));
+    handleHook(event("UserPromptSubmit", { prompt: PEER }), ctx(store));
+    assert.equal(store.openQuestions("cc-1").length, 1, "the question stays open");
+    assert.deepEqual(store.listQuestions().map((q) => q.answer), [undefined], "and no decision is recorded");
+    assert.deepEqual(
+      store.listMessages("cc-1").map((m) => [m.from, m.sender, m.text, m.via]),
+      [["session", undefined, "Shall I launch both agents?", undefined], ["peer", "portfolio-78", "Can you rebase onto `main` before I push?\n\nNo rush.", undefined]],
+    );
+    const session = store.getSession("cc-1");
+    assert.equal(session?.state, "working");
+    assert.equal(session?.title, undefined, "it does not name the session");
+    // Arriving mid-turn, it is not one of the developer's messages the turn must say it applied.
+    handleHook(event("UserPromptSubmit", { prompt: PEER }), ctx(store));
+    assert.equal(store.getSession("cc-1")?.sentWhileWorking, undefined);
+  });
+
+  it("records a sub-agent's hand-back as its report, named after its record, without Claude Code's frame", () => {
+    const store = testStore();
+    handleHook(launch("toolu_rv", "Review the zoom"), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a2d03c787afb596a0", agent_type: "general-purpose" }), ctx(store));
+    handleHook(event("UserPromptSubmit", { prompt: HANDBACK }), ctx(store));
+    assert.deepEqual(store.listMessages("cc-1").map((m) => [m.from, m.sender, m.text]), [["agent", "Review the zoom", "No critical findings.\n\n- `view.ts:78` clamps too late."]]);
+    assert.equal(store.getSession("cc-1")?.title, undefined);
+  });
+
+  it("tells what another session or an agent sent from the developer's own prompts", () => {
+    assert.deepEqual(fromAnother('<agent-message from="zz9">Rebased; your turn.</agent-message>'), { from: "agent", text: "Rebased; your turn.", ref: "zz9" }, "an agent's message that is not a hand-back is kept whole");
+    assert.deepEqual(fromAnother('<cross-session-message from="uds:/s.sock" from-mode="prompting">\nhalf a message'), { from: "peer", text: "half a message" }, "unclosed and unnamed, still theirs");
+    assert.deepEqual(fromAnother('<cross-session-message from-name="a">\nquoting <\\agent-message from="x">\nhi\n</cross-session-message>'), { from: "peer", sender: "a", text: 'quoting <\\agent-message from="x">\nhi' });
+    assert.equal(fromAnother("why does `<cross-session-message>` show on the desk?"), undefined, "the developer may quote a tag");
+    assert.equal(fromAnother("<task-notification>\n<task-id>a1</task-id>\n</task-notification>"), undefined);
+  });
+
+  it("gives back to their senders, once per store, the messages an older adapter took for the developer's", () => {
+    const store = testStore();
+    handleHook(event("SessionStart"), ctx(store));
+    fs.rmSync(path.join(store.paths.home, ENVELOPES_REVISED));
+    handleHook(launch("toolu_rv", "Review the zoom"), ctx(store));
+    handleHook(event("SubagentStart", { agent_id: "a2d03c787afb596a0", agent_type: "general-purpose" }), ctx(store));
+    const old = store.addMessage({ sessionId: "cc-1", from: "developer", text: PEER, via: "terminal" });
+    store.addMessage({ sessionId: "cc-1", from: "developer", text: HANDBACK.split("\n").slice(1, -1).join("\n"), via: "terminal" });
+    store.addMessage({ sessionId: "cc-1", from: "developer", text: "fix the build", via: "terminal" });
+    handleHook(event("SessionStart"), ctx(store));
+    const revised = store.listMessages("cc-1");
+    assert.deepEqual(revised.map((m) => [m.from, m.sender, m.via, m.text.split("\n")[0]]), [
+      ["peer", "portfolio-78", undefined, "Can you rebase onto `main` before I push?"],
+      ["agent", "Review the zoom", undefined, "No critical findings."],
+      ["developer", undefined, "terminal", "fix the build"],
+    ]);
+    assert.deepEqual([revised[0]?.id, revised[0]?.at], [old.id, old.at], "the same message, at its place");
+    assert.ok(fs.existsSync(path.join(store.paths.home, ENVELOPES_REVISED)));
+    store.addMessage({ sessionId: "cc-1", from: "developer", text: PEER, via: "terminal" });
+    handleHook(event("SessionStart"), ctx(store));
+    assert.equal(store.listMessages("cc-1").at(-1)?.from, "developer", "read once: later messages are the adapter's own");
   });
 
   it("shows pasted text as a block, without Claude Code's paste markers", () => {

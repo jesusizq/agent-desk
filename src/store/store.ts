@@ -12,6 +12,7 @@ import {
   type Answer,
   type InboxEntry,
   type Metrics,
+  type MessageAuthor,
   type ConversationEntry,
   type Handoff,
   type ProjectScan,
@@ -1282,7 +1283,7 @@ export class Store {
    * Adds a message to the session's conversation, keeping its latest MESSAGES_KEPT, and counts it on
    * the session (written after the message, so a reader that sees the count finds the message).
    */
-  addMessage(input: { sessionId: string; from: "session" | "developer"; text: string; via?: "terminal" | "desk"; images?: string[]; step?: boolean }): ConversationEntry {
+  addMessage(input: { sessionId: string; from: MessageAuthor; sender?: string; text: string; via?: "terminal" | "desk"; images?: string[]; step?: boolean }): ConversationEntry {
     const entry = readConversationEntry(compact({ id: newId("m"), ...input, text: bounded(input.text), at: this.stamp() }));
     this.requireSession(entry.sessionId);
     const file = this.paths.message(entry.sessionId, entry.id);
@@ -1302,6 +1303,24 @@ export class Store {
   private takeBackMessage(entry: ConversationEntry): void {
     fs.rmSync(this.paths.message(entry.sessionId, entry.id), { force: true });
     this.updateSession(entry.sessionId, (s) => ({ ...s, messageCount: Math.max(0, (s.messageCount ?? 1) - 1) }));
+  }
+
+  /**
+   * Rewrites, in every session's conversation, the messages `change` returns a new version of (same
+   * id, session and time); returns how many. Safe to run again: each file is replaced atomically.
+   */
+  reviseMessages(change: (m: ConversationEntry) => ConversationEntry | undefined, problems?: string[]): number {
+    let revised = 0;
+    for (const dir of this.subdirs(this.paths.messagesDir)) {
+      for (const m of this.readAll(dir, readConversationEntry, problems)) {
+        const next = change(m);
+        if (!next) continue;
+        if (next.id !== m.id || next.sessionId !== m.sessionId || next.at !== m.at) throw new Error(`message ${m.id} of session ${m.sessionId}: a revision keeps its id, session and time`);
+        writeJson(this.paths.message(m.sessionId, m.id), readConversationEntry(next));
+        revised++;
+      }
+    }
+    return revised;
   }
 
   /** The session's conversation, oldest first. */

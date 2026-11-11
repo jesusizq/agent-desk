@@ -8,6 +8,7 @@ import {
   ANSWER_SOURCES,
   ATTACHED_IMAGES_MAX,
   GROUP_SIZE_MAX,
+  MESSAGE_AUTHORS,
   QUESTION_KINDS,
   QUESTION_STATUSES,
   REVIEW_KEY_MAX,
@@ -305,10 +306,13 @@ function readPlanWindow(value: unknown, where: string): PlanWindow {
 
 export function readConversationEntry(value: unknown, where = "message"): ConversationEntry {
   const f = fields(value, where);
+  const from = oneOf(MESSAGE_AUTHORS)(f.from, `${where}.from`);
+  if (f.sender !== undefined && from !== "peer" && from !== "agent") throw new InputError(`${where}.sender: only a peer's or an agent's message names its sender, not a ${from}'s`);
   return compact({
     id: id(f.id, `${where}.id`),
     sessionId: id(f.sessionId, `${where}.sessionId`),
-    from: oneOf(["session", "developer"] as const)(f.from, `${where}.from`),
+    from,
+    sender: optional(f.sender, `${where}.sender`, label),
     text: text(f.text, `${where}.text`),
     at: isoTime(f.at, `${where}.at`),
     via: optional(f.via, `${where}.via`, oneOf(ANSWER_CHANNELS)),

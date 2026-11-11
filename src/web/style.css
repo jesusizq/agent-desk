@@ -781,6 +781,8 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .msg { max-width: 92ch; font-size: 0.875rem; line-height: 1.6; }
 .msg.from-developer { align-self: flex-end; max-width: min(80%, 72ch); padding: 9px 13px; border-radius: 14px 14px 4px 14px; background: color-mix(in srgb, var(--text) 6%, var(--surface)); }
 .msg.step { color: var(--muted); }
+/* What another session or an agent sent it: quoted, never in the developer's bubble. */
+.msg:is(.from-peer, .from-agent) { padding-left: 12px; border-left: 2px solid var(--border); font-size: 0.8125rem; }
 .msg-meta { font-size: 0.6875rem; color: var(--faint); margin-top: 3px; }
 .msg.from-developer .msg-meta { text-align: right; }
 /* Delivered, as a chat app marks it: a small tick after the time. */

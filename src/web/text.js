@@ -204,6 +204,10 @@ export const TEXT = {
     agentsLeft: (n, failed) => [n - failed && `${n - failed} still running`, failed && `${failed} failed`].filter(Boolean).join(" · "),
     you: "You",
     youDesk: "You, from the desk",
+    /** @param {string} [name] */
+    fromPeer: (name) => (name ? `From ${name}` : "From another session"),
+    /** @param {string} [name] */
+    fromAgent: (name) => (name ? `Agent report: ${name}` : "Agent report"),
     delivered: "Delivered",
     /** @param {string} error */
     notSent: (error) => `Not sent: ${error}`,

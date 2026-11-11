@@ -285,11 +285,20 @@ export type Metrics = {
   suggestion?: Suggestion;
 };
 
-/** One message of a session's conversation with the developer: a turn's last message or a reply. */
+/**
+ * Who wrote a message of a session's conversation: the session, the developer, another session
+ * (`peer`), or an agent of this session reporting to it (`agent`); the last two never speak for the developer.
+ */
+export const MESSAGE_AUTHORS = ["session", "developer", "peer", "agent"] as const;
+export type MessageAuthor = (typeof MESSAGE_AUTHORS)[number];
+
+/** One message of a session's conversation: a turn's last message, a reply, or what another session or an agent sent it. */
 export type ConversationEntry = {
   id: string;
   sessionId: string;
-  from: "session" | "developer";
+  from: MessageAuthor;
+  /** For `peer` and `agent` messages: the sender's name as its adapter knows it (the other session's, the agent's). */
+  sender?: string;
   text: string;
   at: string;
   /** For the developer's messages: typed in the terminal or sent from the desk. */

@@ -94,7 +94,7 @@ export const ui = {
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
   /** @type {Set<string>} questions whose long context is unfolded */ contextOpen: new Set(),
-  /** @type {Set<string>} runs of messages between tool calls unfolded, by their first message */ stepsOpen: new Set(),
+  /** @type {Set<string>} folds of a conversation unfolded: runs of messages between tool calls, by their first message, and agents' reports */ stepsOpen: new Set(),
   /** @type {Set<string> | null} failures already noticed */ failuresSeen: null,
   offline: false,
   /** the desk answered that this device is not allowed */ refused: false,

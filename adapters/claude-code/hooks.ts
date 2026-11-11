@@ -68,6 +68,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
   const f = input.raw;
   switch (input.event) {
     case "SessionStart":
+      reviseEnvelopes(store, problems);
       // Started again (resumed, or the plugins reloaded): what its last end left no longer holds.
       store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, ...s }) => ({ ...s, state: "waiting" }));
       retireContinued(input, ctx, problems);
@@ -75,10 +76,13 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
 
     case "UserPromptSubmit": {
       const prompt = text(f.prompt ?? "", "hook input.prompt", 10_000_000);
-      if (fromClaudeCode(prompt)) {
-        // A background task's notification wakes the session like a prompt: it works again, but
-        // nothing was said by the developer and nothing they were asked is answered.
+      const sent = fromAnother(prompt);
+      if (sent || fromClaudeCode(prompt)) {
+        // A background task's notification, another session's message or an agent's report wakes the
+        // session like a prompt: it works again, but nothing was said by the developer and nothing they
+        // were asked is answered. Only messages join the conversation, as their sender's.
         store.updateSession(sid, (s) => ({ ...s, state: "working", activityAt: new Date().toISOString() }));
+        if (sent) store.addMessage(compact({ sessionId: sid, from: sent.from, sender: senderOf(store, sid, sent), text: sent.text }));
         settleAgents(input, ctx, problems);
         return { code: 0 };
       }
@@ -420,9 +424,72 @@ const sameWords = (a: string, b: string) => {
   return words(a) === words(b);
 };
 
-/** Prompts Claude Code itself submits (background task notifications), not typed by the developer. */
+/**
+ * Notices Claude Code itself submits as prompts (a background task finished, a reminder, a local
+ * command's output), not typed by the developer: kept off the conversation, where they would only
+ * repeat what the agents and services already show.
+ */
 export function fromClaudeCode(prompt: string): boolean {
-  return /^\s*<(task-notification|system-reminder|agent-message|local-command-stdout|command-name)[\s>]/.test(prompt);
+  return /^\s*<(task-notification|system-reminder|local-command-stdout|command-name)[\s>]/.test(prompt);
+}
+
+/** A message another session or one of this session's agents sent it: Claude Code hands it over as a prompt. */
+export type FromAnother = { from: "peer" | "agent"; text: string; sender?: string; ref?: string };
+
+// Claude Code may write a line before the envelope and a note of its own after it; neither is the message.
+const ENVELOPE = /^\s*(?:Another Claude session sent a message:\s*\n)?\s*<(cross-session-message|agent-message)((?:\s+[\w-]+="[^"]*")*)\s*>/;
+// A sub-agent's final report comes after one line of Claude Code's, with every line of it indented.
+const HANDBACK = /^\[Subagent hand-back\][^\n]*\n/;
+const SENDER_MAX = 200;
+
+/**
+ * What another session (`cross-session-message`, named by its `from-name`) or an agent of this
+ * session (`agent-message`, by its agent id) sent, without Claude Code's envelope; undefined for any
+ * other prompt. One without its closing tag is still theirs, never the developer's.
+ */
+export function fromAnother(prompt: string): FromAnother | undefined {
+  const open = ENVELOPE.exec(prompt);
+  if (!open) return undefined;
+  const tag = open[1] === "agent-message" ? "agent-message" : "cross-session-message";
+  const attrs = new Map([...(open[2] ?? "").matchAll(/([\w-]+)="([^"]*)"/g)].map((m) => [m[1], m[2]]));
+  const rest = prompt.slice(open[0].length);
+  const close = rest.lastIndexOf(`</${tag}>`);
+  const body = (close < 0 ? rest : rest.slice(0, close)).replace(/^\n/, "").trimEnd();
+  if (tag === "cross-session-message") return compact({ from: "peer" as const, text: body, sender: bounded(attrs.get("from-name")?.trim() ?? "", SENDER_MAX) || undefined });
+  const report = HANDBACK.test(body) ? dedent(body.replace(HANDBACK, "")) : body;
+  return compact({ from: "agent" as const, text: report, ref: attrs.get("from") || undefined });
+}
+
+/** Lines all indented by Claude Code's two spaces, without them. */
+function dedent(body: string): string {
+  const lines = body.split("\n");
+  return lines.every((l) => l.startsWith("  ") || l.trim() === "") ? lines.map((l) => l.slice(2)).join("\n") : body;
+}
+
+/** The name the desk shows for a message's sender: an agent by its record's goal, or its name. */
+function senderOf(store: Store, sessionId: string, sent: FromAnother): string | undefined {
+  if (sent.from === "peer") return sent.sender;
+  const agent = sent.ref ? store.listAgents(sessionId).find((a) => a.ref === sent.ref) : undefined;
+  return agent ? bounded(agent.goal ?? agent.name, SENDER_MAX) : undefined;
+}
+
+/** Marks that the conversations were read for messages an older adapter took for the developer's. */
+export const ENVELOPES_REVISED = ".envelopes-revised";
+
+/**
+ * An older adapter recorded what another session or an agent sent as the developer's words, envelope
+ * and all: once per store, those messages are given back to their senders.
+ */
+function reviseEnvelopes(store: Store, problems: string[]): void {
+  const marker = path.join(store.paths.home, ENVELOPES_REVISED);
+  if (fs.existsSync(marker)) return;
+  store.reviseMessages((m) => {
+    const sent = m.from === "developer" && m.via === "terminal" ? fromAnother(m.text) : undefined;
+    if (!sent) return undefined;
+    const { via: _via, ...rest } = m;
+    return compact({ ...rest, from: sent.from, sender: senderOf(store, m.sessionId, sent), text: sent.text });
+  }, problems);
+  fs.writeFileSync(marker, "", { mode: 0o600 });
 }
 
 /** Pasted text arrives wrapped in Claude Code's paste markers; on the desk it reads as a quoted block. */

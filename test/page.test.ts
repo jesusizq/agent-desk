@@ -1136,6 +1136,25 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("quotes what another session or an agent sent under their name, never as the developer's, an agent's report folded", async () => {
+    store.upsertSession({ id: "peers", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "told by peers", state: "waiting" });
+    store.addMessage({ sessionId: "peers", from: "peer", sender: "portfolio-78", text: "Can you rebase onto **main** first?" });
+    store.addMessage({ sessionId: "peers", from: "agent", sender: "Review the zoom", text: "No critical findings." });
+    store.addMessage({ sessionId: "peers", from: "session", text: "Rebased, and the review found nothing." });
+    const page = await open();
+    await page.click(".scard", "told by peers");
+    await page.waitFor("document.querySelector('#session .msg.from-peer')");
+    assert.equal(await page.eval<number>("document.querySelectorAll('#session .msg.from-developer').length"), 0);
+    assert.match(await page.eval<string>("document.querySelector('#session .msg.from-peer .msg-meta').textContent"), /^From portfolio-78 · /);
+    assert.equal(await page.eval<string>("document.querySelector('#session .msg.from-peer .md b').textContent"), "main", "its Markdown is rendered, as the session's is");
+    assert.equal(await page.eval<boolean>("!!document.querySelector('#session .msg.from-agent')"), false, "the report is folded");
+    const fold = "[...document.querySelectorAll('#session .steps-fold')].find((b) => b.textContent.includes('Agent report: Review the zoom'))";
+    assert.equal(await page.eval<string>(`${fold}.getAttribute('aria-expanded')`), "false");
+    await page.click("#session .steps-fold", "Agent report: Review the zoom");
+    await page.waitFor("document.querySelector('#session .msg.from-agent .md')?.textContent === 'No critical findings.'");
+    await page.press("Escape");
+  });
+
   it("keeps the line breaks of what the developer pasted, and joins the session's wrapped lines", async () => {
     store.upsertSession({ id: "pasted", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "pasted output" });
     store.addMessage({ sessionId: "pasted", from: "developer", text: "$ git push\nfatal: 403", via: "terminal" });

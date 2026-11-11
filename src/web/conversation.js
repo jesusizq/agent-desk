@@ -127,15 +127,25 @@ export function loadConversation(sid, then) {
   );
 }
 
+/** Who a message is from, as its line under it says; none for the session's own. @param {ConversationEntry} m */
+function author(m) {
+  const t = TEXT.conversation;
+  if (m.from === "peer") return t.fromPeer(m.sender);
+  if (m.from === "agent") return t.fromAgent(m.sender);
+  if (m.from === "developer") return m.via === "desk" ? t.youDesk : t.you;
+  return null;
+}
+
 /**
- * Messages as a chat: the session on the left, the developer on the right; `whileWorking` holds
+ * Messages as a chat: the session on the left, the developer on the right, what another session or
+ * an agent sent it quoted on the left (an agent's report folded to one line); `whileWorking` holds
  * the texts the developer sent while the session was working, which get a mark.
  * @param {ConversationEntry[]} list @param {Set<string>} [whileWorking]
  */
 export function conversationView(list, whileWorking = new Set()) {
   /** @param {ConversationEntry} m */
   const message = (m) => {
-    const who = m.from === "session" ? null : m.via === "desk" ? TEXT.conversation.youDesk : TEXT.conversation.you;
+    const who = author(m);
     const mark = m.from === "developer" && whileWorking.has(m.text) ? ` · ${TEXT.conversation.whileWorking}` : "";
     return h(
       "div",
@@ -144,6 +154,11 @@ export function conversationView(list, whileWorking = new Set()) {
       m.images?.length ? attachedImages(m.images) : null,
       h("div", { class: "msg-meta" }, who ? [who, " · "] : null, hm(m.at), mark, m.via === "desk" ? deliveredMark() : null),
     );
+  };
+  /** @param {string} key @param {string} label */
+  const fold = (key, label) => {
+    const open = ui.stepsOpen.has(key);
+    return h("button", { class: "steps-fold linkish faint", "data-key": `fold-${key}`, "aria-expanded": String(open), onclick: () => ((open ? ui.stepsOpen.delete(key) : ui.stepsOpen.add(key)), page.render()) }, `${open ? "▾" : "▸"} ${label}`);
   };
   /** @type {HTMLElement[]} */
   const out = [];
@@ -157,14 +172,18 @@ export function conversationView(list, whileWorking = new Set()) {
     if (end > i && end < list.length) {
       const run = list.slice(i, end);
       const key = run[0]?.id ?? "";
-      const open = ui.stepsOpen.has(key);
       const until = list[end]?.at ?? "";
       const agents = data.agents.filter((a) => a.sessionId === m.sessionId && a.startedAt >= (run[0]?.at ?? "") && a.startedAt <= until).length;
-      out.push(
-        h("button", { class: "steps-fold linkish faint", "data-key": `fold-${key}`, "aria-expanded": String(open), onclick: () => ((open ? ui.stepsOpen.delete(key) : ui.stepsOpen.add(key)), page.render()) }, `${open ? "▾" : "▸"} ${TEXT.conversation.steps(run.length, agents)}`),
-      );
-      if (open) out.push(...run.map(message));
+      out.push(fold(key, TEXT.conversation.steps(run.length, agents)));
+      if (ui.stepsOpen.has(key)) out.push(...run.map(message));
       i = end;
+      continue;
+    }
+    // An agent's report is long and meant for the session, which tells the developer what came of it.
+    if (m.from === "agent") {
+      out.push(fold(m.id, `${TEXT.conversation.fromAgent(m.sender)} · ${hm(m.at)}`));
+      if (ui.stepsOpen.has(m.id)) out.push(message(m));
+      i++;
       continue;
     }
     out.push(message(m));
