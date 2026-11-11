@@ -2,6 +2,7 @@
 // checkout. Reads git's own files, read-only; runs no git command and never writes to the project.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { branchRef } from "./git.ts";
 
 export type ProjectLocation = { name: string; dir: string; worktree?: string };
 
@@ -32,6 +33,25 @@ function mainCheckoutOf(dir: string): string | undefined {
       return main === undefined ? undefined : path.join(main, path.relative(at, dir));
     }
     if (stat || path.dirname(at) === at) return undefined;
+  }
+}
+
+/**
+ * The branch checked out in the checkout holding `dir`, as its git HEAD names it (`ref:
+ * refs/heads/<name>`); undefined when its head is detached (a rebase, a bisect), its git files cannot
+ * be read, or the name is not a plain branch name.
+ */
+export function checkedOutBranch(dir: string): string | undefined {
+  for (let at = path.resolve(dir); ; at = path.dirname(at)) {
+    const dotGit = path.join(at, ".git");
+    const stat = statOrUndefined(dotGit);
+    if (stat) {
+      const pointer = stat.isFile() ? /^gitdir: (.+)$/m.exec(readSmall(dotGit) ?? "")?.[1]?.trim() : dotGit;
+      if (!pointer) return undefined;
+      const name = /^ref: refs\/heads\/(\S+)\s*$/.exec(readSmall(path.join(path.resolve(at, pointer), "HEAD")) ?? "")?.[1];
+      return name !== undefined && branchRef(name) !== undefined ? name : undefined;
+    }
+    if (path.dirname(at) === at) return undefined;
   }
 }
 

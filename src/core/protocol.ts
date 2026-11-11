@@ -207,6 +207,11 @@ export type Agent = {
    */
   waitsForJob?: boolean;
   branch?: string;
+  /**
+   * Its branch is the one its adapter read checked out in its worktree, not one the session reported
+   * (`agent-desk agent --branch`): it follows that worktree, and a reported one replaces it.
+   */
+  branchFromWorktree?: boolean;
   commit?: string;
   /** The linked git worktree its tool calls ran in, as its adapter saw them. */
   worktree?: string;

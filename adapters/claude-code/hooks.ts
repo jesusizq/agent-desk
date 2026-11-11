@@ -6,7 +6,7 @@ import { id, newId, slug } from "../../src/core/ids.ts";
 import { type Agent, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
 import { fitText, statusLines } from "../../src/core/status.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
-import { locateProject } from "../../src/project/locate.ts";
+import { checkedOutBranch, locateProject } from "../../src/project/locate.ts";
 import { sessionStatus } from "../../src/project/refresh.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { AgentFields, Store } from "../../src/store/store.ts";
@@ -864,7 +864,7 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   const worktree = agentWorktree(input, ctx);
   // A workflow's agent whose notes were not written when it started gets its label now.
   updateByRef(ctx.store, input.sessionId, agentId, (agent) =>
-    agent.state === "working" ? { ...compact({ goal: agent.goal ? undefined : label, worktree }), ...call, failedAt: streak(agent.failedAt) } : undefined,
+    agent.state === "working" ? { ...compact({ goal: agent.goal ? undefined : label, worktree }), ...worktreeBranch(agent, worktree), ...call, failedAt: streak(agent.failedAt) } : undefined,
   );
   syncFailingMarker(ctx.store, fails, problems);
 }
@@ -876,6 +876,17 @@ function agentWorktree(input: Common, ctx: HookContext): string | undefined {
   // A subfolder of a worktree maps to the same subfolder of the main checkout: both climb back to their roots.
   const up = path.relative(there.dir, locateProject(workDir(input, ctx)).dir);
   return up === "" || /^\.\.(?:\/\.\.)*$/.test(up) ? path.resolve(there.worktree, up) : undefined;
+}
+
+/**
+ * The branch checked out in the worktree an agent's call ran in, read from git's files at each call so
+ * it follows a branch switched there, and kept once the worktree is gone; a branch the session
+ * reported (`agent-desk agent --branch`) is left as it is.
+ */
+function worktreeBranch(agent: Agent, worktree: string | undefined): AgentFields {
+  if (worktree === undefined || (agent.branch !== undefined && agent.branchFromWorktree !== true)) return {};
+  const branch = checkedOutBranch(worktree);
+  return branch === undefined || branch === agent.branch ? {} : { branch, branchFromWorktree: true };
 }
 
 /** Tools that wait on work running apart from the call: a monitor, a background task's output, a wake-up. */

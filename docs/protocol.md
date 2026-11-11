@@ -108,6 +108,14 @@ behind it is done, "Not seen running", so no record says it works when nothing d
 - **`--after`** names other agents of the session the same way; one that matches none is an input
   error. They are stored by record name.
 - **`--state`** cannot change an ended record (`done`, `failed`): its state belongs to the hooks.
+- **`--branch`** is needed only for an agent that works on a branch outside a linked worktree of the
+  project: the adapter records an agent's `worktree` from its calls' folder and, at each of those
+  calls, the branch checked out there (`branch`, with `branchFromWorktree: true`), read from git's own
+  files (the worktree's `.git` file, then its `HEAD`; `checkedOutBranch`, `src/project/locate.ts`),
+  no git command run. It follows a branch switched in the worktree, keeps the last one while the head
+  is detached (a rebase) and once the worktree is gone, and takes only plain branch names. A branch
+  the session reports replaces it for good (`branchFromWorktree` goes), and a later call leaves the
+  reported one as it is.
 
 ## Local servers
 
@@ -134,8 +142,8 @@ and a fixed argument list, no shell, 10 s per command (5 s in the handoff), neve
 repository. Per checkout: `worktree list --porcelain`, `log -1` of its head, `merge-base --is-ancestor`
 and `rev-list --left-right --count <base>...<head>` against the main checkout's branch, `status
 --porcelain=v1 -z --untracked-files=normal` for its uncommitted files (the checkouts nested in it
-excluded by pathspec, so a worktree under `.claude/worktrees/` is not one of the main checkout's). A branch an agent named
-(`agent-desk agent --branch`) that no checkout has is looked up as `refs/heads/<name>` (`rev-parse
+excluded by pathspec, so a worktree under `.claude/worktrees/` is not one of the main checkout's). An agent's branch
+(see Sub-agents) that no checkout has, such as one whose worktree was removed after it merged, is looked up as `refs/heads/<name>` (`rev-parse
 --verify --quiet`), only when the name is a plain ref name. A command that fails or times out leaves
 its message in that checkout's `error` and in `problems`; the others are read all the same.
 

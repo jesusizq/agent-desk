@@ -119,6 +119,46 @@ describe("handoff around a compaction", () => {
     assert.deepEqual([broken.code, broken.stdout], [1, ""]);
   });
 
+  it("records the branch checked out in an agent's worktree, following a switch there, kept once the worktree is gone, never over one the session reported", async () => {
+    const { dir, wt } = project();
+    const store = testStore();
+    const c = ctx(store, dir);
+    handleHook(event(dir, "SessionStart", { source: "startup" }), c);
+    const call = (agent_id: string, at = wt) => handleHook(event(path.join(at, "src"), "PostToolUse", { agent_id, tool_name: "Bash", tool_input: { command: "npm test" } }), c);
+    handleHook(event(dir, "SubagentStart", { agent_id: "a1", agent_type: "general-purpose" }), c);
+    call("a1");
+    const branchOf = (name = "general-purpose") => {
+      const a = store.getAgent("cc-1", name);
+      return [a?.branch, a?.branchFromWorktree];
+    };
+    assert.deepEqual(branchOf(), ["agent/summary", true], "read from the worktree's git files at its call, no --branch");
+    git(wt, "checkout", "-q", "-b", "agent/summary-2");
+    call("a1");
+    assert.deepEqual(branchOf(), ["agent/summary-2", true], "a branch switched in the worktree is followed");
+    git(wt, "checkout", "-q", "--detach");
+    call("a1");
+    assert.deepEqual(branchOf(), ["agent/summary-2", true], "a detached head (a rebase) keeps the branch it was on");
+
+    // Once the worktree is removed, the scan still finds where its branch stands.
+    git(dir, "worktree", "remove", "--force", wt);
+    const { refreshScan } = await import("../src/project/refresh.ts");
+    const scanned = await refreshScan(store, dir, { sizes: false, whenBusy: "skip" }, []);
+    assert.deepEqual(scanned?.scan.branches?.map((b) => [b.name, b.exists, b.ahead]), [["agent/summary-2", true, 2]]);
+    assert.deepEqual(branchOf(), ["agent/summary-2", true]);
+
+    // A branch the session reports wins, and a later call in a worktree does not replace it.
+    const other = path.join(dir, ".claude", "worktrees", "agent-2");
+    git(dir, "worktree", "add", "-q", "-b", "agent/other", other);
+    fs.mkdirSync(path.join(other, "src"));
+    handleHook(event(dir, "SubagentStart", { agent_id: "a2", agent_type: "Explore" }), c);
+    store.reportAgent("cc-1", "explore", { branch: "agent/named" });
+    call("a2", other);
+    assert.deepEqual(branchOf("explore"), ["agent/named", undefined]);
+    // And reported over one read from the worktree, it replaces it for good.
+    store.reportAgent("cc-1", "general-purpose", { branch: "agent/final" });
+    assert.deepEqual(branchOf(), ["agent/final", undefined]);
+  });
+
   it("records no worktree for a call outside the project's linked worktrees", () => {
     const { dir } = project();
     const store = testStore();

@@ -207,6 +207,7 @@ export function readAgent(value: unknown, where = "agent"): Agent {
     failedWhat: optional(f.failedWhat, `${where}.failedWhat`, line),
     waitsForJob: optional(f.waitsForJob, `${where}.waitsForJob`, bool),
     branch: optional(f.branch, `${where}.branch`, label),
+    branchFromWorktree: optional(f.branchFromWorktree, `${where}.branchFromWorktree`, bool),
     commit: optional(f.commit, `${where}.commit`, label),
     worktree: optional(f.worktree, `${where}.worktree`, (v, w) => nonEmpty(v, w, 4096)),
     after: list(f.after ?? [], `${where}.after`, id, 50),

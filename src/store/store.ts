@@ -734,7 +734,9 @@ export class Store {
         if (!found || found.name === agent.name) throw new InputError(`--after: no other sub-agent ${JSON.stringify(other)} in this session (${known()})`);
         return found.name;
       });
-      const updated = this.updateAgent(sessionId, agent.name, compact({ ...fields, after }));
+      // A branch the session reports replaces the one read from the agent's worktree, for good.
+      const reported = fields.branch === undefined ? {} : { branchFromWorktree: undefined };
+      const updated = this.updateAgent(sessionId, agent.name, { ...compact({ ...fields, after }), ...reported });
       if (!updated) throw new Error(`sub-agent ${agent.name} of session ${sessionId} left the store while it was updated; run the command again`);
       return updated;
     });
@@ -1599,7 +1601,11 @@ const KNOWN_SHOWN = 10;
 const lastLaunched = (a: Agent) => (a.resumedAt !== undefined && a.resumedAt > a.startedAt ? a.resumedAt : a.startedAt);
 
 /** What the session reported for an agent, and where it worked, which a merge keeps over what its adapter recorded last. */
-const reportedOf = (a: Agent) => compact({ goal: a.goal, summary: a.summary, branch: a.branch, commit: a.commit, worktree: a.worktree });
+const reportedOf = (a: Agent) => ({
+  ...compact({ goal: a.goal, summary: a.summary, commit: a.commit, worktree: a.worktree }),
+  // A branch goes with its mark: one reported replaces one read from the worktree, mark and all.
+  ...(a.branch === undefined ? {} : { branch: a.branch, branchFromWorktree: a.branchFromWorktree }),
+});
 
 const ANSWER_MAX = 20_000;
 const MESSAGES_KEPT = 500;
