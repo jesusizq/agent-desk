@@ -34,6 +34,9 @@ command.
   - the end endpoint sends SIGTERM to a registered, live session's own process, only after checking
     in /proc that the pid still has the start time the session recorded (`src/core/proc.ts`); no
     other signal, and no process the session did not register as its own.
+- To show a session's local servers and what works in each checkout, the desk reads only fixed /proc
+  files of the session's own process tree (`children`, `fd`, `cmdline`, `cwd`, `stat`) and
+  `/proc/net/tcp{,6}`; it never signals or runs anything there.
 
 ## Data
 

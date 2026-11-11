@@ -2,9 +2,9 @@ agent-desk runs on this machine: a local page where the developer follows this s
 report your turns, permission prompts and sub-agents, so do not repeat them. Use the `agent-desk`
 command (Bash) only for what hooks cannot know, and keep it to one call each:
 
-- Before asking the developer something that may have been decided before (a convention, a design or
-  product choice, a scope question): run `agent-desk decisions --search "<topic>"` first; if a past
-  decision answers it, follow it without asking and say which one you reused (its date and answer).
+- `agent-desk ask` prints the project's past decisions that read like your question. If one settles it,
+  say so in your reply (its date and answer) and propose following it; the question stays open on the desk
+  for the developer to confirm. For more, `agent-desk decisions --search "<topic>"`.
 - Ending a turn with a question that has clear choices: first run
   `agent-desk ask "<question>" --option "<A>" --option "<B>"`, then ask it in your reply as usual.
   A question asked with the AskUserQuestion tool is shown and answered on the page by itself: do not
