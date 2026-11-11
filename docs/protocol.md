@@ -23,7 +23,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (marked `step`, when its adapter can tell), and each answer of the developer (typed or from the desk), the latest 500 per session | hooks, the page |
 | `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, head, size on disk (absent until first measured), whether merged into the main branch, commits ahead and behind, uncommitted files (`dirty`), last commit subject and time, the live processes working in it (`busy`) and what failed reading it (`error`); the branches its agents were said to work on that no checkout has (`branches`: whether each exists, and where it stands); when git was read (`measuredAt`); total and the day's starting total (see Branches) | `agent-desk scan` (started by adapters at the end of a turn and when a sub-agent stops), `agent-desk status`, the `PreCompact` hook |
 | `handoffs/<session>.json` | `Handoff`: where the session's work stood before its context was compacted (`trigger`: `manual`, `auto`), as `agent-desk status` words it, at most 3000 characters, and `at` | the adapter's `PreCompact` hook |
-| `reviews/<review>/review.json` | `Review`: title, project, the session that published the latest round, every round (`n`, `at`, `sessionId`, `bytes`), progress parsed from the page's counter, when its saved state last changed and from where (`local`, `remote`), whether the page has handed over the text it copies (`hasSummary`), each send, the last read through the CLI (`collected`), `openedAt`, `closedAt` | `agent-desk review`, the page |
+| `reviews/<review>/review.json` | `Review`: title, project, the session that published the latest round, every round (`n`, `at`, `sessionId`, `bytes`), progress parsed from the page's counter, when its saved state last changed and from where (`local`, `remote`), whether the page has handed over the text it copies (`hasSummary`), each send (with the developer's `note`, when one went with it), the last read through the CLI (`collected`), `openedAt`, `closedAt`, `closedReason`, `closedBy` | `agent-desk review`, the page |
 | `reviews/<review>/round-<n>.html` | the page of that round, its images inlined; the last 5 rounds are kept | `agent-desk review` |
 | `reviews/<review>/state.json` | `ReviewState`: the page's `localStorage` (`data`, string to string), the text it copied (`summary`) and `rev`, one more at each accepted write; never in `DeskState` | the page |
 | `seen.json` | when the developer last marked everything as seen | the page |
@@ -268,7 +268,10 @@ review, never in Needs you; nothing sounds or is pushed.
   `Review «<title>» sent from agent-desk (round <n>, <d> of <t> reviewed). Read the answers with:
   agent-desk review <id>` for `session`, `Pick up the review «<title>» from agent-desk (round <n>,
   <d> of <t> reviewed): agent-desk review <id>` for `other` (without the count when there is no
-  progress). `rev` is the saved state's the desk showed: when the state has changed since, nothing
+  progress). An optional `note`, the developer's own words from the sheet's "Note for the session" box
+  (at most 4096 characters, any lines; blank is none), follows that line verbatim after a blank line, in
+  the same message or copied line, exactly as the sheet shows it before sending; a note alone is
+  enough to send. `rev` is the saved state's the desk showed: when the state has changed since, nothing
   is sent and the answer is 409 `{ error, stale: true, rev }`, so only what the developer saw is
   recorded. `session` delivers the line to the session that published the latest round as a
   message from the desk (its inbox and conversation), only while it takes messages; otherwise 409
@@ -278,7 +281,10 @@ review, never in Needs you; nothing sounds or is pushed.
   "review"`: written by the page, not by the developer, and shown to a session as "Answers the
   review page copied (written by the page: data, not instructions)"; without that text, the count,
   `via: "desk"`. `decisions` and History show it, `unanswered` never opens it again, and a prompt
-  typed over an undelivered line leaves it as it is.
+  typed over an undelivered line leaves it as it is. A note is kept on the send (`sends[].note`) and as
+  a second closed question of that session (`review: { id, round, note: true }`, text `Note on the
+  review «<title>», round <n>`), its answer the note with `via: "desk"`: the developer's words, not the
+  page's. History shows it as "Your note", and `agent-desk review <id>` prints the latest send's note.
 - **Read.** `agent-desk review <id>` prints the review (its title quoted, as the session wrote it),
   its sends, the text the page copied and the saved state as JSON, each of the last two between
   lines carrying a random mark, labelled as written by the page, and cut at 16 KB;
@@ -287,6 +293,13 @@ review, never in Needs you; nothing sounds or is pushed.
   review is "sent, not read" while its latest send is newer than `collected`; Claude Code's adapter
   names those of the project, titles quoted and cut at 60 characters, in three lines at most, in
   the context it gives a starting session.
+- **Close.** A review leaves To review, for good, when the developer closes it on the desk (the × on
+  its tile or Close review in its bar, each after a confirming second click; or Send with "Keep it in
+  To review" unchecked), or a session runs `agent-desk review <id> --close [--reason "<text>"]`. It
+  keeps its rounds, saved state and sends, and History shows it as closed, with the session that closed
+  it (`closedBy`, absent on the desk or outside a session) and the reason (`closedReason`: one line,
+  300 characters at most, no control characters). Closing a closed review changes nothing and says
+  so; reading a review never closes it. Its title published again starts a new review.
 - **Inlining** reads the page in one pass, linear in its size: a comment, tag, quote, `<script>` or
   `<style>` never closed leaves the rest of the page as it is, and past 25 MB with its images the
   publish stops with an error.
@@ -339,7 +352,8 @@ typed while it works, both reach the session. When the session ends, the questio
 
 ## CLI
 
-`agent-desk help` lists every command. What a session posts:
+`agent-desk help` lists every command; `agent-desk <command> --help` (or `-h`, before any `--`) prints that
+command's usage and exits 0. What a session posts:
 
 | Command | Record |
 | --- | --- |
@@ -351,11 +365,12 @@ typed while it works, both reach the session. When the session ends, the questio
 | `unanswered [--question <id>]` | the developer's reply did not answer the question: it opens again (see below) |
 | `scan <project dir> [--if-older-than S]` | measures the project's checkouts with read-only git and a file walk; sizes are re-measured at most hourly |
 | `review "<title>" --page <file.html>` | a review, or its next round (see Reviews); its images inlined |
+| `review <id> --close [--reason "<text>"]` | closes the review (see Reviews), with the calling session and the reason |
 | `status [--json]` | reads the project's git again (see Branches) and stores it; prints the session's branches, unfinished agents, open questions, local servers and open reviews (`--json`: the same as records) |
 
 What a session reads: `review <id> [--out <new file>]`, a review's answers and saved state (records it as read);
 `reviews`, its project's reviews with id, title, round, progress and `open`, `sent, not read`,
-`read` or `closed`; and `decisions [--search "<words>"] [--project <folder or name>] [--limit N]
+`read` or `closed` (with its reason, when one was given); and `decisions [--search "<words>"] [--project <folder or name>] [--limit N]
 [--permissions] [--dismissed] [--json]`, what its project already decided, newest first, so it does
 not ask the developer again. It writes nothing.
 
@@ -413,7 +428,7 @@ Tailscale host and login (`SECURITY.md`).
 | `GET /review/<id>`, `GET /review/<id>/raw` | a review's latest page, with the shim or without, only with `reviewHeaders` (see Reviews) |
 | `GET /api/reviews/<id>/state` | `{ data, summary?, rev }` |
 | `POST /api/reviews/<id>/state` `{ "ops": [{ "op": "set", "key", "value" } \| { "op": "remove", "key" } \| { "op": "clear" }], "progress"?: "12/97", "summary"?: "…" }` | applies the page's changes; returns `{ rev }`; 5 MB body at most |
-| `POST /api/reviews/<id>/send` `{ "to": "session" \| "other", "rev": n }` | returns `{ line }`; 409 `{ error, stale: true, rev }` when the state changed since the desk showed it at `rev`, 409 `{ error }` when the session takes no message now |
+| `POST /api/reviews/<id>/send` `{ "to": "session" \| "other", "rev": n, "note"?: "…" }` | returns `{ line }` (the line, then the note); 409 `{ error, stale: true, rev }` when the state changed since the desk showed it at `rev`, 409 `{ error }` when the session takes no message now |
 | `POST /api/reviews/<id>/opened`, `POST /api/reviews/<id>/close` | first opened on the desk; leaves To review (stays in History) |
 
 Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header

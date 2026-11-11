@@ -19,7 +19,7 @@ function highlight(text, q) {
 }
 /**
  * @typedef {{ at: string, sid: string, type: "decision" | "result", kind: keyof typeof TEXT.kinds,
- *   title: string, answer?: string, viaDesk?: boolean, copied?: boolean, images?: string[], note?: string, result?: Result, review?: string, where: string, hay: string }} Entry
+ *   title: string, answer?: string, viaDesk?: boolean, copied?: boolean, reviewNote?: boolean, images?: string[], note?: string, closed?: string, result?: Result, review?: string, where: string, hay: string }} Entry
  */
 // History draws this many entries at first, and this many more on demand: a search redraws only those.
 const HISTORY_PAGE = 50;
@@ -36,17 +36,24 @@ function historyEntries() {
       type: "decision",
       // A review sent from the desk: its answers, kept as a decision (never in Needs you).
       kind: x.review ? "review" : x.status === "dismissed" ? "dismissed" : x.kind === "permission" ? "permission" : "decision",
-      ...(x.review ? { review: x.review.id } : {}),
+      ...(x.review ? { review: x.review.id, reviewNote: x.review.note === true } : {}),
       title: x.text,
       ...(x.answer ? { answer: x.answer.text, viaDesk: x.answer.via === "desk", copied: x.answer.via === "review", images: x.answer.images ?? [] } : {}),
       ...(x.interpretation ? { note: x.interpretation } : {}),
     }));
   /** @type {Omit<Entry, "where" | "hay">[]} */
   const results = data.results.map((r) => ({ at: r.at, sid: r.sessionId, type: "result", kind: r.status === "failed" ? "failed" : "result", title: r.title, note: r.summary, result: r }));
-  const entries = [...decisions, ...results]
+  // A review closed, sent or not: when, by which session if one closed it, and why.
+  /** @type {Omit<Entry, "where" | "hay">[]} */
+  const closed = data.reviews.flatMap((r) => {
+    if (!r.closedAt) return [];
+    const by = r.closedBy === undefined ? null : r.closedBy === r.sessionId ? TEXT.history.theSession : label(S(r.closedBy));
+    return [{ at: r.closedAt, sid: r.sessionId, type: "decision", kind: "review", review: r.id, title: r.title, closed: TEXT.history.reviewClosed(by, r.closedReason) }];
+  });
+  const entries = [...decisions, ...results, ...closed]
     .map((e) => {
       const where = label(S(e.sid));
-      return { ...e, where, hay: [e.title, e.answer, e.note, where].join(" ").toLowerCase() };
+      return { ...e, where, hay: [e.title, e.answer, e.note, e.closed, where].join(" ").toLowerCase() };
     })
     .sort((a, b) => b.at.localeCompare(a.at));
   historyMemo = { from: data, entries };
@@ -104,11 +111,12 @@ export function historyView() {
                 h("div", { class: "hq" }, highlight(e.title, q)),
                 e.answer !== undefined
                   ? e.kind === "review"
-                    ? h("div", { class: "ha rv-ha" }, e.copied ? t.reviewCopied : t.answers, h("span", {}, highlight(e.answer, q)))
+                    ? h("div", { class: "ha rv-ha" }, e.copied ? t.reviewCopied : e.reviewNote ? t.reviewNote : t.answers, h("span", {}, highlight(e.answer, q)))
                     : h("div", { class: "ha" }, t.answer, h("b", {}, highlight(e.answer, q)), e.viaDesk ? t.viaDesk : "")
                   : null,
                 e.images?.length ? attachedImages(e.images) : null,
                 e.note ? h("div", { class: "hi" }, e.type === "decision" ? t.understood : "", highlight(e.note, q)) : null,
+                e.closed ? h("div", { class: "hi rv-hclosed" }, highlight(e.closed, q)) : null,
               ),
             );
           }))

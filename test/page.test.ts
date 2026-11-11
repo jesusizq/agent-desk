@@ -3156,6 +3156,48 @@ paint();
       store.closeReview(r.id);
     });
 
+    it("sends the developer's note after the line, word for word as the sheet shows it, even with nothing marked, and keeps it as their answer", async () => {
+      const r = publish("rv-note", "Hero variants", { state: "working", takesMessagesWhileWorking: true });
+      const page = await openReview("Hero variants");
+      await page.click(".rv-send");
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('.rv-note textarea')`);
+      const fixed = `Review «Hero variants» sent from agent-desk (round 1, 0 of 3 reviewed). Read the answers with: agent-desk review ${r.id}`;
+      assert.equal(await page.eval<string>("document.querySelector('#review-send .rv-line-text').textContent"), fixed, "no note: the line alone");
+      const note = "Drop 2 and 3.\nIterate 1: shorter, <b>no</b> exclamation marks.";
+      await page.click(".rv-note textarea");
+      await page.send("Input.insertText", { text: `  ${note}\n` });
+      const shown = `${fixed}\n\n${note}`;
+      await page.waitFor(`document.querySelector('#review-send .rv-line-text').textContent === ${JSON.stringify(shown)}`);
+      assert.equal(await page.eval<number>("document.querySelectorAll('#review-send .rv-line-text b').length"), 0, "text, never markup");
+      // Closed and opened again before sending, the note is still there.
+      await page.click("#review-send button", "Cancel");
+      await page.waitFor("!document.getElementById('review-send').open");
+      await page.click(".rv-send");
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('#review-send .rv-line-text')?.textContent === ${JSON.stringify(shown)}`);
+      await page.click("#review-send button[type=submit]");
+      await page.waitFor("!document.getElementById('review-send').open");
+      assert.deepEqual(store.takeInbox("rv-note").map((e) => e.answer), [shown], "one message: the line, then the note, word for word");
+      assert.equal(store.getReview(r.id)?.sends.at(-1)?.note, note, "trimmed at its ends only");
+      const recorded = store.listQuestions().filter((q) => q.review?.id === r.id);
+      assert.deepEqual(
+        recorded.map((q) => [q.text, q.answer?.via, q.review?.note ?? false]).sort(),
+        [
+          ["Note on the review «Hero variants», round 1", "desk", true],
+          ["Review «Hero variants», round 1", "review", false],
+        ],
+        "the note is the developer's answer, given on the desk, beside what the page copied (nothing kept)",
+      );
+      assert.equal(recorded.find((q) => q.review?.note)?.answer?.text, note);
+      await page.click(".rv-send");
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('#review-send .rv-line-text')?.textContent === ${JSON.stringify(fixed)}`);
+      assert.equal(await page.eval<string>("document.querySelector('.rv-note textarea').value"), "", "sent: the box is empty again");
+      await page.click("#review-send button", "Cancel");
+      await page.click(".rv-back");
+      await page.click("#views button", "History");
+      await page.waitFor(`[...document.querySelectorAll('.hitem')].some((h) => h.querySelector('.k-review') && h.querySelector('.rv-ha')?.textContent === ${JSON.stringify(`Your note: ${note}`)})`);
+      store.closeReview(r.id);
+    });
+
     it("shows the answers again instead of sending when another device changed them after the sheet opened", async () => {
       const r = publish("rv-stale", "Stale answers", { state: "working", takesMessagesWhileWorking: true });
       const page = await openReview("Stale answers");
@@ -3294,6 +3336,56 @@ if (!localStorage.getItem("left")) { localStorage.setItem("left", "1"); setTimeo
       assert.deepEqual(store.reviewState(r.id).data, { answers: '{"2":"yes"}' });
       await page.waitFor("document.querySelector('.rv-saved').textContent.startsWith('Saved')");
       store.closeReview(r.id);
+    });
+
+    it("closes a review from its tile without opening it, only on a second click, and shows it closed in History", async () => {
+      const r = publish("rv-tile-close", "Unwanted variants");
+      const page = await open();
+      await page.waitFor(tile("Unwanted variants"));
+      const x = `${tile("Unwanted variants")}.querySelector('.rv-x button')`;
+      assert.equal(await page.eval<string>(`${x}.getAttribute('aria-label')`), "Close the review");
+      await page.eval(`${x}.click()`);
+      await page.waitFor(`${x}.classList.contains('armed') && ${x}.getAttribute('aria-label') === 'Close?'`);
+      assert.equal(await page.eval<boolean>("document.getElementById('review').open"), false, "the tile did not open");
+      assert.equal(store.getReview(r.id)?.closedAt, undefined, "one click closes nothing");
+      // Left alone, it disarms.
+      await page.waitFor(`!${x}.classList.contains('armed')`, 5000);
+      await page.eval(`${x}.click()`);
+      await page.waitFor(`${x}.classList.contains('armed')`);
+      await page.eval(`${x}.click()`);
+      await page.waitFor(`!${tile("Unwanted variants")}`);
+      assert.ok(store.getReview(r.id)?.closedAt, "closed");
+      assert.equal(store.getReview(r.id)?.sends.length, 0, "never sent");
+      assert.equal(store.getReview(r.id)?.openedAt, undefined, "never opened");
+      await page.waitFor("[...document.querySelectorAll('#toasts .toast')].some((t) => t.textContent === 'Closed «Unwanted variants»: it is in History')");
+      await page.click("#views button", "History");
+      await page.waitFor("[...document.querySelectorAll('.hitem')].some((h) => h.querySelector('.k-review') && h.textContent.includes('Unwanted variants') && h.querySelector('.rv-hclosed')?.textContent === 'Closed')");
+    });
+
+    it("closes the review open from its bar, saving what the page changed first, and shows the session's reason in History", async () => {
+      const r = publish("rv-bar-close", "Superseded copy");
+      const page = await openReview("Superseded copy");
+      await keepInFrame(page, 2);
+      await page.click(".rv-close-bar");
+      await page.waitFor("document.querySelector('.rv-close-bar').classList.contains('armed')");
+      assert.equal(await page.eval<boolean>("document.getElementById('review').open"), true, "one click: still open");
+      // The second click at once: armed, it runs a line out (an animation the helper would wait on).
+      await page.eval("document.querySelector('.rv-close-bar').click()");
+      await page.waitFor("!document.getElementById('review').open && location.hash === ''");
+      await page.waitFor(`!${tile("Superseded copy")}`);
+      assert.ok(store.getReview(r.id)?.closedAt);
+      assert.deepEqual(store.reviewState(r.id).data, { answers: '{"2":"yes"}' }, "what was marked last is saved");
+      // A review a session closed with a reason says who and why.
+      const other = publish("rv-cli-close", "Old proposals");
+      store.closeReview(other.id, { reason: "replaced by the new proposals", by: "rv-cli-close" });
+      await page.click("#views button", "History");
+      await page.waitFor("[...document.querySelectorAll('.hitem')].some((h) => h.textContent.includes('Old proposals') && h.querySelector('.rv-hclosed')?.textContent === 'Closed by the session: replaced by the new proposals')");
+      // Opened again from History, a closed review offers no Close.
+      await page.click(".hitem", "Superseded copy");
+      await page.waitFor(`${arrived("review")} && document.querySelector('.rv-bar')`);
+      assert.equal(await page.eval<boolean>("!!document.querySelector('.rv-close-bar')"), false);
+      await page.click(".rv-back");
+      await page.waitFor("!document.getElementById('review').open");
     });
 
     it("fills a phone's screen under a slim bar, counts reviews on its tab, and sends from a sheet at the bottom", async () => {

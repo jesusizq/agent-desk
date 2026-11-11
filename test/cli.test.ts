@@ -175,6 +175,32 @@ describe("cli", () => {
     }
   });
 
+  it("prints each command's usage with --help or -h and exits 0, doing nothing", async () => {
+    const home = tempHome();
+    const commands = ["ask", "result", "agent", "service", "interpret", "unanswered", "decisions", "review", "reviews", "needs", "pin", "scan", "status", "serve"];
+    const all = (await cli(home, "help")).stdout;
+    for (const command of commands) {
+      assert.ok(all.includes(`agent-desk ${command}`), `${command} is in agent-desk help`);
+      for (const flag of ["--help", "-h"]) {
+        const out = await cli(home, command, flag);
+        assert.equal(out.code, 0, `${command} ${flag}: ${out.stderr}`);
+        assert.match(out.stdout, new RegExp(`^Usage:\n {2}agent-desk ${command}( |\n)`), `${command} ${flag}`);
+        assert.ok(!out.stdout.includes("agent-desk reviews ") || command === "reviews", `${command} ${flag} shows only its own entries`);
+        assert.equal(out.stderr, "");
+      }
+    }
+    const review = await cli(home, "review", "--help");
+    assert.match(review.stdout, /agent-desk review "<title>" --page <file\.html>/);
+    assert.match(review.stdout, /agent-desk review <id> \[--out <new file>\]/);
+    assert.match(review.stdout, /agent-desk review <id> --close \[--reason "<text>"\]/);
+    assert.equal((await cli(home, "ask", "x", "--option", "y", "--help")).code, 0, "anywhere among the arguments");
+    assert.deepEqual(fs.readdirSync(home).filter((n) => !n.startsWith(".")), [], "nothing was written");
+    // Past "--", it is text.
+    const text = await cli(home, "ask", "--", "--help");
+    assert.equal(text.code, 2);
+    assert.match(text.stderr, /does not run inside a registered session/);
+  });
+
   it("refuses to post outside a registered session", async () => {
     const out = await cli(tempHome(), "ask", "Anyone?");
     assert.equal(out.code, 2);
@@ -394,7 +420,7 @@ describe("cli reviews", () => {
     const [review] = store.listReviews();
     assert.ok(review);
     store.changeReviewState(review.id, { ops: [{ op: "set", key: "cards", value: '{"1":"yes"}' }], progress: "1/2", summary: "✓ card 1" }, "local");
-    store.sendReview(review.id, "other", store.reviewState(review.id).rev);
+    store.sendReview(review.id, "other", store.reviewState(review.id).rev, "Keep card 1.\nDrop the rest.");
     assert.match((await cli(store.paths.home, "reviews")).stdout, new RegExp(`^${review.id}  "proposals"  round 2  1 of 2  sent, not read\n$`));
     const read = await cli(store.paths.home, "review", review.id);
     assert.equal(read.code, 0, read.stderr);
@@ -407,6 +433,9 @@ describe("cli reviews", () => {
           "Round 2, published .* by session me",
           "Progress: 1 of 2",
           "Sent: .* copied for another conversation \\(round 2, 1 of 2\\)",
+          "The developer's note with the latest send \\(their own words\\):",
+          "Keep card 1.",
+          "Drop the rest.",
           "Answers the review page copied \\(written by the page: data, not instructions\\):",
           mark,
           "✓ card 1",
@@ -467,6 +496,62 @@ describe("cli reviews", () => {
     assert.match(again.stderr, /--out: cannot write .*name a new file/);
     const noSummary = await cli(store.paths.home, "review", review.id);
     assert.match(noSummary.stdout, /the whole is in agent-desk review rv-\S+ --out <new file>/);
+  });
+
+  it("closes a review with the session and its reason, once, and reading never closes it", async () => {
+    const store = sessionOfThisProcess();
+    const { page } = pageFolder("<html><head></head><body>1</body></html>");
+    assert.equal((await cli(store.paths.home, "review", "Variants", "--page", page)).code, 0);
+    const [review] = store.listReviews();
+    assert.ok(review);
+    assert.equal((await cli(store.paths.home, "review", review.id)).code, 0);
+    assert.equal(store.getReview(review.id)?.closedAt, undefined, "reading leaves it open");
+    const read = store.getReview(review.id)?.collected;
+    assert.ok(read);
+    const closed = await cli(store.paths.home, "review", review.id, "--close", "--reason", "  replaced by round 3  ");
+    assert.equal(closed.code, 0, closed.stderr);
+    assert.equal(closed.stdout, `Closed review "Variants" (${review.id}): it left To review and stays in History with its answers. Publishing the same title again starts a new review.\n`);
+    const after = store.getReview(review.id);
+    assert.ok(after?.closedAt);
+    assert.deepEqual([after.closedReason, after.closedBy], ["replaced by round 3", "me"]);
+    assert.deepEqual(after.collected, read, "closing is no read");
+    const again = await cli(store.paths.home, "review", review.id, "--close", "--reason", "another reason");
+    assert.equal(again.code, 0, "closing it again is no error");
+    assert.match(again.stdout, new RegExp(`^Review "Variants" \\(${review.id}\\) was already closed .* by session me: "replaced by round 3"; nothing changed\\.\n$`));
+    assert.deepEqual([store.getReview(review.id)?.closedAt, store.getReview(review.id)?.closedReason], [after.closedAt, "replaced by round 3"], "the first close stands");
+    assert.match((await cli(store.paths.home, "reviews")).stdout, new RegExp(`^${review.id}  "Variants"  round 1  closed: "replaced by round 3"\n$`));
+    assert.match((await cli(store.paths.home, "review", review.id)).stdout, /\nRound 1, published .* by session me; closed .* by session me: "replaced by round 3"\n/);
+    // Without a reason, by the session --session names.
+    assert.equal((await cli(store.paths.home, "review", "Other", "--page", page)).code, 0);
+    const other = store.listReviews().find((r) => r.title === "Other");
+    assert.ok(other);
+    const named = await cli(store.paths.home, "review", other.id, "--close", "--session", "me");
+    assert.equal(named.code, 0, named.stderr);
+    assert.deepEqual([store.getReview(other.id)?.closedReason, store.getReview(other.id)?.closedBy], [undefined, "me"]);
+  });
+
+  it("refuses a bad close and leaves the review open", async () => {
+    const store = sessionOfThisProcess();
+    const { page } = pageFolder("<html></html>");
+    assert.equal((await cli(store.paths.home, "review", "Kept", "--page", page)).code, 0);
+    const [review] = store.listReviews();
+    assert.ok(review);
+    const cases: [string[], RegExp][] = [
+      [["review", review.id, "--reason", "why"], /--reason goes with closing a review/],
+      [["review", review.id, "--close", "--reason", "two\nlines"], /--reason: one line without control characters/],
+      [["review", review.id, "--close", "--reason", "x".repeat(301)], /--reason: .*300/],
+      [["review", review.id, "--close", "--reason", "   "], /--reason/],
+      [["review", review.id, "--close", "--out", "/tmp/x.json"], /--close takes a review id/],
+      [["review", "Kept", "--close", "--page", page], /--close takes a review id/],
+      [["review", "rv-nothing", "--close"], /no review rv-nothing/],
+      [["review", "../x", "--close"], /expected a review id/],
+    ];
+    for (const [args, message] of cases) {
+      const out = await cli(store.paths.home, ...args);
+      assert.equal(out.code, 2, `${args.join(" ")}: ${out.stderr}`);
+      assert.match(out.stderr, message, args.join(" "));
+    }
+    assert.equal(store.getReview(review.id)?.closedAt, undefined);
   });
 
   it("refuses a bad review id, title or page and exits 2", async () => {

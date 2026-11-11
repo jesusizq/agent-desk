@@ -760,6 +760,11 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .arm-lbl > * { grid-area: 1 / 1; justify-self: center; }
 .arm .arm-ask, .arm.armed .arm-idle { visibility: hidden; }
 .arm.armed .arm-ask { visibility: visible; }
+/* Two labels of very different widths (an icon, then a question): one shows at a time, and the control grows
+   away from the pointer, its far edge held by what follows it. */
+.arm.arm-swap .arm-lbl, .arm.arm-swap .arm-idle { display: inline-flex; align-items: center; gap: 6px; }
+.arm.arm-swap .arm-ask, .arm.arm-swap.armed .arm-idle { display: none; }
+.arm.arm-swap.armed .arm-ask { display: inline; }
 :is(button.secondary, button.chip).arm.armed { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 /* Forget on a session's card, under what it said: small, it only takes the card off the desk. */
 .scard > .s-actions { padding-left: 17px; margin-top: 2px; }
@@ -1229,6 +1234,17 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .rv-go { flex: none; color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
 .rv-go svg.i { width: 15px; height: 15px; transition: translate var(--dur-2) var(--ease-out); }
 .rv-tile:hover .rv-go svg.i { translate: 2px 0; }
+/* Close, on the foot beside Continue: quiet until the tile is hovered (always there on touch); armed, it asks. */
+.rv-x { flex: none; display: inline-flex; }
+/* Its hit area overhangs the line, so the foot keeps its height. */
+.rv-x .icon-btn { height: 28px; margin-block: -6px; padding: 0 6px; border-color: transparent; background: transparent; color: var(--faint); opacity: 0;
+  transition: opacity var(--dur-2), color var(--dur-2), background-color var(--dur-2), border-color var(--dur-2); }
+.rv-tile:hover .rv-x .icon-btn, .rv-x .icon-btn:focus-visible, .rv-x .icon-btn.armed { opacity: 1; }
+.rv-x .icon-btn:not(.armed):hover { color: var(--text); border-color: var(--border); }
+.rv-x .icon-btn svg.i { width: 15px; height: 15px; }
+.rv-x .icon-btn.armed { background: var(--danger); border-color: var(--danger); color: #fff; padding: 0 10px; font-weight: 600; }
+@media (hover: none) { .rv-x .icon-btn { opacity: 1; } }
+@media (pointer: coarse) { .rv-x .icon-btn { margin-block: -14px; } }
 .rv-sent { font-size: 0.8125rem; color: var(--done); display: flex; align-items: flex-start; gap: 6px; }
 .rv-sent svg.i { width: 14px; height: 14px; margin-top: 2px; }
 .rv-earlier { text-align: center; padding-top: 6px; }
@@ -1274,6 +1290,10 @@ dialog.review:not([open]) { transform: translateY(10px) scale(.995); }
 @media (prefers-reduced-motion: no-preference) { .rv-sync { animation: rv-rise var(--dur-3) var(--ease-out); } }
 @keyframes rv-rise { from { opacity: 0; transform: translateY(-4px); } }
 dialog.review .rv-send { flex: none; height: 36px; padding: 0 16px; border-radius: 8px; font-size: 0.875rem; gap: 7px; }
+/* Close, beside Send: quiet, a border only under the pointer; armed, in the colour of what it takes away, unlike Send. */
+dialog.review .rv-close-bar { flex: none; height: 36px; padding: 0 12px; border-radius: 8px; font-size: 0.875rem; color: var(--muted); border-color: transparent; background: transparent; }
+dialog.review .rv-close-bar:not(.armed):hover { color: var(--text); border-color: var(--border); }
+dialog.review .rv-close-bar svg.i { width: 16px; height: 16px; }
 .rv-line { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; }
 .rv-line i { display: block; height: 100%; background: var(--done); transition: width var(--dur-3) var(--ease-out); }
 .rv-frame { flex: 1; width: 100%; min-height: 0; border: 0; display: block; background: #fff; }
@@ -1300,6 +1320,12 @@ dialog.rv-sheet:not([open]) { transform: translateY(12px); }
 .rv-opt b { font-size: 0.9375rem; }
 .rv-opt small { color: var(--muted); font-size: 0.8125rem; line-height: 1.4; }
 .rv-eyebrow { font: 650 0.6875rem var(--sans); color: var(--faint); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; display: block; }
+.rv-note { display: block; }
+.rv-note textarea { display: block; width: 100%; min-height: 4.5em; resize: vertical; font-family: var(--sans); font-size: 0.875rem; line-height: 1.45; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 10px; }
+.rv-note textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* iOS zooms into a field under 16px. */
+@media (pointer: coarse) { .rv-note textarea { font-size: max(1rem, 16px); } }
 .rv-msg pre, .rv-answers pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.8125rem/1.5 var(--mono); background: var(--surface-2);
   border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .rv-answers summary { cursor: pointer; font-size: 0.875rem; color: var(--accent); font-weight: 500; }
@@ -1319,6 +1345,8 @@ dialog.rv-sheet:not([open]) { transform: translateY(12px); }
   .rv-sub { font-size: 0.75rem; gap: 6px; }
   .rv-sub .pname, .rv-sub .pdot { display: none; }
   dialog.review .rv-send { height: 38px; padding: 0 14px; }
+  dialog.review .rv-close-bar { height: 38px; padding: 0 10px; }
+  .rv-close-bar .lbl { display: none; }
   .rv-send .lbl-long, .rv-saved .lbl-long { display: none; }
   .rv-foot .faint { white-space: normal; }
   /* Under the bar, over the page's top, so the bar keeps its room */

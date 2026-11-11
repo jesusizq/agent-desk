@@ -48,6 +48,7 @@ import {
   REVIEW_SUMMARY_MAX,
   reviewKey,
   reviewLine,
+  reviewNote,
   reviewTitle,
   stateBytes,
 } from "../core/model.ts";
@@ -1080,9 +1081,18 @@ export class Store {
     return this.updateReview(reviewId, (r) => (r.openedAt ? r : { ...r, openedAt: this.stamp() }));
   }
 
-  /** It leaves To review, and stays in History. Publishing its title again then starts a new review. */
-  closeReview(reviewId: string): Review {
-    return this.updateReview(reviewId, (r) => (r.closedAt ? r : { ...r, closedAt: this.stamp() }));
+  /**
+   * It leaves To review, and stays in History with its answers; `reason` and `by` (the session that
+   * closed it) are kept with it. Publishing its title again then starts a new review. Closing a closed
+   * review changes nothing: `already` says so.
+   */
+  closeReview(reviewId: string, how: { reason?: string; by?: string } = {}): { review: Review; already: boolean } {
+    let already = false;
+    const review = this.updateReview(reviewId, (r) => {
+      already = r.closedAt !== undefined;
+      return already ? r : compact({ ...r, closedAt: this.stamp(), closedReason: how.reason, closedBy: how.by });
+    });
+    return { review, already };
   }
 
   /**
@@ -1090,9 +1100,11 @@ export class Store {
    * as a message from the desk (refused with `Undeliverable` when that session takes none now);
    * `other` only returns the line, to copy into another conversation. Either way the send and the
    * developer's answers (the text the page copied, else how far they got) are recorded, the answers
-   * as a closed question of that session, so the project's decisions and History hold them.
+   * as a closed question of that session, so the project's decisions and History hold them. `note`,
+   * the developer's own words, follows the line verbatim in the same message, and is recorded as a
+   * second closed question answered on the desk.
    */
-  sendReview(reviewId: string, to: "session" | "other", seenRev: number): { line: string; review: Review } {
+  sendReview(reviewId: string, to: "session" | "other", seenRev: number, note?: string): { line: string; review: Review } {
     const file = this.paths.review(reviewId);
     return withLock(file, () => {
       const review = this.getReview(reviewId);
@@ -1106,12 +1118,15 @@ export class Store {
       }
       const state = this.reviewState(reviewId);
       if (state.rev !== seenRev) throw new StaleReview(`the review changed since it was shown (saved state ${state.rev}, shown ${seenRev}); look at it again, then send it`, state.rev);
-      const line = reviewLine(review, round, review.progress, to);
+      const said = note === undefined ? undefined : reviewNote(note, "note");
+      const line = reviewLine(review, round, review.progress, to, said);
       const at = this.stamp();
       const decision = this.reviewDecision(review, round, state, at);
-      const next = readReview({ ...review, sends: [...review.sends, compact({ at, to: to === "session" ? review.sessionId : null, round, progress: review.progress })] }, file);
-      writeJson(this.paths.question(decision.id, "closed"), decision);
+      const noted = said === undefined ? undefined : this.reviewNoteDecision(review, round, said, at);
+      const next = readReview({ ...review, sends: [...review.sends, compact({ at, to: to === "session" ? review.sessionId : null, round, progress: review.progress, note: said })] }, file);
+      const recorded = [decision, ...(noted ? [noted] : [])];
       try {
+        for (const q of recorded) writeJson(this.paths.question(q.id, "closed"), q);
         writeJson(file, next);
         if (to === "session") {
           try {
@@ -1122,7 +1137,7 @@ export class Store {
           }
         }
       } catch (error) {
-        fs.rmSync(this.paths.question(decision.id, "closed"), { force: true });
+        for (const q of recorded) fs.rmSync(this.paths.question(q.id, "closed"), { force: true });
         throw new Error(`could not send review ${reviewId}; nothing was recorded`, { cause: error });
       }
       if (to === "session" && session?.state === "working") this.noteSentWhileWorking(session.id, line);
@@ -1146,6 +1161,22 @@ export class Store {
       closedAt: at,
       answer: { ...answer, at },
       review: { id: review.id, round },
+    });
+  }
+
+  /** The developer's note sent with a review, as their answer given on the desk: a decision of its own, beside the page's answers. */
+  private reviewNoteDecision(review: Review, round: number, note: string, at: string): Question {
+    return readQuestion({
+      id: newId("q"),
+      sessionId: review.sessionId,
+      kind: "question",
+      text: `Note on the review «${review.title}», round ${round}`,
+      options: [],
+      askedAt: at,
+      status: "answered",
+      closedAt: at,
+      answer: { text: note, via: "desk", at },
+      review: { id: review.id, round, note: true },
     });
   }
 

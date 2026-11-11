@@ -138,7 +138,7 @@ export type Question = {
    * The answers of a review, recorded when the developer sent it from the desk: closed when written,
    * never opened again, so a review never shows in Needs you.
    */
-  review?: { id: string; round: number };
+  review?: { id: string; round: number; note?: boolean };
   /**
    * Answered questions of the same project that read like this one, best first (at most 3), found when
    * it was asked: the developer can answer it again with one of their answers, never automatically.
@@ -410,13 +410,17 @@ export const REVIEW_KEY_MAX = 200;
 export const REVIEW_SUMMARY_MAX = 200 * 1024;
 export const REVIEW_PROGRESS_MAX = 200;
 export const REVIEW_TITLE_MAX = 120;
+/** Why a review was closed, when it was said: one line. */
+export const REVIEW_REASON_MAX = 300;
+/** The developer's note sent with a review, after its line. */
+export const REVIEW_NOTE_MAX = 4096;
 /** Rounds whose page is kept; every round's metadata is. */
 export const REVIEW_ROUNDS_KEPT = 5;
 
 export type ReviewProgress = { done: number; total: number };
 export type ReviewRound = { n: number; at: string; sessionId: string; bytes: number };
-/** `to`: the session it was delivered to, or null when its line was copied for another conversation. */
-export type ReviewSend = { at: string; to: string | null; round: number; progress?: ReviewProgress };
+/** `to`: the session it was delivered to, or null when its line was copied for another conversation. `note`: the developer's words sent after the line. */
+export type ReviewSend = { at: string; to: string | null; round: number; progress?: ReviewProgress; note?: string };
 
 /** An HTML page a session published for the developer to review or choose from, round after round. */
 export type Review = {
@@ -441,6 +445,10 @@ export type Review = {
   openedAt?: string;
   /** Left To review; it stays in History. */
   closedAt?: string;
+  /** Why it was closed, when whoever closed it said (one line). */
+  closedReason?: string;
+  /** The session that closed it with `agent-desk review <id> --close`; absent when closed on the desk or outside a session. */
+  closedBy?: string;
 };
 
 /** A review's saved state, kept apart from the review (it can be large): the page's localStorage and the text it copied. */

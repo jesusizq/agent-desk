@@ -294,6 +294,9 @@ describe("what the page looks like", { skip: skipped() }, () => {
         await openReview(page, "Checkout copy proposals");
         await page.click(".rv-send");
         await page.waitFor(`${arrived("review-send")} && document.querySelector('.rv-answers pre')`);
+        // The developer's note, shown after the line exactly as it goes.
+        await page.eval("(() => { const t = document.querySelector('.rv-note textarea'); t.value = 'Drop 2 and 5. Iterate 3: keep it under six words.'; t.dispatchEvent(new Event('input')); })()");
+        await page.waitFor("document.querySelector('#review-send .rv-line-text').textContent.endsWith('under six words.')");
         await sameId(page);
       },
     }),
@@ -330,7 +333,7 @@ describe("what the page looks like", { skip: skipped() }, () => {
   ];
 
   /** The review's id in the line shown is drawn at random by each demo store: one fixed id in its place keeps the screen the same. */
-  const sameId = (page: Page) => page.eval("(() => { const line = document.querySelector('#review-send .rv-line-text'); line.textContent = line.textContent.replace(/rv-[\\w-]+$/, 'rv-demo'); })()");
+  const sameId = (page: Page) => page.eval("(() => { const line = document.querySelector('#review-send .rv-line-text'); line.textContent = line.textContent.replace(/agent-desk review rv-[\\w-]+/, 'agent-desk review rv-demo'); })()");
 
   /** A demo review open, its page drawn in its frame. */
   async function openReview(page: Page, title: string, touch = false): Promise<void> {

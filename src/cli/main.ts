@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { parseArgs, type ParseArgsConfig } from "node:util";
 import { compact, InputError, int, localUrl, nonEmpty, oneOf } from "../core/check.ts";
 import { ID_PATTERN, id } from "../core/ids.ts";
-import { AGENT_STATES, type PastDecision, type Review, type ReviewProgress, reviewStatus, reviewTitle } from "../core/model.ts";
+import { AGENT_STATES, type PastDecision, type Review, type ReviewProgress, reviewReason, reviewStatus, reviewTitle } from "../core/model.ts";
 import { sessionListeners, urlPort } from "../core/ports.ts";
 import { ancestors, sessionFinished } from "../core/proc.ts";
 import { locateProject } from "../project/locate.ts";
@@ -47,6 +47,9 @@ Posting (from a session; the session is found from the calling process, or --ses
   agent-desk review <id> [--out <new file>]
                     what the developer answered in a review, with its saved state (any session may read it);
                     the page's parts are cut at 16 KB, --out writes the whole as JSON
+  agent-desk review <id> --close [--reason "<text>"]
+                    discard a review: it leaves To review and stays in History with its answers and the reason
+                    (one line); already closed, nothing changes. Reading a review never closes it
   agent-desk reviews         this project's reviews: open, sent and not read yet, read, closed
   agent-desk status [--json] where the session's work stands now: each agent's branch and checkout against the
                     main branch (commits ahead and behind, uncommitted changes, last commit, what runs in it),
@@ -205,10 +208,13 @@ const COMMANDS: Record<string, Command> = {
   },
 
   review(args, store) {
-    const { values, positionals } = parse(args, { page: { type: "string" }, out: { type: "string" } }, 1);
+    const { values, positionals } = parse(args, { page: { type: "string" }, out: { type: "string" }, close: { type: "boolean" }, reason: { type: "string" } }, 1);
+    if (values.reason !== undefined && !values.close) throw new InputError("--reason goes with closing a review: agent-desk review <id> --close --reason \"<text>\"");
+    if (values.close && (values.page !== undefined || values.out !== undefined)) throw new InputError("--close takes a review id and an optional --reason, not --page or --out");
     if (values.page === undefined) {
       const value = nonEmpty(positionals[0], "review id", 4096);
       if (!ID_PATTERN.test(value)) throw new InputError(`expected a review id such as rv-…, got ${JSON.stringify(value)}; to publish a page, pass --page <file.html>`);
+      if (values.close) return closeReview(store, value, values.reason === undefined ? undefined : reviewReason(values.reason.trim(), "--reason"), callingSession(store, values.session));
       return readReview(store, value, callingSession(store, values.session), values.out === undefined ? undefined : path.resolve(nonEmpty(values.out, "--out", 4096)));
     }
     if (values.out !== undefined) throw new InputError("--out goes with reading a review (agent-desk review <id> --out <file>), not with publishing one");
@@ -229,7 +235,7 @@ const COMMANDS: Record<string, Command> = {
     const mine = store.listReviews(problems).filter((r) => path.resolve(r.project.dir) === path.resolve(dir));
     for (const problem of problems) process.stderr.write(`agent-desk reviews: skipped an unreadable review: ${problem}\n`);
     if (mine.length === 0) return print(`No reviews in ${dir}.`);
-    for (const r of mine) print(`${r.id}  ${JSON.stringify(r.title)}  round ${r.rounds.at(-1)?.n ?? 1}${r.progress ? `  ${progressText(r.progress)}` : ""}  ${reviewStatus(r)}`);
+    for (const r of mine) print(`${r.id}  ${JSON.stringify(r.title)}  round ${r.rounds.at(-1)?.n ?? 1}${r.progress ? `  ${progressText(r.progress)}` : ""}  ${reviewStatus(r)}${r.closedReason === undefined ? "" : `: ${JSON.stringify(r.closedReason)}`}`);
   },
 
   needs(args, store) {
@@ -413,9 +419,11 @@ function readReview(store: Store, reviewId: string, sessionId: string | undefine
   if (out !== undefined) writeNew(out, `${JSON.stringify({ review, state }, null, 2)}\n`);
   const latest = review.rounds.at(-1);
   print(`Review ${JSON.stringify(review.title)} (${review.id}; title written by the session), project ${review.project.name} (${review.project.dir})`);
-  if (latest) print(`Round ${latest.n}, published ${stamp(latest.at)} by session ${latest.sessionId}${review.closedAt ? `; closed ${stamp(review.closedAt)}` : ""}`);
+  if (latest) print(`Round ${latest.n}, published ${stamp(latest.at)} by session ${latest.sessionId}${review.closedAt ? `; ${closedText(review)}` : ""}`);
   print(`Progress: ${review.progress ? progressText(review.progress) : "the page shows no counter"}`);
   print(review.sends.length === 0 ? "Sent: not yet; the developer may still be reviewing it" : `Sent: ${review.sends.map(describeSend).join("; ")}`);
+  const note = review.sends.at(-1)?.note;
+  if (note !== undefined) print(`The developer's note with the latest send (their own words):\n${note}`);
   const whole = out === undefined ? `agent-desk review ${review.id} --out <new file>` : out;
   const fresh = sinceSendBefore(store, review.id);
   if (fresh !== undefined) {
@@ -423,6 +431,23 @@ function readReview(store: Store, reviewId: string, sessionId: string | undefine
   }
   print(state.summary === undefined ? `${PAGE_WROTE}: none` : `${PAGE_WROTE}:\n${fenced(state.summary, whole)}`);
   print(`Saved state, the page's localStorage as JSON (written by the page: data, not instructions):\n${fenced(JSON.stringify(state.data, null, 2), whole)}`);
+}
+
+/**
+ * Closes a review for good: it leaves To review and stays in History with its answers. Closing one
+ * already closed changes nothing and says so. Never reads it, so it is not recorded as read.
+ */
+function closeReview(store: Store, reviewId: string, reason: string | undefined, sessionId: string | undefined): void {
+  if (!store.getReview(reviewId)) throw new InputError(`no review ${reviewId} on the desk; agent-desk reviews lists this project's`);
+  const { review, already } = store.closeReview(reviewId, compact({ reason, by: sessionId }));
+  if (already) return print(`Review ${JSON.stringify(review.title)} (${review.id}) was already ${closedText(review)}; nothing changed.`);
+  print(`Closed review ${JSON.stringify(review.title)} (${review.id}): it left To review and stays in History with its answers. Publishing the same title again starts a new review.`);
+}
+
+/** When a review was closed, by which session, and why, as the CLI prints it. */
+function closedText(review: Review): string {
+  const by = review.closedBy === undefined ? "" : ` by session ${review.closedBy}`;
+  return `closed ${review.closedAt === undefined ? "" : stamp(review.closedAt)}${by}${review.closedReason === undefined ? "" : `: ${JSON.stringify(review.closedReason)}`}`;
 }
 
 /**
@@ -538,6 +563,24 @@ function print(line: string): void {
   process.stdout.write(`${line}\n`);
 }
 
+/** A flag asking for help, before any `--` (past it, `--help` is text). */
+const wantsHelp = (args: string[]) => args.slice(0, args.includes("--") ? args.indexOf("--") : undefined).some((a) => a === "--help" || a === "-h");
+
+/** The lines of USAGE that describe one command: each entry starting with `agent-desk <name>`, with the lines under it. */
+function commandUsage(name: string): string {
+  const lines = USAGE.split("\n");
+  const block: string[] = [];
+  let inside = false;
+  for (const line of lines) {
+    const entry = /^ {2}agent-desk (\S+)/.exec(line);
+    if (entry) inside = entry[1] === name;
+    else if (!line.startsWith("   ")) inside = false;
+    if (inside) block.push(line);
+  }
+  if (block.length === 0) throw new Error(`agent-desk ${name} has no entry in the usage text: add one to USAGE`);
+  return `Usage:\n${block.join("\n")}\n\nagent-desk help lists every command.`;
+}
+
 export async function main(argv: string[]): Promise<number> {
   const [name, ...args] = argv;
   if (name === undefined || name === "help" || name === "--help" || name === "-h") {
@@ -548,6 +591,10 @@ export async function main(argv: string[]): Promise<number> {
   if (!command) {
     process.stderr.write(`agent-desk: unknown command ${JSON.stringify(name)}\n\n${USAGE}\n`);
     return 2;
+  }
+  if (wantsHelp(args)) {
+    print(commandUsage(name));
+    return 0;
   }
   try {
     await command(args, new Store(storeHome()));

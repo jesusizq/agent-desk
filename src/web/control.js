@@ -12,10 +12,11 @@ import { asksOf, isLive, label, ON_THIS_MACHINE, ui } from "./state.js";
 /**
  * A button that acts only on a second click within 3 s, so a stray click does nothing. Armed in
  * `ui`, not in the button: what shows it redraws as the session changes.
- * @param {{ key: string, id: string, text: string, ask: string, act: () => Promise<unknown>, redraw: () => void, cls?: string, title?: string }} b
- * `key`: one per session and action; `ask`: the armed button's question; `redraw`: draws what shows it
+ * @param {{ key: string, id: string, text: string, ask: string, act: () => Promise<unknown>, redraw: () => void, cls?: string, title?: string, idle?: import("./dom.js").Child }} b
+ * `key`: one per record and action; `ask`: the armed button's question; `redraw`: draws what shows it;
+ * `idle`: what it shows unarmed, when not `text` (which stays its accessible name)
  */
-function armedButton({ key, id, text, ask, act, redraw, cls = "secondary", title }) {
+export function armedButton({ key, id, text, ask, act, redraw, cls = "secondary", title, idle }) {
   const armed = () => ui.armed?.key === key && ui.armed.until > Date.now();
   const click = () => {
     if (!armed()) {
@@ -37,7 +38,7 @@ function armedButton({ key, id, text, ask, act, redraw, cls = "secondary", title
   return h(
     "button",
     { class: `${cls} arm${on ? " armed" : ""}`, "data-key": id, "aria-label": on ? ask : text, title, onclick: click },
-    h("span", { class: "arm-lbl", "aria-hidden": "true" }, h("span", { class: "arm-idle" }, text), h("span", { class: "arm-ask" }, ask)),
+    h("span", { class: "arm-lbl", "aria-hidden": "true" }, h("span", { class: "arm-idle" }, idle ?? text), h("span", { class: "arm-ask" }, ask)),
   );
 }
 

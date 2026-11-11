@@ -5,6 +5,7 @@
 import { dialog, h, icon, patch, REVIEWS_KEY } from "./dom.js";
 import { TEXT } from "./text.js";
 import { ago, dayLabel } from "./format.js";
+import { armedButton } from "./control.js";
 import { projectMark, toast } from "./pieces.js";
 import { DeskError, getJson, OfflineError, post, postJson, refresh, run, unlockEnded } from "./server.js";
 import { data, ID, isLive, label, ON_THIS_MACHINE, page, projectColor, S, takesMessages, ui } from "./state.js";
@@ -24,6 +25,8 @@ const STATE_MAX = 2 * 1024 * 1024;
 const SUMMARY_MAX = 200 * 1024;
 const PROGRESS_MAX = 200;
 const NOTICE_MAX = 500;
+/** The developer's note sent with a review (REVIEW_NOTE_MAX in protocol.ts). */
+const NOTE_MAX = 4096;
 /** The page's changes travel together, at most this often. */
 const BATCH_MS = 400;
 /** How long Send waits for the page to hand over its answers before the sheet opens without them. */
@@ -331,6 +334,7 @@ function drawView() {
             h("button", { onclick: reloadPage }, t.update),
           )
         : null,
+      r.closedAt ? null : closeButton(r, "secondary danger rv-close-bar", [icon("archive"), h("span", { class: "lbl" }, t.close)], t.closeConfirm, drawView),
       h(
         "button",
         { class: "primary rv-send", onclick: collect },
@@ -481,13 +485,18 @@ function collect() {
 
 // ---------- Send ----------
 
-/** The line the desk sends or copies, as the desk writes it (server: the review's send route). @param {Review} r @param {"session" | "other"} to */
-function sendLine(r, to) {
+/**
+ * The message the desk sends or copies, as the desk writes it (reviewLine in model.ts): its line, then
+ * the developer's note verbatim. @param {Review} r @param {"session" | "other"} to @param {string} note trimmed; "" for none
+ */
+function sendLine(r, to, note) {
   const p = r.progress;
   const where = `round ${r.rounds.length}${p ? `, ${p.done} of ${p.total} reviewed` : ""}`;
-  return to === "session"
-    ? `Review «${r.title}» sent from agent-desk (${where}). Read the answers with: agent-desk review ${r.id}`
-    : `Pick up the review «${r.title}» from agent-desk (${where}): agent-desk review ${r.id}`;
+  const line =
+    to === "session"
+      ? `Review «${r.title}» sent from agent-desk (${where}). Read the answers with: agent-desk review ${r.id}`
+      : `Pick up the review «${r.title}» from agent-desk (${where}): agent-desk review ${r.id}`;
+  return note ? `${line}\n\n${note}` : line;
 }
 
 /** Why the session that asked cannot get it now, or null when it can. @param {Review} r */
@@ -497,7 +506,11 @@ function sessionRefusal(r) {
   return takesMessages(s) ? null : TEXT.review.sheet.notTaking;
 }
 
-/** @type {{ to: "session" | "other", keep: boolean, refused: string | null, open: boolean, rev: number } | null} the sheet's choices while it is open, and the revision of the answers it shows */
+/**
+ * The sheet's choices while it is open, and the revision of the answers it shows; its note stays for
+ * the same review until it is sent.
+ * @type {{ id: string, to: "session" | "other", keep: boolean, refused: string | null, open: boolean, rev: number, note: string } | null}
+ */
 let sheet = null;
 /** What the sheet showed when it was last drawn. */
 let sheetDrawn = "";
@@ -515,7 +528,7 @@ function openSend() {
       shown.summary = saved.summary ?? "";
       const refused = sessionRefusal(r);
       const p = r.progress;
-      if (!sheet?.open) sheet = { to: refused ? "other" : "session", keep: !(p && p.done >= p.total), refused, open: true, rev: saved.rev };
+      if (!sheet?.open) sheet = { id: r.id, to: refused ? "other" : "session", keep: !(p && p.done >= p.total), refused, open: true, rev: saved.rev, note: sheet?.id === r.id ? sheet.note : "" };
       else sheet.rev = saved.rev;
       drawSheet();
       const d = dialog("review-send");
@@ -542,7 +555,8 @@ function drawSheet() {
       h("input", { type: "radio", name: "rv-dest", value: to, checked: choice.to === to, disabled: off, onchange: () => ((choice.to = to), drawSheet()) }),
       h("span", {}, h("b", {}, title), h("small", {}, hint)),
     );
-  const line = sendLine(r, choice.to);
+  const note = choice.note.trim();
+  const line = sendLine(r, choice.to, note);
   const answers = current.summary;
   const provider = s?.provider ?? data.sessions.find((x) => x.project.name === r.project.name)?.provider ?? "";
   // Redrawn only when what it shows changed: the answers can be long, and a redraw at every fetch would be for nothing.
@@ -557,6 +571,25 @@ function drawSheet() {
       h("h2", { id: "rv-sheet-title", tabindex: "-1", autofocus: true }, t.title),
       h("p", { class: "lead" }, lead),
       h("fieldset", { class: "rv-dest" }, option("session", t.session, [s ? `${label(s)} · ` : "", sessionHint].join(""), choice.refused !== null), option("other", t.other, t.otherHint(provider), false)),
+      h(
+        "label",
+        { class: "rv-note" },
+        h("span", { class: "rv-eyebrow" }, t.note),
+        h(
+          "textarea",
+          {
+            "data-key": "rv-note",
+            rows: 3,
+            maxlength: NOTE_MAX,
+            placeholder: t.notePlaceholder,
+            oninput: (e) => {
+              choice.note = /** @type {HTMLTextAreaElement} */ (e.target).value;
+              drawSheet();
+            },
+          },
+          choice.note,
+        ),
+      ),
       h("div", { class: "rv-msg" }, h("span", { class: "rv-eyebrow" }, choice.to === "session" ? t.sessionLine : t.otherLine), h("pre", { class: "rv-line-text" }, line)),
       h("details", { class: "rv-answers", open: true }, h("summary", {}, t.answers), answers ? h("pre", {}, answers) : h("p", { class: "muted" }, t.noSummary(current.data.size))),
       h("label", { class: "rv-keep" }, h("input", { type: "checkbox", checked: choice.keep, onchange: (e) => (choice.keep = /** @type {HTMLInputElement} */ (e.target).checked) }), t.keep),
@@ -569,6 +602,9 @@ function drawSheet() {
     ),
   );
   d.setAttribute("aria-labelledby", "rv-sheet-title");
+  // patch keeps what a kept box holds; a note emptied once sent must leave the box too.
+  const box = d.querySelector(".rv-note textarea");
+  if (box instanceof HTMLTextAreaElement && box.value !== choice.note) box.value = choice.note;
 }
 dialog("review-send").addEventListener("close", () => {
   if (sheet) sheet.open = false;
@@ -589,12 +625,13 @@ function submit(r, line) {
       // What the page changed last goes first: the line the desk then builds must be the one shown.
       await flushNow(r.id);
       const now = R(r.id);
-      if (!now || sendLine(now, choice.to) !== line) {
+      if (!now || sendLine(now, choice.to, choice.note.trim()) !== line) {
         drawSheet();
         throw new Error(t.changed);
       }
       try {
-        const reply = /** @type {{ line?: unknown }} */ (await postJson(`/api/reviews/${r.id}/send`, { to: choice.to, rev: choice.rev }));
+        const note = choice.note.trim();
+        const reply = /** @type {{ line?: unknown }} */ (await postJson(`/api/reviews/${r.id}/send`, { to: choice.to, rev: choice.rev, ...(note ? { note } : {}) }));
         if (reply.line !== line) throw new Error(`the desk sent "${String(reply.line)}", not the line shown`);
       } catch (error) {
         if (error instanceof DeskError && error.status === 409) {
@@ -614,6 +651,7 @@ function submit(r, line) {
         throw error;
       }
       toast(copied ? t.copied : t.sent(label(S(r.sessionId))));
+      choice.note = "";
       d.close();
       if (!choice.keep) {
         await post(`/api/reviews/${r.id}/close`);
@@ -623,6 +661,28 @@ function submit(r, line) {
     })(),
   );
 }
+
+// ---------- Closing ----------
+
+/**
+ * Closes the review without sending it, after a confirming click: it leaves To review and stays in
+ * History. What the page changed last is saved first.
+ * @param {Review} r @param {string} cls @param {import("./dom.js").Child} idle @param {string} ask @param {() => void} redraw
+ */
+function closeButton(r, cls, idle, ask, redraw) {
+  const t = TEXT.review;
+  const act = () =>
+    flushNow(r.id)
+      .then(() => post(`/api/reviews/${encodeURIComponent(r.id)}/close`))
+      .then(() => {
+        if (current?.id === r.id) dialog("review").close();
+        toast(t.closed(r.title));
+      });
+  return armedButton({ key: `${r.id} close`, id: "rv-close", text: t.closeTitle, ask, act, redraw, cls: `${cls} arm-swap`, title: t.closeHint, idle });
+}
+
+/** Its own clicks and keys: not the tile's, which open the review. @param {Event} e */
+const stop = (e) => e.stopPropagation();
 
 // ---------- On the desk ----------
 
@@ -671,7 +731,13 @@ export function reviewTile(r) {
       h("span", { class: "rv-badges" }, r.rounds.length > 1 ? h("span", { class: "badge rv-round" }, t.round(r.rounds.length)) : null, fresh ? h("span", { class: "badge rv-new" }, t.new) : null),
     ),
     h("div", { class: "rv-prog" }, h("span", { class: "rv-meter" }, bar), h("span", { class: "num" }, countOf(r.progress))),
-    h("div", { class: "rv-foot" }, h("span", { class: "faint" }, foot), h("span", { class: "rv-go" }, fresh ? t.open : t.continue, icon("arrow"))),
+    h(
+      "div",
+      { class: "rv-foot" },
+      h("span", { class: "faint" }, foot),
+      h("span", { class: "rv-x", onclick: stop, onkeydown: stop }, closeButton(r, "icon-btn", icon("x"), t.closeShort, () => page.renderView())),
+      h("span", { class: "rv-go" }, fresh ? t.open : t.continue, icon("arrow")),
+    ),
     sentLine(r),
   );
   tile.style.setProperty("--g", projectColor(r.project.name));

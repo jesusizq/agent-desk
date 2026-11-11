@@ -9,7 +9,7 @@ import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
-import { type DeskState, type DiskWarning, imageIds, type ReviewState, type Session } from "../core/model.ts";
+import { type DeskState, type DiskWarning, imageIds, type ReviewState, reviewNote, type Session } from "../core/model.ts";
 import { liveServices } from "../core/ports.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
@@ -312,10 +312,11 @@ async function reviewAction(store: Store, reviewId: string, action: string, from
     if (action === "state") return sendJson(res, 200, store.changeReviewState(reviewId, readReviewChange(body), from));
     if (action === "send") {
       const f = fields(body, "body");
-      return sendJson(res, 200, { line: store.sendReview(reviewId, oneOf(["session", "other"] as const)(f.to, "to"), int(f.rev, "rev")).line });
+      const note = f.note === undefined || (typeof f.note === "string" && f.note.trim() === "") ? undefined : reviewNote(f.note, "note");
+      return sendJson(res, 200, { line: store.sendReview(reviewId, oneOf(["session", "other"] as const)(f.to, "to"), int(f.rev, "rev"), note).line });
     }
     if (action === "opened") return sendJson(res, 200, store.markReviewOpened(reviewId));
-    return sendJson(res, 200, store.closeReview(reviewId));
+    return sendJson(res, 200, store.closeReview(reviewId).review);
   } catch (error) {
     if (error instanceof StaleReview) return sendJson(res, 409, { error: error.message, stale: true, rev: error.rev });
     if (error instanceof Undeliverable) return sendJson(res, 409, { error: error.message });

@@ -11,6 +11,8 @@ import {
   QUESTION_KINDS,
   QUESTION_STATUSES,
   REVIEW_KEY_MAX,
+  REVIEW_NOTE_MAX,
+  REVIEW_REASON_MAX,
   REVIEW_STATE_MAX,
   REVIEW_SUMMARY_MAX,
   REVIEW_TITLE_MAX,
@@ -150,9 +152,10 @@ function readPastDecision(value: unknown, where: string): PastDecision {
   });
 }
 
-function readReviewRef(value: unknown, where: string): { id: string; round: number } {
+/** `note`: the question holds the developer's note sent with that round, not the page's answers. */
+function readReviewRef(value: unknown, where: string): { id: string; round: number; note?: boolean } {
   const f = fields(value, where);
-  return { id: id(f.id, `${where}.id`), round: int(f.round, `${where}.round`, 1) };
+  return compact({ id: id(f.id, `${where}.id`), round: int(f.round, `${where}.round`, 1), note: f.note === undefined || f.note === false ? undefined : bool(f.note, `${where}.note`) });
 }
 
 function readGroup(value: unknown, where: string): QuestionGroup {
@@ -426,12 +429,22 @@ function readPlanWindowHistory(value: unknown, where: string): PlanWindowHistory
 // The title names a review on one line of the desk, of the CLI and of the line sent to a session.
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
-/** A review's title: one line of at most 120 characters, no control characters. */
-export function reviewTitle(value: unknown, where: string): string {
-  const t = nonEmpty(value, where, REVIEW_TITLE_MAX);
+/** One line of at most `max` characters, no control characters, no spaces at its ends. */
+function oneLine(value: unknown, where: string, max: number): string {
+  const t = nonEmpty(value, where, max);
   if (CONTROL.test(t)) throw new InputError(`${where}: one line without control characters, got ${JSON.stringify(t)}`);
   if (t !== t.trim()) throw new InputError(`${where}: no spaces at its start or end, got ${JSON.stringify(t)}`);
   return t;
+}
+
+/** A review's title: one line of at most 120 characters, no control characters. */
+export function reviewTitle(value: unknown, where: string): string {
+  return oneLine(value, where, REVIEW_TITLE_MAX);
+}
+
+/** Why a review was closed: one line of at most 300 characters, no control characters. */
+export function reviewReason(value: unknown, where: string): string {
+  return oneLine(value, where, REVIEW_REASON_MAX);
 }
 
 export function readReview(value: unknown, where = "review"): Review {
@@ -453,6 +466,8 @@ export function readReview(value: unknown, where = "review"): Review {
     collected: optional(f.collected, `${where}.collected`, readCollected),
     openedAt: optional(f.openedAt, `${where}.openedAt`, isoTime),
     closedAt: optional(f.closedAt, `${where}.closedAt`, isoTime),
+    closedReason: optional(f.closedReason, `${where}.closedReason`, reviewReason),
+    closedBy: optional(f.closedBy, `${where}.closedBy`, id),
   });
 }
 
@@ -474,7 +489,15 @@ function readReviewSend(value: unknown, where: string): ReviewSend {
     to: f.to === null ? null : id(f.to, `${where}.to`),
     round: int(f.round, `${where}.round`, 1),
     progress: optional(f.progress, `${where}.progress`, readProgress),
+    note: optional(f.note, `${where}.note`, reviewNote),
   });
+}
+
+/** The developer's note sent with a review: their own words, any lines, at most REVIEW_NOTE_MAX characters, not blank. */
+export function reviewNote(value: unknown, where: string): string {
+  const t = nonEmpty(value, where, REVIEW_NOTE_MAX);
+  if (t.trim() === "") throw new InputError(`${where}: empty; leave it out to send without a note`);
+  return t;
 }
 
 function readCollected(value: unknown, where: string): { at: string; sessionId: string; round: number } {
@@ -515,11 +538,14 @@ export function parseProgress(counter: string): ReviewProgress | undefined {
  * The line a review's send hands over: built from the review's validated fields only, never from
  * what its page wrote. `to`: delivered to the session that published it, or copied for another one.
  */
-export function reviewLine(review: Pick<Review, "id" | "title">, round: number, progress: ReviewProgress | undefined, to: "session" | "other"): string {
+export function reviewLine(review: Pick<Review, "id" | "title">, round: number, progress: ReviewProgress | undefined, to: "session" | "other", note?: string): string {
   const reviewed = progress ? `, ${progress.done} of ${progress.total} reviewed` : "";
-  return to === "session"
-    ? `Review «${review.title}» sent from agent-desk (round ${round}${reviewed}). Read the answers with: agent-desk review ${review.id}`
-    : `Pick up the review «${review.title}» from agent-desk (round ${round}${reviewed}): agent-desk review ${review.id}`;
+  const line =
+    to === "session"
+      ? `Review «${review.title}» sent from agent-desk (round ${round}${reviewed}). Read the answers with: agent-desk review ${review.id}`
+      : `Pick up the review «${review.title}» from agent-desk (round ${round}${reviewed}): agent-desk review ${review.id}`;
+  // The developer's own words follow, verbatim, in the same message.
+  return note === undefined ? line : `${line}\n\n${note}`;
 }
 
 export const REVIEW_STATUSES = ["open", "sent, not read", "read", "closed"] as const;

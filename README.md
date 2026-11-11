@@ -167,6 +167,7 @@ it from a local server:
 agent-desk review "Checkout copy proposals" --page proposals.html   # the same title again: its next round
 agent-desk review rv-…                                              # what you answered, read by any later session
 agent-desk reviews                                                  # this project's reviews and where each stands
+agent-desk review rv-… --close --reason "replaced by round 3"       # discard it: out of To review, kept in History
 ```
 
 It shows in To review, never in Needs you. The page opens whole on the desk inside a sandbox with no
@@ -174,9 +175,12 @@ origin and no network: its own scripts and styles run, the images beside it are 
 published (only those inside its folder), and nothing else loads. What it keeps in `localStorage`
 is kept on the desk instead, so you can go on from the phone or days later, and the next round
 starts with your answers. Send hands the session a line telling it how to read them, or gives you
-that line to paste into another conversation; your answers are also kept as a decision, so
+that line to paste into another conversation, followed word for word by your note when you write one
+(drop some options, iterate one: a note alone is enough to send); your answers are also kept as a decision, so
 `agent-desk decisions --search` finds them. A new session in the project is told about reviews sent
-and not read yet. Details in [docs/protocol.md](docs/protocol.md#reviews).
+and not read yet. A review you no longer want is closed without sending it: the × on its tile, or
+Close review in its bar, each asking for a second click; History keeps it, with the reason when a
+session closed it with `--close`. Details in [docs/protocol.md](docs/protocol.md#reviews).
 
 ## Send keys to a session (tmux)
 

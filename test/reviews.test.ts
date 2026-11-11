@@ -41,6 +41,23 @@ describe("reviews in the store", () => {
     assert.notEqual(store.publishReview({ sessionId: "s2", title: "Proposals", html: PAGE }).id, id, "nor one of another project");
   });
 
+  it("closes a review once, keeping why and by whom, and refuses a reason that is not one line", () => {
+    const { store, id } = withReview();
+    assert.throws(() => store.closeReview(id, { reason: "two\nlines" }), InputError);
+    assert.throws(() => store.closeReview(id, { reason: "x".repeat(301) }), InputError);
+    assert.throws(() => store.closeReview(id, { by: "../s1" }), InputError);
+    assert.equal(store.getReview(id)?.closedAt, undefined, "a refused close changes nothing");
+    const first = store.closeReview(id, { reason: "superseded", by: "s1" });
+    assert.equal(first.already, false);
+    assert.deepEqual([first.review.closedReason, first.review.closedBy], ["superseded", "s1"]);
+    assert.ok(first.review.closedAt);
+    const again = store.closeReview(id, { reason: "other" });
+    assert.equal(again.already, true);
+    assert.deepEqual(again.review, first.review, "the first close stands");
+    assert.deepEqual(store.getReview(id), first.review);
+    assert.throws(() => store.closeReview("rv-none"), /no review rv-none/);
+  });
+
   it("keeps the page of the last rounds only, and every round's metadata", () => {
     const { store, id } = withReview();
     for (let i = 0; i < 6; i++) store.publishReview({ sessionId: "s1", title: "Proposals", html: PAGE });
@@ -132,7 +149,7 @@ describe("reviews in the store", () => {
     fs.mkdirSync(store.paths.inboxDir, { recursive: true });
     fs.writeFileSync(store.paths.sessionInbox("s1"), "not a folder");
     store.isListening = () => true; // the listener check cannot read a broken inbox; this test is about the write
-    assert.throws(() => store.sendReview(id, "session", 0), /nothing was recorded/);
+    assert.throws(() => store.sendReview(id, "session", 0, "with a note"), /nothing was recorded/);
     assert.deepEqual(store.getReview(id)?.sends, []);
     assert.deepEqual(store.listQuestions(), []);
     assert.deepEqual(store.listMessages("s1"), []);
@@ -361,6 +378,38 @@ describe("review writes", () => {
       assert.equal(found.total, 2);
       store.upsertSession({ id: "s1", provider: "Test", project: { name: "shop", dir: "/work/shop" }, state: "ended" });
       assert.match(((await (await post("session")).json()) as { error: string }).error, /has ended/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("send the developer's note after the line, verbatim, and keep it as their answer beside the page's", async () => {
+    const { store, id } = withReview("Hero");
+    const server = await serve(store);
+    const post = (body: Record<string, unknown>) => fetch(`${server.base}/api/reviews/${id}/send`, { method: "POST", headers: { "Content-Type": "application/json", Origin: server.base, "X-Agent-Desk-Secret": store.secret() }, body: JSON.stringify({ rev: 0, ...body }) });
+    try {
+      for (const note of [7, ["a"], "x".repeat(4097)]) assert.equal((await post({ to: "other", note })).status, 400, JSON.stringify(note).slice(0, 40));
+      assert.equal(store.getReview(id)?.sends.length, 0, "a bad note sends nothing");
+      const blank = await post({ to: "other", note: "  \n " });
+      assert.deepEqual(await blank.json(), { line: `Pick up the review «Hero» from agent-desk (round 1): agent-desk review ${id}` }, "a blank note is none");
+      const note = "Drop 2.\n\tIterate 1 — <b>shorter</b>";
+      const stop = store.listen("s1");
+      const sent = await post({ to: "session", note });
+      const line = `Review «Hero» sent from agent-desk (round 1). Read the answers with: agent-desk review ${id}\n\n${note}`;
+      assert.deepEqual(await sent.json(), { line });
+      assert.deepEqual(store.takeInbox("s1").map((e) => e.answer), [line], "one message: the line, then the note as written");
+      stop();
+      const copied = await post({ to: "other", note: "x".repeat(4096) });
+      assert.equal(((await copied.json()) as { line: string }).line.endsWith(`\n\n${"x".repeat(4096)}`), true, "in the copied line too");
+      assert.deepEqual(store.getReview(id)?.sends.map((s) => s.note), [undefined, note, "x".repeat(4096)]);
+      const notes = store.listQuestions().filter((q) => q.review?.note);
+      assert.deepEqual(notes.map((q) => [q.text, q.answer?.text.slice(0, 10), q.answer?.via, q.status]).sort(), [
+        ["Note on the review «Hero», round 1", "Drop 2.\n\tI", "desk", "answered"],
+        ["Note on the review «Hero», round 1", "xxxxxxxxxx", "desk", "answered"],
+      ]);
+      assert.equal(store.listQuestions().filter((q) => q.review && !q.review.note).length, 3, "each send keeps the page's answers as before");
+      assert.equal(store.decisions({ project: { dir: "/work/shop" }, search: "Iterate 1", limit: 10 }).total, 1, "the note is a decision the project can find");
+      assert.deepEqual(store.openQuestions(), [], "never in Needs you");
     } finally {
       await server.close();
     }

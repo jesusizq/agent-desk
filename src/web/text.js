@@ -438,7 +438,11 @@ export const TEXT = {
     answer: "Answer: ",
     answers: "Answers sent: ",
     reviewCopied: "Answers the review page copied: ",
+    reviewNote: "Your note: ",
     viaDesk: " (from the desk)",
+    /** @param {string | null} by who closed it, when a session did @param {string | undefined} reason */
+    reviewClosed: (by, reason) => `Closed${by ? ` by ${by}` : ""}${reason ? `: ${reason}` : ""}`,
+    theSession: "the session",
     understood: "Understood as: ",
     /** @param {string} q */
     none: (q) => (q ? `Nothing matches "${q}".` : "Nothing in the history yet."),
@@ -497,6 +501,13 @@ export const TEXT = {
     send: "Send",
     /** @param {string} provider */
     sendTo: (provider) => ` to ${provider}`,
+    close: "Close review",
+    closeTitle: "Close the review",
+    closeConfirm: "Close review?",
+    closeShort: "Close?",
+    closeHint: "Takes it out of To review without sending it; it stays in History",
+    /** @param {string} title */
+    closed: (title) => `Closed «${title}»: it is in History`,
     sheet: {
       title: "Send the review",
       /** @param {number} total */
@@ -512,6 +523,8 @@ export const TEXT = {
       other: "To another conversation",
       /** @param {string} provider */
       otherHint: (provider) => `Copy one line and paste it in any ${provider} session, today or in a few days`,
+      note: "Note for the session (optional)",
+      notePlaceholder: "In your words: drop some options, iterate one, anything about this review",
       sessionLine: "What the session receives, word for word",
       otherLine: "The line you paste in the other conversation",
       answers: "The answers it will read",
