@@ -112,12 +112,22 @@ export const offlineText = () => [offlineHead(), offlineReason()].filter(Boolean
 /** The calm banner that says so, in the strip or a window. @param {string} cls */
 export const offlineNotice = (cls) => h("div", { class: `offline ${cls}`, role: "status" }, h("b", {}, offlineHead()), " ", h("span", { class: "why" }, offlineReason()));
 
+/** The desk refused a request: its reason, its status and the rest of what it answered. */
+export class DeskError extends Error {
+  /** @param {string} message @param {number} status @param {object} body */
+  constructor(message, status, body) {
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
 /** The desk's answer as JSON; an error answer throws with the desk's reason. @param {Response} res @returns {Promise<unknown>} */
 async function replyOf(res) {
   const body = /** @type {unknown} */ (await res.json().catch(() => ({})));
   if (res.ok) return body;
-  const error = typeof body === "object" && body !== null && "error" in body && typeof body.error === "string" ? body.error : null;
-  throw new Error(error ?? `${res.status} ${res.statusText}`);
+  const answer = typeof body === "object" && body !== null ? body : {};
+  const error = "error" in answer && typeof answer.error === "string" ? answer.error : null;
+  throw new DeskError(error ?? `${res.status} ${res.statusText}`, res.status, answer);
 }
 /** A write to the desk, returning what it answers. @param {string} route @param {unknown} [body] */
 export async function postJson(route, body = {}) {

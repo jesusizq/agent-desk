@@ -1246,6 +1246,9 @@ dialog.review .rv-send { flex: none; height: 36px; padding: 0 16px; border-radiu
 .rv-line { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; }
 .rv-line i { display: block; height: 100%; background: var(--done); transition: width var(--dur-3) var(--ease-out); }
 .rv-frame { flex: 1; width: 100%; min-height: 0; border: 0; display: block; background: #fff; }
+.rv-strayed { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; color: var(--muted); }
+.rv-strayed p { margin: 0; max-width: 34em; font-size: 0.9375rem; text-wrap: balance; }
+@media (prefers-reduced-motion: no-preference) { .rv-strayed { animation: rv-rise var(--dur-3) var(--ease-out); } }
 
 /* Send: a sheet over the page */
 dialog.rv-sheet { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); background: var(--raise); border-radius: 14px; overflow: auto; }

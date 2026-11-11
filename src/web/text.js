@@ -396,6 +396,7 @@ export const TEXT = {
     entries: (n) => plural(n, "entry", "entries"),
     answer: "Answer: ",
     answers: "Answers sent: ",
+    reviewCopied: "Answers the review page copied: ",
     viaDesk: " (from the desk)",
     understood: "Understood as: ",
     /** @param {string} q */
@@ -440,6 +441,8 @@ export const TEXT = {
     back: "Desk",
     backTitle: "Back to the desk (Esc)",
     frameTitle: "The review page",
+    strayed: "This page tried to open another address, so the desk closed it.",
+    reopen: "Open the review again",
     saved: "Saved",
     /** On this computer, what is saved reaches the phone too: said where the bar has the room. */
     savedEverywhere: " · on your phone too",

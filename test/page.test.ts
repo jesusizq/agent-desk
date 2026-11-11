@@ -2977,7 +2977,11 @@ paint();
       const page = await openReview("Button labels");
       const box = await page.eval<{ w: number; h: number; vw: number; vh: number }>("(() => { const r = document.getElementById('review').getBoundingClientRect(); return { w: r.width, h: r.height, vw: innerWidth, vh: innerHeight }; })()");
       assert.deepEqual([box.w, box.h], [box.vw, box.vh], "the review fills the window");
-      assert.equal(await page.eval<string>("document.querySelector('#review iframe').getAttribute('sandbox')"), "allow-scripts");
+      assert.deepEqual(
+        await page.eval<string[]>("['sandbox', 'referrerpolicy', 'allow'].map((a) => document.querySelector('#review iframe').getAttribute(a))"),
+        ["allow-scripts", "no-referrer", ""],
+        "scripts only, no referrer, no permissions",
+      );
       assert.equal(await page.eval<string>("new URL(document.querySelector('#review iframe').src).pathname"), `/review/${r.id}`);
       assert.equal(await page.eval<string>("location.hash"), `#rv=${r.id}`);
       assert.match(await page.eval<string>("document.querySelector('.rv-bar').textContent"), /Button labels.*web-shop.*0 of 3/);
@@ -3010,6 +3014,7 @@ paint();
       assert.equal(await page.eval<boolean>("document.querySelector('#review-send input[value=session]').checked"), true);
       assert.equal(await page.eval<boolean>("document.querySelector('.rv-keep input').checked"), true, "1 of 3: kept to go on later");
       await page.waitFor("document.querySelector('.rv-answers pre')?.textContent === 'kept: 0'");
+      assert.equal(await page.eval<boolean>("document.querySelector('.rv-answers').open && document.querySelector('.rv-answers pre').getBoundingClientRect().height > 0"), true, "the answers recorded are in view");
       const line = await page.eval<string>("document.querySelector('#review-send .rv-line-text').textContent");
       assert.equal(line, `Review «Error messages» sent from agent-desk (round 1, 1 of 3 reviewed). Read the answers with: agent-desk review ${r.id}`);
       await page.click("#review-send button[type=submit]");
@@ -3022,7 +3027,30 @@ paint();
       // Kept as a decision in History, never in Needs you.
       assert.equal(await page.eval<boolean>("document.querySelector('.col-needs').textContent.includes('Error messages')"), false);
       await page.click("#views button", "History");
-      await page.waitFor("[...document.querySelectorAll('.hitem')].some((h) => h.querySelector('.k-review') && h.textContent.includes('Error messages') && h.textContent.includes('kept: 0'))");
+      await page.waitFor("[...document.querySelectorAll('.hitem')].some((h) => h.querySelector('.k-review') && h.textContent.includes('Error messages') && h.textContent.includes('Answers the review page copied: kept: 0'))");
+      store.closeReview(r.id);
+    });
+
+    it("shows the answers again instead of sending when another device changed them after the sheet opened", async () => {
+      const r = publish("rv-stale", "Stale answers", { state: "working", takesMessagesWhileWorking: true });
+      const page = await openReview("Stale answers");
+      await keepInFrame(page, 0);
+      await page.waitFor("document.querySelector('.rv-count').textContent === '1 of 3'");
+      await page.click(".rv-send");
+      await page.waitFor(`${arrived("review-send")} && document.querySelector('.rv-answers pre')?.textContent === 'kept: 0'`);
+      store.changeReviewState(r.id, { ops: [], summary: "kept: 0, 1 (from the phone)" }, "remote");
+      await page.click("#review-send button[type=submit]", "Send");
+      await page.waitFor("document.querySelector('.rv-answers pre')?.textContent === 'kept: 0, 1 (from the phone)'");
+      await page.waitFor("[...document.querySelectorAll('#toasts .toast')].some((t) => t.textContent.includes('changed meanwhile'))");
+      assert.deepEqual(store.takeInbox("rv-stale"), [], "nothing sent from the older view");
+      assert.equal(store.getReview(r.id)?.sends.length, 0);
+      const refused = page.errors.findIndex((e) => /409 \(Conflict\) .*\/api\/reviews\/[\w-]+\/send$/.test(e));
+      assert.ok(refused >= 0, `the desk refused the older view (${page.errors.join("; ")})`);
+      page.errors.splice(refused, 1);
+      // What is shown now is what goes.
+      await page.click("#review-send button[type=submit]", "Send");
+      await page.waitFor("!document.getElementById('review-send').open");
+      assert.equal(store.takeInbox("rv-stale").length, 1);
       store.closeReview(r.id);
     });
 
@@ -3092,6 +3120,35 @@ paint();
       const after = await a.inFrame<{ kept: string; at: number }>("/review/", "new Promise((r) => setTimeout(() => r({ kept: document.querySelector('[data-i=\"7\"]').dataset.kept, at: scrollY / (document.documentElement.scrollHeight - innerHeight) }), 300))");
       assert.equal(after.kept, "yes");
       assert.ok(Math.abs(after.at - 0.5) < 0.05, `back at the middle, not ${after.at}`);
+      store.closeReview(r.id);
+    });
+
+    it("closes a page that opens another address in its frame, and opens the review again on a click", async () => {
+      // The first time it loads, the page navigates its own frame away, which no CSP stops.
+      const leaving = `<!doctype html><html><head><title>leaves</title></head><body><p id="here">here</p><script>
+if (!localStorage.getItem("left")) { localStorage.setItem("left", "1"); setTimeout(() => (location.href = "/favicon.svg"), 300); }
+</script></body></html>`;
+      const r = publish("rv-leaves", "Wandering page", {}, leaving);
+      const page = await open();
+      await page.click(".rv-tile", "Wandering page");
+      await page.waitFor(`${arrived("review")} && document.querySelector('#review .rv-strayed')`);
+      assert.equal(await page.eval<number>("document.querySelectorAll('#review iframe').length"), 0, "the frame is gone at once");
+      assert.equal(await page.eval<string>("document.querySelector('.rv-strayed p').textContent"), "This page tried to open another address, so the desk closed it.");
+      await page.click(".rv-strayed button", "Open the review again");
+      await page.waitFor("!document.querySelector('.rv-strayed') && document.querySelectorAll('#review iframe').length === 1");
+      assert.equal(await page.inFrame<string>("/review/", "document.getElementById('here').textContent"), "here");
+      // The address it went to refuses to be framed too: the browser says so, which is what the test is about.
+      const refused = page.errors.findIndex((e) => /^Framing '.*' violates .*frame-ancestors/.test(e));
+      assert.ok(refused >= 0, `the desk's own files refuse a frame (${page.errors.join("; ")})`);
+      page.errors.splice(refused, 1);
+      store.closeReview(r.id);
+    });
+
+    it("shows what the page says in an alert as plain text", async () => {
+      const r = publish("rv-alert", "Alerting page", {}, `<!doctype html><html><head><title>alert</title></head><body><script>setTimeout(() => alert("<b>bold?</b> <img src=x onerror=alert(2)>"), 200);</script></body></html>`);
+      const page = await openReview("Alerting page");
+      await page.waitFor("[...document.querySelectorAll('#toasts .toast')].some((t) => t.textContent.includes('<b>bold?</b>'))");
+      assert.equal(await page.eval<number>("document.querySelectorAll('#toasts .toast b, #toasts .toast img').length"), 0, "text, never markup");
       store.closeReview(r.id);
     });
 

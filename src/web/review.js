@@ -6,7 +6,7 @@ import { dialog, h, icon, patch, REVIEWS_KEY } from "./dom.js";
 import { TEXT } from "./text.js";
 import { ago, dayLabel } from "./format.js";
 import { projectMark, toast } from "./pieces.js";
-import { getJson, OfflineError, post, postJson, refresh, run, unlockEnded } from "./server.js";
+import { DeskError, getJson, OfflineError, post, postJson, refresh, run, unlockEnded } from "./server.js";
 import { data, ID, isLive, label, ON_THIS_MACHINE, page, projectColor, S, takesMessages, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Review} Review */
@@ -181,7 +181,7 @@ export function sendKept() {
  * `data`: the page's saved state as this page's frame has it, once `known`: what the desk holds besides
  * is another device's change.
  * @typedef {{ id: string, frame: HTMLIFrameElement, known: boolean, seen: string | undefined, data: Map<string, string>,
- *   summary: string, progress: { done: number, total: number } | undefined, sync: boolean, collecting: number }} Current
+ *   summary: string, progress: { done: number, total: number } | undefined, sync: boolean, collecting: number, strayed: boolean }} Current
  */
 /** @type {Current | null} */
 let current = null;
@@ -194,8 +194,27 @@ const scrolledTo = (id) => {
 /** @param {string} id */
 const frameSrc = (id) => `/review/${encodeURIComponent(id)}${scrolledTo(id) ? `#at=${scrolledTo(id).toFixed(4)}` : ""}`;
 
-/** A new frame for the page: a sandbox without the desk's origin, scripts only. @param {string} id */
-const newFrame = (id) => h("iframe", { class: "rv-frame", src: frameSrc(id), sandbox: "allow-scripts", title: TEXT.review.frameTitle });
+/**
+ * A new frame for the page: a sandbox without the desk's origin, scripts only, no referrer and no
+ * permissions. A scripted page can still navigate its own frame: its one expected load is counted, and
+ * a second means it went elsewhere, so the frame goes at once (`strayed`). @param {string} id
+ */
+function newFrame(id) {
+  const frame = h("iframe", { class: "rv-frame", src: frameSrc(id), sandbox: "allow-scripts", referrerpolicy: "no-referrer", allow: "", title: TEXT.review.frameTitle });
+  let loads = 0;
+  frame.addEventListener("load", () => {
+    if (++loads > 1 && current?.frame === frame) strayed();
+  });
+  return frame;
+}
+
+/** The page loaded another address in its frame: nothing of it stays, and the review can be opened again. */
+function strayed() {
+  if (!current) return;
+  current.frame.remove();
+  current.strayed = true;
+  drawView();
+}
 
 /** What the desk holds of the page's saved state now. @param {string} id */
 async function fetchSaved(id) {
@@ -225,7 +244,7 @@ export function openReview(id, { fromRoute = false } = {}) {
   if (fromRoute) history.replaceState(null, "", location.pathname + location.search);
   if (history.state?.review !== id) history.pushState({ review: id }, "", `#rv=${encodeURIComponent(id)}`);
   const frame = newFrame(id);
-  current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), summary: "", progress: r.progress, sync: false, collecting: 0 };
+  current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), summary: "", progress: r.progress, sync: false, collecting: 0, strayed: false };
   const shown = current;
   if (!r.openedAt) run(post(`/api/reviews/${id}/opened`));
   drawView();
@@ -280,7 +299,10 @@ function drawView() {
   line.style.width = `${percentOf(current.progress ?? r.progress)}%`;
   // The bar is redrawn; the frame is only ever placed, as moving it would load the page again.
   const head = d.querySelector(":scope > .rv-head") ?? d.appendChild(h("div", { class: "rv-head" }));
-  for (const f of d.querySelectorAll(":scope > iframe")) if (f !== current.frame) f.remove();
+  for (const f of d.querySelectorAll(":scope > iframe")) if (f !== current.frame || current.strayed) f.remove();
+  const away = d.querySelector(":scope > .rv-strayed");
+  if (current.strayed && !away) d.append(h("div", { class: "rv-strayed", role: "status" }, h("p", {}, t.strayed), h("button", { class: "primary", onclick: reloadPage }, t.reopen)));
+  else if (!current.strayed) away?.remove();
   patch(
     head,
     h(
@@ -337,6 +359,7 @@ function reloadPage() {
         if (current !== shown) return;
         took(saved);
         shown.sync = false;
+        shown.strayed = false;
         shown.frame = newFrame(shown.id);
         drawView();
         dialog("review").append(shown.frame);
@@ -392,7 +415,8 @@ const text = (v, max) => typeof v === "string" && v.length <= max;
 
 addEventListener("message", (e) => {
   // Only the frame of the review open speaks here, and nothing it says is a command.
-  if (!current || e.source !== current.frame.contentWindow) return;
+  // A sandboxed page has no origin: its messages come as from "null". The review is the one this page framed, never one a message names.
+  if (!current || current.strayed || e.source !== current.frame.contentWindow || e.origin !== "null") return;
   const m = /** @type {Record<string, unknown>} */ (e.data);
   if (typeof m !== "object" || m === null || m.agentDesk !== 1) return;
   const id = current.id;
@@ -473,7 +497,7 @@ function sessionRefusal(r) {
   return takesMessages(s) ? null : TEXT.review.sheet.notTaking;
 }
 
-/** @type {{ to: "session" | "other", keep: boolean, refused: string | null, open: boolean } | null} the sheet's choices while it is open */
+/** @type {{ to: "session" | "other", keep: boolean, refused: string | null, open: boolean, rev: number } | null} the sheet's choices while it is open, and the revision of the answers it shows */
 let sheet = null;
 /** What the sheet showed when it was last drawn. */
 let sheetDrawn = "";
@@ -483,12 +507,16 @@ function openSend() {
   if (!current) return;
   const shown = current;
   run(
-    flushNow(shown.id).then(() => {
+    flushNow(shown.id).then(async () => {
+      // The answers and the revision as the desk holds them: what a send records.
+      const saved = await fetchSaved(shown.id);
       const r = R(shown.id);
       if (current !== shown || !r) return;
+      shown.summary = saved.summary ?? "";
       const refused = sessionRefusal(r);
       const p = r.progress;
-      if (!sheet?.open) sheet = { to: refused ? "other" : "session", keep: !(p && p.done >= p.total), refused, open: true };
+      if (!sheet?.open) sheet = { to: refused ? "other" : "session", keep: !(p && p.done >= p.total), refused, open: true, rev: saved.rev };
+      else sheet.rev = saved.rev;
       drawSheet();
       const d = dialog("review-send");
       if (!d.open) d.showModal();
@@ -530,7 +558,7 @@ function drawSheet() {
       h("p", { class: "lead" }, lead),
       h("fieldset", { class: "rv-dest" }, option("session", t.session, [s ? `${label(s)} · ` : "", sessionHint].join(""), choice.refused !== null), option("other", t.other, t.otherHint(provider), false)),
       h("div", { class: "rv-msg" }, h("span", { class: "rv-eyebrow" }, choice.to === "session" ? t.sessionLine : t.otherLine), h("pre", { class: "rv-line-text" }, line)),
-      h("details", { class: "rv-answers" }, h("summary", {}, t.answers), answers ? h("pre", {}, answers) : h("p", { class: "muted" }, t.noSummary(current.data.size))),
+      h("details", { class: "rv-answers", open: true }, h("summary", {}, t.answers), answers ? h("pre", {}, answers) : h("p", { class: "muted" }, t.noSummary(current.data.size))),
       h("label", { class: "rv-keep" }, h("input", { type: "checkbox", checked: choice.keep, onchange: (e) => (choice.keep = /** @type {HTMLInputElement} */ (e.target).checked) }), t.keep),
       h(
         "div",
@@ -566,14 +594,22 @@ function submit(r, line) {
         throw new Error(t.changed);
       }
       try {
-        const reply = /** @type {{ line?: unknown }} */ (await postJson(`/api/reviews/${r.id}/send`, { to: choice.to }));
+        const reply = /** @type {{ line?: unknown }} */ (await postJson(`/api/reviews/${r.id}/send`, { to: choice.to, rev: choice.rev }));
         if (reply.line !== line) throw new Error(`the desk sent "${String(reply.line)}", not the line shown`);
       } catch (error) {
-        // The session could not take it after all: the line goes to another conversation instead.
-        if (choice.to === "session" && !(error instanceof OfflineError)) {
-          choice.refused = /** @type {Error} */ (error).message;
-          choice.to = "other";
-          drawSheet();
+        if (error instanceof DeskError && error.status === 409) {
+          const body = /** @type {{ stale?: unknown }} */ (error.body);
+          // The answers changed since the sheet showed them (another device): shown again, not sent.
+          if (body.stale === true) {
+            openSend();
+            throw new Error(t.changed);
+          }
+          // The session could not take it after all: the line goes to another conversation instead.
+          if (choice.to === "session") {
+            choice.refused = error.message;
+            choice.to = "other";
+            drawSheet();
+          }
         }
         throw error;
       }

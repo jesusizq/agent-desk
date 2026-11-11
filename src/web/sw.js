@@ -23,8 +23,19 @@ const KEPT = /^\/(?:|[\w-]+\.(?:js|css|svg|png|webmanifest)|api\/state|api\/sess
 /** A review's page as the desk serves it (src/server: the review routes), built here from its kept parts when the computer does not answer. */
 const REVIEW_PAGE = /^\/review\/([\w-]+)$/;
 const REVIEW_STATE = /^\/api\/reviews\/([\w-]+)\/state$/;
-/** The headers the desk serves a review's page with: the same sandbox offline as online (a test compares them with the server's). */
-const REVIEW_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+/**
+ * The headers the desk serves a review's page with (src/server/security.ts): the same sandbox offline as
+ * online, framed only by the desk at `origin`. Without them the page would run with the desk's own origin.
+ * A test compares them with the server's. @param {string} origin
+ */
+const reviewHeaders = (origin) => ({
+  "Content-Security-Policy": `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors ${origin}`,
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "Content-Type": "text/html; charset=utf-8",
+  "Cache-Control": "no-store",
+});
 
 sw.addEventListener("install", () => sw.skipWaiting());
 sw.addEventListener("activate", (e) => e.waitUntil(Promise.all([sw.clients.claim(), dropOtherCaches()])));
@@ -123,11 +134,9 @@ async function reviewOffline(id) {
   const [raw, shim, state] = await Promise.all([savedCopy(`/review/${id}/raw`), savedCopy("/review-shim.js"), savedCopy(`/api/reviews/${id}/state`)]);
   if (!raw || !shim || !state) return undefined;
   const html = injectReview(await raw.text(), await state.json(), await shim.text());
-  const headers = new Headers(raw.headers);
-  headers.set("Content-Type", "text/html; charset=utf-8");
-  headers.set("Content-Security-Policy", REVIEW_CSP);
-  headers.set("X-Content-Type-Options", "nosniff");
-  headers.set("Referrer-Policy", "no-referrer");
+  const headers = new Headers(reviewHeaders(sw.location.origin));
+  const ends = raw.headers.get(UNLOCK_ENDS);
+  if (ends !== null) headers.set(UNLOCK_ENDS, ends);
   return new Response(html, { status: 200, headers });
 }
 

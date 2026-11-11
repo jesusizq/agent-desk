@@ -19,7 +19,7 @@ function highlight(text, q) {
 }
 /**
  * @typedef {{ at: string, sid: string, type: "decision" | "result", kind: keyof typeof TEXT.kinds,
- *   title: string, answer?: string, viaDesk?: boolean, images?: string[], note?: string, result?: Result, review?: string, where: string, hay: string }} Entry
+ *   title: string, answer?: string, viaDesk?: boolean, copied?: boolean, images?: string[], note?: string, result?: Result, review?: string, where: string, hay: string }} Entry
  */
 // History draws this many entries at first, and this many more on demand: a search redraws only those.
 const HISTORY_PAGE = 50;
@@ -38,7 +38,7 @@ function historyEntries() {
       kind: x.review ? "review" : x.status === "dismissed" ? "dismissed" : x.kind === "permission" ? "permission" : "decision",
       ...(x.review ? { review: x.review.id } : {}),
       title: x.text,
-      ...(x.answer ? { answer: x.answer.text, viaDesk: x.answer.via === "desk", images: x.answer.images ?? [] } : {}),
+      ...(x.answer ? { answer: x.answer.text, viaDesk: x.answer.via === "desk", copied: x.answer.via === "review", images: x.answer.images ?? [] } : {}),
       ...(x.interpretation ? { note: x.interpretation } : {}),
     }));
   /** @type {Omit<Entry, "where" | "hay">[]} */
@@ -104,7 +104,7 @@ export function historyView() {
                 h("div", { class: "hq" }, highlight(e.title, q)),
                 e.answer !== undefined
                   ? e.kind === "review"
-                    ? h("div", { class: "ha rv-ha" }, t.answers, h("span", {}, highlight(e.answer, q)))
+                    ? h("div", { class: "ha rv-ha" }, e.copied ? t.reviewCopied : t.answers, h("span", {}, highlight(e.answer, q)))
                     : h("div", { class: "ha" }, t.answer, h("b", {}, highlight(e.answer, q)), e.viaDesk ? t.viaDesk : "")
                   : null,
                 e.images?.length ? attachedImages(e.images) : null,

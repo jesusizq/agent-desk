@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import * as vm from "node:vm";
-import { REVIEW_CSP } from "../src/server/security.ts";
+import { reviewCsp, reviewHeaders } from "../src/server/security.ts";
 import { reviewDocument } from "../src/server/server.ts";
 import { Browser, findChrome } from "./browser.ts";
 
@@ -100,8 +100,9 @@ describe("service worker reviews", () => {
     return (name: string) => vm.runInContext(name, context) as unknown;
   };
 
-  it("serves a review offline under the same sandbox as the desk", () => {
-    assert.equal(worker()("REVIEW_CSP"), REVIEW_CSP);
+  it("serves a review offline with every header the desk serves it with, the sandbox above all", () => {
+    const headers = worker()("reviewHeaders") as (origin: string) => Record<string, string>;
+    for (const origin of ["http://127.0.0.1:7420", "https://desk.tailnet-name.ts.net"]) assert.deepEqual({ ...headers(origin) }, reviewHeaders(origin), origin); // spread: the worker runs in another realm, with its own Object
   });
 
   it("builds a review's page offline byte for byte as the desk does", () => {
@@ -133,8 +134,8 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
         if (mode === "dropped") return req.socket.destroy();
         const unlock = unlockEnds === undefined ? {} : { "X-Agent-Desk-Unlock-Ends": String(unlockEnds) };
         if (req.url === "/review-shim.js") return res.writeHead(200, { "Content-Type": "text/javascript", ...unlock }).end(REVIEW_SHIM);
-        if (req.url === `/review/${REVIEW}/raw`) return res.writeHead(200, { "Content-Security-Policy": REVIEW_CSP, "Content-Type": "text/html", ...unlock }).end(REVIEW_HTML);
-        if (req.url === `/review/${REVIEW}`) return res.writeHead(200, { "Content-Security-Policy": REVIEW_CSP, "Content-Type": "text/html", ...unlock }).end(reviewDocument(REVIEW_HTML, reviewSaved, REVIEW_SHIM));
+        if (req.url === `/review/${REVIEW}/raw`) return res.writeHead(200, { ...reviewHeaders(base), ...unlock }).end(REVIEW_HTML);
+        if (req.url === `/review/${REVIEW}`) return res.writeHead(200, { ...reviewHeaders(base), ...unlock }).end(reviewDocument(REVIEW_HTML, reviewSaved, REVIEW_SHIM));
         if (req.url === `/api/reviews/${REVIEW}/state` && req.method === "GET") return res.writeHead(200, { "Content-Type": "application/json", ...unlock }).end(JSON.stringify(reviewSaved));
         if (req.url === `/api/reviews/${REVIEW}/state` && req.method === "POST") {
           let body = "";
@@ -260,9 +261,9 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
     unlockEnds = Date.now() + 3600_000;
     reviewSaved = { data: { a: "1" }, rev: 1 };
     const { page, savedCount } = await openDesk();
-    /** What the worker answers for a review route: its status, CSP and text, or "failed". */
+    /** What the worker answers for a review route: its status, headers and text, or "failed". */
     const get = (route: string, init = "{}") =>
-      page.eval<{ status: number; csp: string | null; text: string } | "failed">(`fetch(${JSON.stringify(route)}, ${init}).then(async (r) => ({ status: r.status, csp: r.headers.get("Content-Security-Policy"), text: await r.text() }), () => "failed")`);
+      page.eval<{ status: number; headers: Record<string, string>; text: string } | "failed">(`fetch(${JSON.stringify(route)}, ${init}).then(async (r) => ({ status: r.status, headers: Object.fromEntries(r.headers), text: await r.text() }), () => "failed")`);
     const save = (key: string, value: string) => get(`/api/reviews/${REVIEW}/state`, `{ method: "POST", headers: { "Content-Type": "application/json" }, body: ${JSON.stringify(JSON.stringify({ ops: [{ op: "set", key, value }] }))} }`);
     // What the desk page fetches when it opens a review on a device with a worker (src/web/review.js).
     for (const route of [`/review/${REVIEW}/raw`, "/review-shim.js", `/api/reviews/${REVIEW}/state`]) assert.notEqual(await get(route), "failed");
@@ -272,7 +273,12 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
     const offline = await get(`/review/${REVIEW}`);
     assert.notEqual(offline, "failed");
     if (offline === "failed") return;
-    assert.equal(offline.csp, REVIEW_CSP);
+    assert.equal(offline.headers["content-security-policy"], reviewCsp(base), "the sandbox, offline as online: never the desk's origin");
+    const expected = Object.fromEntries(Object.entries(reviewHeaders(base)).map(([k, v]) => [k.toLowerCase(), v]));
+    for (const [k, v] of Object.entries(expected)) assert.equal(offline.headers[k], v, k);
+    // Its saved page too, as the desk sent it.
+    const raw = await get(`/review/${REVIEW}/raw`);
+    assert.ok(raw !== "failed" && raw.headers["content-security-policy"] === reviewCsp(base));
     assert.equal(offline.text, reviewDocument(REVIEW_HTML, { data: { a: "1", b: "2", c: "3" }, rev: 2 }, REVIEW_SHIM), "the page with every change kept, sent or not");
 
     mode = "locked";
