@@ -64,17 +64,19 @@ command.
   (`default-src 'none'`: no fetch, subresources, forms or popups; inline scripts and styles, `data:`
   images and fonts), shows only inside a frame of the desk, which closes the frame at once if the
   page navigates it elsewhere (no policy can stop a page from leaving its own frame), and talks to
-  the desk only through messages the desk checks: saving its progress and handing over the text it
-  copies. What it hands over reaches a session only as the line the
+  the desk only through messages the desk checks: saving its progress, handing over the text it
+  copies, and asking the desk to open a link the developer clicked in it, which the desk opens in a
+  tab of its own (no opener, no referrer) only when it is a local preview URL and only on this
+  computer, never as a window of the page's. What it hands over reaches a session only as the line the
   developer sees and sends.
 - An answer is delivered exactly as shown to the user, never rewritten, and only to the session that
   asked.
 - A permission prompt is allowed or denied from the desk only while the provider's permission hook
   of that session waits for that very prompt; the desk sends the developer's choice, never a
   command, and the provider's own deny rules still apply.
-- Links out of the desk are local preview URLs, session links and the fixed credits written in
-  `index.html`. A session link is built by the desk from a validated session id, never from text a
-  session wrote.
+- Links out of the desk are local preview URLs (also those a review page asks the desk to open),
+  session links and the fixed credits written in `index.html`. A session link is built by the desk
+  from a validated session id, never from text a session wrote.
 
 ## Editor extension
 
