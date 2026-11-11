@@ -1,5 +1,5 @@
 // Validators that read protocol records back from untrusted files and input.
-import { bool, compact, fields, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
+import { bool, compact, fields, InputError, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
 import { id } from "./ids.ts";
 import type { PlanHistory, PlanWindowHistory } from "./limits.ts";
 import {
@@ -9,6 +9,10 @@ import {
   GROUP_SIZE_MAX,
   QUESTION_KINDS,
   QUESTION_STATUSES,
+  REVIEW_KEY_MAX,
+  REVIEW_STATE_MAX,
+  REVIEW_SUMMARY_MAX,
+  REVIEW_TITLE_MAX,
   SESSION_STATES,
   SUGGESTION_REASONS,
   type Agent,
@@ -23,6 +27,11 @@ import {
   type Question,
   type QuestionGroup,
   type Result,
+  type Review,
+  type ReviewProgress,
+  type ReviewRound,
+  type ReviewSend,
+  type ReviewState,
   type Seen,
   type Service,
   type Session,
@@ -120,7 +129,13 @@ export function readQuestion(value: unknown, where = "question"): Question {
     dialog: optional(f.dialog, `${where}.dialog`, bool),
     several: optional(f.several, `${where}.several`, bool),
     group: optional(f.group, `${where}.group`, readGroup),
+    review: optional(f.review, `${where}.review`, readReviewRef),
   });
+}
+
+function readReviewRef(value: unknown, where: string): { id: string; round: number } {
+  const f = fields(value, where);
+  return { id: id(f.id, `${where}.id`), round: int(f.round, `${where}.round`, 1) };
 }
 
 function readGroup(value: unknown, where: string): QuestionGroup {
@@ -346,4 +361,103 @@ function readPlanWindowHistory(value: unknown, where: string): PlanWindowHistory
       return { at: isoTime(sample.at, `${w}.at`), percent: num(sample.percent, `${w}.percent`, 0, 100) };
     }, 200),
   });
+}
+
+// The title names a review on one line of the desk, of the CLI and of the line sent to a session.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+/** A review's title: one line of at most 120 characters, no control characters. */
+export function reviewTitle(value: unknown, where: string): string {
+  const t = nonEmpty(value, where, REVIEW_TITLE_MAX);
+  if (CONTROL.test(t)) throw new InputError(`${where}: one line without control characters, got ${JSON.stringify(t)}`);
+  if (t !== t.trim()) throw new InputError(`${where}: no spaces at its start or end, got ${JSON.stringify(t)}`);
+  return t;
+}
+
+export function readReview(value: unknown, where = "review"): Review {
+  const f = fields(value, where);
+  const project = fields(f.project, `${where}.project`);
+  const rounds = list(f.rounds, `${where}.rounds`, readReviewRound, 10_000);
+  if (rounds.length === 0) throw new InputError(`${where}.rounds: a review has at least one round`);
+  return compact({
+    id: id(f.id, `${where}.id`),
+    title: reviewTitle(f.title, `${where}.title`),
+    project: { name: label(project.name, `${where}.project.name`), dir: nonEmpty(project.dir, `${where}.project.dir`, 4096) },
+    sessionId: id(f.sessionId, `${where}.sessionId`),
+    rounds,
+    progress: optional(f.progress, `${where}.progress`, readProgress),
+    updatedAt: optional(f.updatedAt, `${where}.updatedAt`, isoTime),
+    updatedFrom: optional(f.updatedFrom, `${where}.updatedFrom`, oneOf(["local", "remote"] as const)),
+    hasSummary: bool(f.hasSummary ?? false, `${where}.hasSummary`),
+    sends: list(f.sends ?? [], `${where}.sends`, readReviewSend, 10_000),
+    collected: optional(f.collected, `${where}.collected`, readCollected),
+    openedAt: optional(f.openedAt, `${where}.openedAt`, isoTime),
+    closedAt: optional(f.closedAt, `${where}.closedAt`, isoTime),
+  });
+}
+
+function readReviewRound(value: unknown, where: string): ReviewRound {
+  const f = fields(value, where);
+  return { n: int(f.n, `${where}.n`, 1), at: isoTime(f.at, `${where}.at`), sessionId: id(f.sessionId, `${where}.sessionId`), bytes: int(f.bytes, `${where}.bytes`) };
+}
+
+export function readProgress(value: unknown, where: string): ReviewProgress {
+  const f = fields(value, where);
+  const total = int(f.total, `${where}.total`, 1, 1_000_000);
+  return { done: int(f.done, `${where}.done`, 0, total), total };
+}
+
+function readReviewSend(value: unknown, where: string): ReviewSend {
+  const f = fields(value, where);
+  return compact({
+    at: isoTime(f.at, `${where}.at`),
+    to: f.to === null ? null : id(f.to, `${where}.to`),
+    round: int(f.round, `${where}.round`, 1),
+    progress: optional(f.progress, `${where}.progress`, readProgress),
+  });
+}
+
+function readCollected(value: unknown, where: string): { at: string; sessionId: string; round: number } {
+  const f = fields(value, where);
+  return { at: isoTime(f.at, `${where}.at`), sessionId: id(f.sessionId, `${where}.sessionId`), round: int(f.round, `${where}.round`, 1) };
+}
+
+/** A review's saved state; its data is checked against the same limits as a write to it. */
+export function readReviewState(value: unknown, where = "review state"): ReviewState {
+  const f = fields(value, where);
+  // fromEntries defines each key, so one such as "__proto__" stays a key.
+  const data: Record<string, string> = Object.fromEntries(
+    Object.entries(fields(f.data ?? {}, `${where}.data`)).map(([key, v]) => [reviewKey(key, `${where}.data key`), text(v, `${where}.data[${JSON.stringify(key.slice(0, 40))}]`, REVIEW_STATE_MAX)]),
+  );
+  if (stateBytes(data) > REVIEW_STATE_MAX) throw new InputError(`${where}.data: larger than ${REVIEW_STATE_MAX} bytes`);
+  return compact({ data, summary: optional(f.summary, `${where}.summary`, (v, w) => text(v, w, REVIEW_SUMMARY_MAX)), rev: int(f.rev ?? 0, `${where}.rev`) });
+}
+
+export function reviewKey(value: unknown, where: string): string {
+  return text(value, where, REVIEW_KEY_MAX);
+}
+
+/** The size a review's saved data counts against its limit: its JSON, in UTF-8 bytes. */
+export function stateBytes(data: Record<string, string>): number {
+  return Buffer.byteLength(JSON.stringify(data));
+}
+
+/** The page counter's text as done and total: "12/97", "12 of 97", "12 de 97"; undefined when it says neither. */
+export function parseProgress(counter: string): ReviewProgress | undefined {
+  const m = /(\d{1,7})\s*(?:\/|of|de)\s*(\d{1,7})/i.exec(counter);
+  if (!m) return undefined;
+  const done = Number(m[1]);
+  const total = Number(m[2]);
+  return total >= 1 && total <= 1_000_000 && done <= total ? { done, total } : undefined;
+}
+
+/**
+ * The line a review's send hands over: built from the review's validated fields only, never from
+ * what its page wrote. `to`: delivered to the session that published it, or copied for another one.
+ */
+export function reviewLine(review: Pick<Review, "id" | "title">, round: number, progress: ReviewProgress | undefined, to: "session" | "other"): string {
+  const reviewed = progress ? `, ${progress.done} of ${progress.total} reviewed` : "";
+  return to === "session"
+    ? `Review «${review.title}» sent from agent-desk (round ${round}${reviewed}). Read the answers with: agent-desk review ${review.id}`
+    : `Pick up the review «${review.title}» from agent-desk (round ${round}${reviewed}): agent-desk review ${review.id}`;
 }

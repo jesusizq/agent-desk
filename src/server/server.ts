@@ -8,14 +8,14 @@ import { fields, InputError, oneOf, optional, text } from "../core/check.ts";
 import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
-import { type DeskState, type DiskWarning, imageIds, type Session } from "../core/model.ts";
+import { type DeskState, type DiskWarning, imageIds, type ReviewState, type Session } from "../core/model.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
-import { IMAGE_MAX_BYTES, IMAGE_TYPES, type Store } from "../store/store.ts";
+import { IMAGE_MAX_BYTES, IMAGE_TYPES, readReviewChange, type Store, Undeliverable } from "../store/store.ts";
 import { type FeedOptions, StateFeed } from "./feed.ts";
 import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
-import { type Access, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, send, sendJson, writeAllowed } from "./security.ts";
+import { type Access, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, REVIEW_HEADERS, send, sendJson, writeAllowed } from "./security.ts";
 
 const WEB_DIR = path.join(import.meta.dirname, "..", "web");
 const STATIC: Record<string, string> = {
@@ -46,6 +46,7 @@ const STATIC: Record<string, string> = {
   "/motion.js": "text/javascript; charset=utf-8",
   "/theme.js": "text/javascript; charset=utf-8",
   "/text.js": "text/javascript; charset=utf-8",
+  "/review-shim.js": "text/javascript; charset=utf-8",
   "/style.css": "text/css; charset=utf-8",
   "/favicon.svg": "image/svg+xml",
   "/unlock.js": "text/javascript; charset=utf-8",
@@ -57,6 +58,8 @@ const STATIC: Record<string, string> = {
   "/icon-maskable-512.png": "image/png",
 };
 const BODY_LIMIT = 64 * 1024;
+/** A review's saved state (2 MB) with the text its page copies (200 KB), as JSON; the store checks the real limits. */
+const REVIEW_BODY_LIMIT = 5 * 1024 * 1024;
 /** What the PIN page may load before the device is unlocked. */
 const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/favicon.svg", "/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"]);
 /** Marks what a locked device gets: the device never keeps the PIN page as the desk, and drops the desk it kept (sw.js). */
@@ -190,6 +193,14 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
       if (!ID_PATTERN.test(conversation[1])) return sendJson(res, 400, { error: "invalid id" });
       return sendJson(res, 200, store.listMessages(conversation[1]));
     }
+    const review = /^\/review\/([^/]+)(\/raw)?$/.exec(route);
+    if (review?.[1]) return reviewPage(store, review[1], review[2] === undefined, res);
+    const reviewState = /^\/api\/reviews\/([^/]+)\/state$/.exec(route);
+    if (reviewState?.[1]) {
+      if (!ID_PATTERN.test(reviewState[1])) return sendJson(res, 400, { error: "invalid id" });
+      if (!store.getReview(reviewState[1])) return sendJson(res, 404, { error: "not found" });
+      return sendJson(res, 200, store.reviewState(reviewState[1]));
+    }
     const image = /^\/images\/([^/]+)$/.exec(route);
     if (image?.[1]) return imageFile(store, image[1], res, unlockEnds);
     return sendJson(res, 404, { error: "not found" });
@@ -215,6 +226,8 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
       throw error;
     }
   }
+  const r = /^\/api\/reviews\/([^/]+)\/(state|send|opened|close)$/.exec(route);
+  if (r?.[1] && r[2]) return reviewAction(store, r[1], r[2], reach.from, req, res);
   const m = /^\/api\/(questions|results|sessions)\/([^/]+)\/(answer|dismiss|seen|message|keys|read|unread|end|forget)$/.exec(route);
   const action = m ? ACTIONS[`${m[1]}/${m[3]}`] : undefined;
   if (!m?.[2] || !action) return sendJson(res, 404, { error: "not found" });
@@ -258,6 +271,45 @@ async function attachImage(store: Store, req: IncomingMessage, res: ServerRespon
   }
 }
 
+/**
+ * A review's page as the desk frames it: `shim` puts the desk's saved state in front of the page,
+ * right after its <head> tag, or at its very start without one. The service worker builds the same
+ * document offline from /review/<id>/raw (src/web/sw.js), so the two must stay byte for byte alike.
+ */
+export function reviewDocument(html: string, state: ReviewState, shim: string): string {
+  const injected = `<script>window.__agentDeskReview=${JSON.stringify(state).replace(/</g, "\\u003c")};</script><script>${shim}</script>`;
+  const head = /<head(?=[\s>/])[^>]*>/i.exec(html);
+  if (!head) return injected + html;
+  const at = head.index + head[0].length;
+  return html.slice(0, at) + injected + html.slice(at);
+}
+
+/** The latest round of a review, only ever with REVIEW_HEADERS: it is a session's HTML, never the desk's. */
+function reviewPage(store: Store, reviewId: string, withShim: boolean, res: ServerResponse): void {
+  if (!ID_PATTERN.test(reviewId)) return sendJson(res, 400, { error: "invalid id" });
+  const found = store.reviewPage(reviewId);
+  if (!found) return sendJson(res, 404, { error: "not found" });
+  const shim = withShim ? fs.readFileSync(path.join(WEB_DIR, "review-shim.js"), "utf8") : undefined;
+  res.writeHead(200, REVIEW_HEADERS);
+  res.end(shim === undefined ? found.html : reviewDocument(found.html, store.reviewState(reviewId), shim));
+}
+
+/** What the desk page does with a review: save its state, send it, open it, close it. */
+async function reviewAction(store: Store, reviewId: string, action: string, from: "local" | "remote", req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!ID_PATTERN.test(reviewId)) return sendJson(res, 400, { error: "invalid id" });
+  try {
+    const body = await readBody(req, action === "state" ? REVIEW_BODY_LIMIT : BODY_LIMIT);
+    if (action === "state") return sendJson(res, 200, store.changeReviewState(reviewId, readReviewChange(body), from));
+    if (action === "send") return sendJson(res, 200, { line: store.sendReview(reviewId, oneOf(["session", "other"] as const)(fields(body, "body").to, "to")).line });
+    if (action === "opened") return sendJson(res, 200, store.markReviewOpened(reviewId));
+    return sendJson(res, 200, store.closeReview(reviewId));
+  } catch (error) {
+    if (error instanceof Undeliverable) return sendJson(res, 409, { error: error.message });
+    if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
+    throw error;
+  }
+}
+
 function page(res: ServerResponse, secret: string): void {
   const html = fs.readFileSync(path.join(WEB_DIR, "index.html"), "utf8").replace("{{SECRET}}", secret);
   send(res, 200, html, "text/html; charset=utf-8");
@@ -292,8 +344,8 @@ function imageFile(store: Store, imageId: string, res: ServerResponse, unlockEnd
   res.end(fs.readFileSync(found.file));
 }
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
-  const body = await readBytes(req, BODY_LIMIT);
+async function readBody(req: IncomingMessage, limit = BODY_LIMIT): Promise<unknown> {
+  const body = await readBytes(req, limit);
   if (body.length === 0) return {};
   if (!(req.headers["content-type"] ?? "").startsWith("application/json")) throw new InputError("expected Content-Type: application/json");
   try {

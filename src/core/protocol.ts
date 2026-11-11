@@ -132,6 +132,11 @@ export type Question = {
    * so the desk holds the question until then.
    */
   writing?: boolean;
+  /**
+   * The answers of a review, recorded when the developer sent it from the desk: closed when written,
+   * never opened again, so a review never shows in Needs you.
+   */
+  review?: { id: string; round: number };
 };
 
 export const AGENT_STATES = ["working", "waiting", "blocked", "idle", "done", "failed"] as const;
@@ -300,6 +305,49 @@ export type ProjectScan = {
 /** A filesystem holding active projects that is running out of space. */
 export type DiskWarning = { dir: string; projects: string[]; freeBytes: number; totalBytes: number };
 
+/** Limits of a review: its page after images are inlined, its saved state, a key in it, the text it copies, its counter's text. */
+export const REVIEW_PAGE_MAX = 25 * 1024 * 1024;
+export const REVIEW_STATE_MAX = 2 * 1024 * 1024;
+export const REVIEW_KEY_MAX = 200;
+export const REVIEW_SUMMARY_MAX = 200 * 1024;
+export const REVIEW_PROGRESS_MAX = 200;
+export const REVIEW_TITLE_MAX = 120;
+/** Rounds whose page is kept; every round's metadata is. */
+export const REVIEW_ROUNDS_KEPT = 5;
+
+export type ReviewProgress = { done: number; total: number };
+export type ReviewRound = { n: number; at: string; sessionId: string; bytes: number };
+/** `to`: the session it was delivered to, or null when its line was copied for another conversation. */
+export type ReviewSend = { at: string; to: string | null; round: number; progress?: ReviewProgress };
+
+/** An HTML page a session published for the developer to review or choose from, round after round. */
+export type Review = {
+  id: string;
+  title: string;
+  project: { name: string; dir: string };
+  /** The session that published the latest round. */
+  sessionId: string;
+  /** Oldest first, at least one. */
+  rounds: ReviewRound[];
+  /** Parsed from the page's counter (`data-agent-desk-progress`). */
+  progress?: ReviewProgress;
+  /** Last change of its saved state, and whether it came from this computer or a tailnet device. */
+  updatedAt?: string;
+  updatedFrom?: "local" | "remote";
+  /** The page has handed over the text it copies (`data-agent-desk-answers`). */
+  hasSummary: boolean;
+  sends: ReviewSend[];
+  /** Last read through `agent-desk review <id>`. */
+  collected?: { at: string; sessionId: string; round: number };
+  /** First opened on the desk ("New" until then). */
+  openedAt?: string;
+  /** Left To review; it stays in History. */
+  closedAt?: string;
+};
+
+/** A review's saved state, kept apart from the review (it can be large): the page's localStorage and the text it copied. */
+export type ReviewState = { data: Record<string, string>; summary?: string; rev: number };
+
 /** What the page receives: the store, plus what only the machine can tell. */
 export type DeskState = {
   sessions: Session[];
@@ -320,6 +368,7 @@ export type DeskState = {
   listening: string[];
   disk: DiskWarning[];
   projects: ProjectScan[];
+  reviews: Review[];
   /** Changes when the server restarts; the page reloads itself to pick up new code. */
   build: string;
 };

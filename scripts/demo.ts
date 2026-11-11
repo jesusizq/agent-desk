@@ -26,7 +26,8 @@ const sessions = [
   { id: "demo-iva", project: "invoices-api", dir: "/home/demo/Projects/invoices-api", title: "VAT rounding", started: 160 },
 ];
 for (const s of sessions) {
-  store.upsertSession({ id: s.id, provider: "Claude Code", project: { name: s.project, dir: s.dir }, title: s.title, terminal: "vscode", startedAt: ago(s.started) });
+  // Its adapter hands it messages from the desk while it works, as Claude Code's does.
+  store.upsertSession({ id: s.id, provider: "Claude Code", project: { name: s.project, dir: s.dir }, title: s.title, terminal: "vscode", startedAt: ago(s.started), takesMessagesWhileWorking: true });
 }
 store.mergeMetrics({ sessionId: "demo-checkout", model: "Opus 5.5", effort: "high", branch: "feat/checkout-mobile", contextPercent: 71, planWindows: [{ label: "5 h", percent: 42, resetsAt: new Date(now() + 80 * 60_000).toISOString() }], permissionMode: "auto", cacheExpiresAt: new Date(now() + 3 * 60_000).toISOString(), costUsd: 4.12 });
 store.mergeMetrics({ sessionId: "demo-pagos", model: "Sonnet 5.5", effort: "medium", branch: "feat/stripe-webhooks", contextPercent: 34, permissionMode: "default" });
@@ -75,4 +76,95 @@ for (const [from, text] of [
   ["session", "Done: Storybook on :6006 with variants A, B and C. The e2e run failed because the **disk is full** while writing traces; I am asking on the desk whether to delete the merged worktrees."],
 ] as const) store.addMessage({ sessionId: "demo-checkout", from, text, via: "terminal" });
 
+// Reviews: one partly done in its second round, from a session at work; one new, from a session that ended.
+store.upsertSession({ id: "demo-landing", provider: "Claude Code", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "landing headlines", terminal: "vscode", startedAt: ago(300), state: "ended", endedAt: ago(240), readAt: ago(230) });
+const checkoutCards = [
+  ["Pay button", "Pay €42.90 now"],
+  ["Summary title", "Your order"],
+  ["Shipping line", "Free delivery on Thursday"],
+  ["Empty cart", "Your cart is empty. Find something you like."],
+  ["Promo field", "Have a code? Add it here"],
+  ["Card declined", "Your bank declined the card. Try another one."],
+] as const;
+store.publishReview({ sessionId: "demo-checkout", title: "Checkout copy proposals", html: reviewPage("Checkout copy proposals", "checkout-copy", checkoutCards.slice(0, 5)) });
+const checkout = store.publishReview({ sessionId: "demo-checkout", title: "Checkout copy proposals", html: reviewPage("Checkout copy proposals", "checkout-copy", checkoutCards) });
+store.changeReviewState(checkout.id, { ops: [{ op: "set", key: "checkout-copy", value: JSON.stringify({ 0: "yes", 1: "no", 3: "yes" }) }], progress: "3/6" }, "local");
+store.markReviewOpened(checkout.id);
+store.publishReview({
+  sessionId: "demo-landing",
+  title: "Landing hero headlines",
+  html: reviewPage("Landing hero headlines", "hero", [
+    ["Calm", "Everything you need, nothing you don't"],
+    ["Direct", "Order today, wear it on Friday"],
+    ["Playful", "Your new favourite shirt is three clicks away"],
+    ["Proof", "40,000 orders shipped this year"],
+    ["Price", "Quality basics from €19"],
+    ["Local", "Made in Valencia, sent anywhere"],
+  ]),
+});
+
 process.stdout.write(`demo store ready in ${home}\n`);
+
+/**
+ * A small review page as a session writes one: cards to keep or drop, a counter and a button that
+ * copies the answers, all kept in the page's own localStorage.
+ */
+function reviewPage(title: string, key: string, cards: readonly (readonly [string, string])[]): string {
+  const escape = (v: string) => v.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const items = cards.map(([name, copy], i) => `<article data-i="${i}"><h2>${escape(name)}</h2><p>${escape(copy)}</p><div><button data-v="yes">✓ Keep</button> <button data-v="no">✗ Drop</button></div></article>`).join("\n");
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escape(title)}</title>
+<style>
+body { font: 16px/1.5 system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #1d2330; }
+header { position: sticky; top: 0; display: flex; gap: 12px; align-items: center; padding: 12px 20px; background: #fff; border-bottom: 1px solid #dde1e8; }
+header strong { flex: 1; }
+main { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; padding: 20px; }
+article { background: #fff; border: 1px solid #dde1e8; border-radius: 10px; padding: 14px 16px; }
+article h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #5b6475; margin: 0; }
+article p { font-size: 18px; margin: 6px 0 12px; }
+button { font: inherit; border: 1px solid #c9ced8; background: #fff; border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+article[data-a="yes"] { border-color: #2f9e62; }
+article[data-a="yes"] [data-v="yes"] { background: #2f9e62; color: #fff; }
+article[data-a="no"] { opacity: .6; }
+article[data-a="no"] [data-v="no"] { background: #c4443a; color: #fff; }
+</style>
+</head>
+<body>
+<header><strong>${escape(title)}</strong><span id="count" data-agent-desk-progress></span><button id="copy" data-agent-desk-answers>Copy answers</button></header>
+<main>
+${items}
+</main>
+<script>
+const KEY = ${JSON.stringify(key)};
+const answers = JSON.parse(localStorage.getItem(KEY) || "{}");
+const cards = [...document.querySelectorAll("article")];
+function paint() {
+  for (const card of cards) card.dataset.a = answers[card.dataset.i] || "";
+  document.getElementById("count").textContent = Object.keys(answers).length + "/" + cards.length;
+}
+document.querySelector("main").addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-v]");
+  if (!button) return;
+  const i = button.closest("article").dataset.i;
+  if (answers[i] === button.dataset.v) delete answers[i];
+  else answers[i] = button.dataset.v;
+  localStorage.setItem(KEY, JSON.stringify(answers));
+  paint();
+});
+document.getElementById("copy").addEventListener("click", async () => {
+  const mark = (i) => (answers[i] === "yes" ? "✓" : answers[i] === "no" ? "✗" : "·");
+  const lines = cards.map((c) => mark(c.dataset.i) + " " + c.querySelector("h2").textContent + ": " + c.querySelector("p").textContent);
+  await navigator.clipboard.writeText(lines.join("\\n"));
+  alert("Answers copied");
+});
+paint();
+</script>
+</body>
+</html>
+`;
+}
+

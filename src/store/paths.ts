@@ -39,6 +39,16 @@ export class StorePaths {
   messageDir(sessionId: string) { return this.inside(this.messagesDir, id(sessionId, "session id")); }
   message(sessionId: string, messageId: string) { return this.inside(this.messageDir(sessionId), `${id(messageId, "message id")}.json`); }
   project(projectId: string) { return this.inside(this.projectsDir, `${id(projectId, "project id")}.json`); }
+  get reviewsDir() { return path.join(this.home, "reviews"); }
+  /** Held while a page is published, so two publishing the same title make one review. */
+  get reviewsLock() { return path.join(this.reviewsDir, "publish"); }
+  reviewDir(reviewId: string) { return this.inside(this.reviewsDir, id(reviewId, "review id")); }
+  review(reviewId: string) { return this.inside(this.reviewDir(reviewId), "review.json"); }
+  reviewState(reviewId: string) { return this.inside(this.reviewDir(reviewId), "state.json"); }
+  reviewRound(reviewId: string, n: number) {
+    if (!Number.isSafeInteger(n) || n < 1) throw new Error(`a review round is a number from 1, got ${n}`);
+    return this.inside(this.reviewDir(reviewId), `round-${n}.html`);
+  }
   get archiveDir() { return path.join(this.home, "archive"); }
   /** Where a store file goes when archived: the same relative path under archive/. */
   archived(file: string) {

@@ -15,6 +15,13 @@ if (task === "increment") {
       writeJson(file, n + 1);
     });
   }
+} else if (task === "review-state") {
+  // One device of several writing the same review's state, each op on its own key and one shared.
+  const [review] = store.listReviews();
+  if (!review) throw new Error("no review to write to");
+  for (let i = 0; i < Number(count); i++) {
+    store.changeReviewState(review.id, { ops: [{ op: "set", key: `${process.pid}-${i}`, value: String(i) }, { op: "set", key: "shared", value: String(process.pid) }] }, "remote");
+  }
 } else if (task === "take") {
   const got: string[] = [];
   for (let i = 0; i < Number(count); i++) got.push(...store.takeInbox("s1").map((e) => e.questionId));

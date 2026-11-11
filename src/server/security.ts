@@ -18,6 +18,22 @@ export const IMAGE_HEADERS = {
 } as const;
 
 /**
+ * A review's page, written by a session: a sandbox without the desk's origin, scripts and styles of
+ * its own only, images and fonts only inlined, no network, framed only by the desk.
+ */
+export const REVIEW_CSP =
+  "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+
+export const REVIEW_HEADERS = {
+  "Content-Security-Policy": REVIEW_CSP,
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "Content-Type": "text/html; charset=utf-8",
+  "Cache-Control": "no-store",
+} as const;
+
+/**
  * Who may reach the desk: this machine on its port, and, when configured, the developer's other
  * devices through Tailscale Serve, which proxies from the tailnet name to 127.0.0.1 and adds the
  * caller's Tailscale login in `Tailscale-User-Login`.

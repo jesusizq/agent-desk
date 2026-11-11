@@ -2,7 +2,7 @@
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { compact, fields, InputError, int, isoTime, text } from "../core/check.ts";
+import { compact, fields, InputError, int, isoTime, list, oneOf, optional, text } from "../core/check.ts";
 import { id, newId } from "../core/ids.ts";
 import { addSamples, type PlanHistory } from "../core/limits.ts";
 import { isAlive, procInfo, sessionFinished } from "../core/proc.ts";
@@ -17,6 +17,8 @@ import {
   type QuestionGroup,
   type QuestionKind,
   type Result,
+  type Review,
+  type ReviewState,
   type Seen,
   type Service,
   type Session,
@@ -29,10 +31,22 @@ import {
   readProjectScan,
   readQuestion,
   readResult,
+  readReview,
+  readReviewState,
   readSeen,
   readService,
   readSession,
   SET_ASIDE_KEPT,
+  parseProgress,
+  REVIEW_PAGE_MAX,
+  REVIEW_PROGRESS_MAX,
+  REVIEW_ROUNDS_KEPT,
+  REVIEW_STATE_MAX,
+  REVIEW_SUMMARY_MAX,
+  reviewKey,
+  reviewLine,
+  reviewTitle,
+  stateBytes,
 } from "../core/model.ts";
 import { ensureDir, isCode, listJson, readJson, withLock, writeAtomic, writeJson } from "./fsx.ts";
 import { StorePaths } from "./paths.ts";
@@ -48,9 +62,19 @@ export type Snapshot = {
   results: Result[];
   services: Service[];
   metrics: Metrics[];
+  reviews: Review[];
   seen: Seen | undefined;
   problems: string[];
 };
+
+/** A change to a review's saved state from its page: localStorage operations, in order, as the page made them. */
+export type ReviewOp = { op: "set"; key: string; value: string } | { op: "remove"; key: string } | { op: "clear" };
+export type ReviewChange = { ops: ReviewOp[]; progress?: string; summary?: string };
+
+/** A review's line could not reach the session that published it; the message says why. */
+export class Undeliverable extends InputError {
+  override name = "Undeliverable";
+}
 
 /** Fields to merge into an agent; one given as undefined is removed from it. */
 export type AgentFields = { [K in keyof Omit<Agent, "sessionId" | "name">]?: Agent[K] | undefined };
@@ -386,6 +410,7 @@ export class Store {
     if (!q || q.sessionId !== sessionId) throw new InputError(`no question ${questionId} of session ${sessionId} in the store`);
     if (q.status === "open") return q;
     if (q.kind === "permission") throw new InputError(`question ${questionId} is a permission prompt: its answer is whether the tool ran, and cannot be set aside`);
+    if (q.review) throw new InputError(`question ${questionId} holds the answers of review ${q.review.id}, sent from the desk: it is no question to open again; read them with agent-desk review ${q.review.id}`);
     if (q.answer === undefined) throw new InputError(`question ${questionId} was closed without an answer (${q.status}); there is no reply to set aside`);
     return q;
   }
@@ -396,7 +421,7 @@ export class Store {
    */
   private lastReplied(sessionId: string): Question[] {
     const replyAt = (q: Question) => (q.status === "open" ? q.setAside?.at(-1)?.at : q.answer?.at);
-    const mine = this.listQuestions().filter((q) => q.sessionId === sessionId && q.kind !== "permission" && replyAt(q) !== undefined);
+    const mine = this.listQuestions().filter((q) => q.sessionId === sessionId && q.kind !== "permission" && !q.review && replyAt(q) !== undefined);
     const latest = mine.sort((a, b) => (replyAt(a) ?? "").localeCompare(replyAt(b) ?? "")).at(-1);
     if (!latest) throw new InputError(`session ${sessionId} has no answered question to open again`);
     const answer = latest.answer;
@@ -429,17 +454,11 @@ export class Store {
       const at = this.stamp();
       return { ...q, status: "answered", closedAt: at, answer: compact({ text, at, via: "desk" as const, images: attached }) };
     });
-    const entry: InboxEntry = compact({ questionId, question: answered.text, answer: text, at: answered.closedAt ?? this.stamp(), images: attached });
-    let message: ConversationEntry | undefined;
     try {
-      message = this.addMessage(compact({ sessionId: answered.sessionId, from: "developer" as const, text, via: "desk" as const, images: attached }));
-      writeJson(this.paths.inboxEntry(answered.sessionId, questionId), entry);
-      this.syncInboxMarker();
+      this.deliver(answered, text, attached);
     } catch (error) {
-      // Its conversation must not show as sent an answer that never reached the session.
       const original = before;
       try {
-        if (message) this.takeBackMessage(message);
         if (original) this.changeQuestion(questionId, () => original);
       } catch (rollback) {
         throw new AggregateError([error, rollback], `could not deliver the answer to session ${answered.sessionId}, nor reopen question ${questionId}`);
@@ -447,6 +466,37 @@ export class Store {
       throw new Error(`could not deliver the answer to session ${answered.sessionId}; the question is open again`, { cause: error });
     }
     return answered;
+  }
+
+  /**
+   * Puts `text` in the session's inbox as the answer to `question`, and in its conversation as the
+   * developer's message from the desk. On failure neither is left behind.
+   */
+  private deliver(question: Question, text: string, images?: string[]): void {
+    const entry: InboxEntry = compact({ questionId: question.id, question: question.text, answer: text, at: question.closedAt ?? this.stamp(), images });
+    let message: ConversationEntry | undefined;
+    let written = false;
+    try {
+      message = this.addMessage(compact({ sessionId: question.sessionId, from: "developer" as const, text, via: "desk" as const, images }));
+      writeJson(this.paths.inboxEntry(question.sessionId, question.id), entry);
+      written = true;
+      this.syncInboxMarker();
+    } catch (error) {
+      // Its conversation must not show as sent what never reached the session.
+      try {
+        if (written) fs.rmSync(this.paths.inboxEntry(question.sessionId, question.id), { force: true });
+        if (message) this.takeBackMessage(message);
+      } catch (rollback) {
+        throw new AggregateError([error, rollback], `could not deliver to session ${question.sessionId}, nor take back what was written`);
+      }
+      throw error;
+    }
+  }
+
+  /** A message to a session while it works is kept on it, to show later whether its turn took it in. */
+  private noteSentWhileWorking(sessionId: string, text: string): void {
+    const at = this.stamp();
+    this.updateSession(sessionId, (s) => (s.state === "working" ? { ...s, sentWhileWorking: [...(s.sentWhileWorking ?? []), { text: text.length > 2000 ? `${text.slice(0, 1999)}…` : text, at }].slice(-10) } : s));
   }
 
   /**
@@ -459,10 +509,7 @@ export class Store {
     if (!session) throw new InputError(`no session ${sessionId} in the store`);
     if (text.trim() === "" && images.length === 0) throw new InputError("the message is empty");
     if (!this.acceptsMessages(sessionId)) throw new InputError("the session is not taking messages from the desk right now; write in its terminal");
-    if (session.state === "working") {
-      const at = this.stamp();
-      this.updateSession(sessionId, (s) => ({ ...s, sentWhileWorking: [...(s.sentWhileWorking ?? []), { text: text.length > 2000 ? `${text.slice(0, 1999)}…` : text, at }].slice(-10) }));
-    }
+    if (session.state === "working") this.noteSentWhileWorking(sessionId, text);
     const said = session.lastMessage?.text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).at(-1) ?? "(no message)";
     const item = this.ask({ sessionId, kind: "waiting", text: said.length > 600 ? `…${said.slice(-600)}` : said });
     try {
@@ -528,6 +575,7 @@ export class Store {
   withdrawInbox(sessionId: string, replacement?: string): Question[] {
     return this.takeInbox(sessionId).map((entry) =>
       this.changeQuestion(entry.questionId, (q) => {
+        if (q.review) return q; // the developer's answers to the review stand; only its line was not delivered
         const at = this.stamp();
         return replacement === undefined
           ? compact({ ...q, status: "dismissed" as const, closedAt: at, answer: undefined })
@@ -825,6 +873,229 @@ export class Store {
     return undefined;
   }
 
+  // ── Reviews ─────────────────────────────────────────────────────────────
+  // reviews/<id>/review.json, round-<n>.html (the last few rounds) and state.json, all changed
+  // under the lock of review.json.
+
+  getReview(reviewId: string): Review | undefined {
+    const file = this.paths.review(reviewId);
+    const raw = readJson(file);
+    return raw === undefined ? undefined : readReview(raw, file);
+  }
+
+  /** Every review, the one published last first. */
+  listReviews(problems?: string[]): Review[] {
+    const out: Review[] = [];
+    for (const dir of this.subdirs(this.paths.reviewsDir)) {
+      const file = path.join(dir, "review.json");
+      try {
+        const raw = readJson(file);
+        if (raw !== undefined) out.push(readReview(raw, file)); // undefined: a review being created, or a folder left by a failed one
+      } catch (error) {
+        if (!problems) throw error;
+        problems.push((error as Error).message);
+      }
+    }
+    return out.sort((a, b) => (b.rounds.at(-1)?.at ?? "").localeCompare(a.rounds.at(-1)?.at ?? "") || b.id.localeCompare(a.id));
+  }
+
+  /**
+   * Publishes a page for the developer to review, or the next round of the review of the same
+   * title in the same project that is not closed (its saved state carries over). The page of the
+   * last REVIEW_ROUNDS_KEPT rounds is kept.
+   */
+  publishReview(input: { sessionId: string; title: string; html: string }): Review {
+    const session = this.getSession(input.sessionId);
+    if (!session) throw new InputError(`no session ${input.sessionId} in the store; it registers when its first hook runs`);
+    const title = reviewTitle(input.title.trim(), "title");
+    const bytes = Buffer.byteLength(input.html);
+    if (bytes > REVIEW_PAGE_MAX) throw new InputError(`the page is ${bytes} bytes with its images, more than the ${REVIEW_PAGE_MAX} a review takes`);
+    const project = { name: session.project.name, dir: session.project.dir };
+    const same = (r: Review) => !r.closedAt && r.project.dir === project.dir && r.title.toLowerCase() === title.toLowerCase();
+    return withLock(this.paths.reviewsLock, () => {
+      const existing = this.listReviews().find(same);
+      const reviewId = existing?.id ?? newId("rv");
+      return withLock(this.paths.review(reviewId), () => {
+        const current = existing && this.getReview(reviewId);
+        const n = (current?.rounds.at(-1)?.n ?? 0) + 1;
+        const round = { n, at: this.stamp(), sessionId: session.id, bytes };
+        const next = readReview(
+          current
+            ? { ...current, title, sessionId: session.id, rounds: [...current.rounds, round] }
+            : { id: reviewId, title, project, sessionId: session.id, rounds: [round], hasSummary: false, sends: [] },
+          this.paths.review(reviewId),
+        );
+        const page = this.paths.reviewRound(reviewId, n);
+        writeAtomic(page, input.html);
+        try {
+          writeJson(this.paths.review(reviewId), next);
+        } catch (error) {
+          fs.rmSync(page, { force: true });
+          if (!current) fs.rmSync(this.paths.reviewDir(reviewId), { recursive: true, force: true });
+          throw error;
+        }
+        for (const old of next.rounds.slice(0, -REVIEW_ROUNDS_KEPT)) fs.rmSync(this.paths.reviewRound(reviewId, old.n), { force: true });
+        return next;
+      });
+    });
+  }
+
+  /** The page of the review's latest round, as published (images inlined). */
+  reviewPage(reviewId: string): { review: Review; html: string } | undefined {
+    const review = this.getReview(reviewId);
+    const latest = review?.rounds.at(-1);
+    if (!review || !latest) return undefined;
+    return { review, html: fs.readFileSync(this.paths.reviewRound(reviewId, latest.n), "utf8") };
+  }
+
+  /** The review's saved state: empty, at rev 0, until its page first writes to it. */
+  reviewState(reviewId: string): ReviewState {
+    const file = this.paths.reviewState(reviewId);
+    const raw = readJson(file);
+    return raw === undefined ? { data: {}, rev: 0 } : readReviewState(raw, file);
+  }
+
+  /**
+   * Applies what the page changed, under the review's lock: two devices writing at once merge per
+   * key, the later write winning on a key both set. Every accepted change counts one `rev`.
+   * An empty `summary` clears it; a counter text that names no "done of total" leaves the progress.
+   */
+  changeReviewState(reviewId: string, change: ReviewChange, from: "local" | "remote"): { rev: number } {
+    const file = this.paths.review(reviewId);
+    return withLock(file, () => {
+      const review = this.getReview(reviewId);
+      if (!review) throw new InputError(`no review ${reviewId} in the store`);
+      const before = readJson(this.paths.reviewState(reviewId));
+      const state = before === undefined ? { data: {}, rev: 0 } : readReviewState(before, this.paths.reviewState(reviewId));
+      const data = new Map(Object.entries(state.data));
+      for (const op of change.ops) {
+        if (op.op === "clear") data.clear();
+        else if (op.op === "remove") data.delete(op.key);
+        else data.set(op.key, op.value);
+      }
+      const nextData: Record<string, string> = Object.fromEntries(data);
+      if (stateBytes(nextData) > REVIEW_STATE_MAX) throw new InputError(`the review's saved state would be larger than ${REVIEW_STATE_MAX} bytes; nothing was saved`);
+      const summary = change.summary === undefined ? state.summary : change.summary === "" ? undefined : change.summary;
+      const next: ReviewState = compact({ data: nextData, summary, rev: state.rev + 1 });
+      const changed = change.ops.length > 0 || change.summary !== undefined;
+      const progress = change.progress === undefined ? undefined : parseProgress(change.progress);
+      const at = this.stamp();
+      const nextReview = readReview(
+        compact({
+          ...review,
+          progress: progress ?? review.progress,
+          hasSummary: summary !== undefined,
+          ...(changed ? { updatedAt: at, updatedFrom: from } : {}),
+        }),
+        file,
+      );
+      writeJson(this.paths.reviewState(reviewId), next);
+      try {
+        writeJson(file, nextReview);
+      } catch (error) {
+        if (before === undefined) fs.rmSync(this.paths.reviewState(reviewId), { force: true });
+        else writeJson(this.paths.reviewState(reviewId), before);
+        throw error;
+      }
+      return { rev: next.rev };
+    });
+  }
+
+  /** The developer opened it on the desk: it is no longer new. */
+  markReviewOpened(reviewId: string): Review {
+    return this.updateReview(reviewId, (r) => (r.openedAt ? r : { ...r, openedAt: this.stamp() }));
+  }
+
+  /** It leaves To review, and stays in History. Publishing its title again then starts a new review. */
+  closeReview(reviewId: string): Review {
+    return this.updateReview(reviewId, (r) => (r.closedAt ? r : { ...r, closedAt: this.stamp() }));
+  }
+
+  /**
+   * Sends the review: `session` delivers its line to the session that published the latest round,
+   * as a message from the desk (refused with `Undeliverable` when that session takes none now);
+   * `other` only returns the line, to copy into another conversation. Either way the send and the
+   * developer's answers (the text the page copied, else how far they got) are recorded, the answers
+   * as a closed question of that session, so the project's decisions and History hold them.
+   */
+  sendReview(reviewId: string, to: "session" | "other"): { line: string; review: Review } {
+    const file = this.paths.review(reviewId);
+    return withLock(file, () => {
+      const review = this.getReview(reviewId);
+      const round = review?.rounds.at(-1)?.n;
+      if (!review || round === undefined) throw new InputError(`no review ${reviewId} in the store`);
+      const session = this.getSession(review.sessionId);
+      if (to === "session") {
+        if (!session) throw new Undeliverable("the session that published it is no longer on the desk; send it to another conversation");
+        if (sessionFinished(session)) throw new Undeliverable("the session that published it has ended; send it to another conversation");
+        if (!this.acceptsMessages(session.id)) throw new Undeliverable("the session that published it is not taking messages from the desk right now; send it to another conversation, or write in its terminal");
+      }
+      const state = this.reviewState(reviewId);
+      const line = reviewLine(review, round, review.progress, to);
+      const at = this.stamp();
+      const decision = this.reviewDecision(review, round, state, at);
+      const next = readReview({ ...review, sends: [...review.sends, compact({ at, to: to === "session" ? review.sessionId : null, round, progress: review.progress })] }, file);
+      if (to === "session" && session?.state === "working") this.noteSentWhileWorking(session.id, line);
+      writeJson(this.paths.question(decision.id, "closed"), decision);
+      try {
+        writeJson(file, next);
+        if (to === "session") {
+          try {
+            this.deliver(decision, line);
+          } catch (error) {
+            writeJson(file, review);
+            throw error;
+          }
+        }
+      } catch (error) {
+        fs.rmSync(this.paths.question(decision.id, "closed"), { force: true });
+        throw new Error(`could not send review ${reviewId}; nothing was recorded`, { cause: error });
+      }
+      return { line, review: next };
+    });
+  }
+
+  /** The developer's answers to a review as a decision of the session that published it: closed at once, never in Needs you. */
+  private reviewDecision(review: Review, round: number, state: ReviewState, at: string): Question {
+    const reviewed = review.progress ? `${review.progress.done} of ${review.progress.total} reviewed. ` : "";
+    const answer = state.summary ?? `${reviewed}The page copied no answers; agent-desk review ${review.id} shows its saved state.`;
+    return readQuestion({
+      id: newId("q"),
+      sessionId: review.sessionId,
+      kind: "question",
+      text: `Review «${review.title}», round ${round}`,
+      options: [],
+      askedAt: at,
+      status: "answered",
+      closedAt: at,
+      answer: { text: bounded(answer), at, via: "desk" },
+      review: { id: review.id, round },
+    });
+  }
+
+  /** What a session reads of a review: the record and its saved state. Recorded as read by `sessionId`, when given. */
+  collectReview(reviewId: string, sessionId: string | undefined): { review: Review; state: ReviewState } {
+    if (sessionId === undefined) {
+      const review = this.getReview(reviewId);
+      if (!review) throw new InputError(`no review ${reviewId} in the store`);
+      return { review, state: this.reviewState(reviewId) };
+    }
+    const review = this.updateReview(reviewId, (r) => ({ ...r, collected: { at: this.stamp(), sessionId, round: r.rounds.at(-1)?.n ?? 1 } }));
+    return { review, state: this.reviewState(reviewId) };
+  }
+
+  /** Changes a review under its lock; one `change` returns unchanged is not written. */
+  private updateReview(reviewId: string, change: (current: Review) => Review): Review {
+    const file = this.paths.review(reviewId);
+    return withLock(file, () => {
+      const current = this.getReview(reviewId);
+      if (!current) throw new InputError(`no review ${reviewId} in the store`);
+      const next = change(current);
+      if (next !== current) writeJson(file, readReview(next, file));
+      return next;
+    });
+  }
+
   // ── Services, metrics, seen ─────────────────────────────────────────────
 
   addService(input: { sessionId: string; name: string; url: string }): Service {
@@ -1105,6 +1376,7 @@ export class Store {
       services: this.listServices(problems),
       metrics: this.listMetrics(problems),
       projects: this.listProjectScans(problems),
+      reviews: this.listReviews(problems),
       seen,
       problems,
     };
@@ -1130,6 +1402,8 @@ export class Store {
       ...this.subdirs(p.agentsDir),
       p.inboxDir,
       ...this.subdirs(p.inboxDir),
+      p.reviewsDir,
+      ...this.subdirs(p.reviewsDir),
     ];
   }
 
@@ -1214,4 +1488,21 @@ function imageType(data: Buffer): ImageExt | undefined {
   if (starts(0x47, 0x49, 0x46, 0x38)) return "gif";
   if (starts(0x52, 0x49, 0x46, 0x46) && data.subarray(8, 12).toString("latin1") === "WEBP") return "webp";
   return undefined;
+}
+
+/** A change to a review's saved state as the page sends it, checked against the review limits. */
+export function readReviewChange(value: unknown): ReviewChange {
+  const f = fields(value, "body");
+  const ops = list(f.ops ?? [], "ops", (v, where): ReviewOp => {
+    const o = fields(v, where);
+    const op = oneOf(["set", "remove", "clear"] as const)(o.op, `${where}.op`);
+    if (op === "clear") return { op };
+    const key = reviewKey(o.key, `${where}.key`);
+    return op === "remove" ? { op, key } : { op, key, value: text(o.value, `${where}.value`, REVIEW_STATE_MAX) };
+  }, 10_000);
+  return compact({
+    ops,
+    progress: optional(f.progress, "progress", (v, w) => text(v, w, REVIEW_PROGRESS_MAX)),
+    summary: optional(f.summary, "summary", (v, w) => text(v, w, REVIEW_SUMMARY_MAX)),
+  });
 }
