@@ -57,10 +57,12 @@ command.
   links; a strict Content-Security-Policy (`default-src 'self'`).
 - A review page a session published (one HTML file, its images inlined when published) is the one
   exception: it is served only under the `sandbox allow-scripts` Content-Security-Policy, so it has
-  no origin of its own and reaches none of the desk's data, requests or secret; it has no network
-  (`default-src 'none'`; inline scripts and styles, `data:` images and fonts), shows only inside a
-  frame of the desk, and talks to the desk only through messages the desk checks: saving its progress
-  and handing over the text it copies. What it hands over reaches a session only as the line the
+  no origin of its own and reaches none of the desk's data, requests or secret; it makes no requests
+  (`default-src 'none'`: no fetch, subresources, forms or popups; inline scripts and styles, `data:`
+  images and fonts), shows only inside a frame of the desk, which closes the frame at once if the
+  page navigates it elsewhere (no policy can stop a page from leaving its own frame), and talks to
+  the desk only through messages the desk checks: saving its progress and handing over the text it
+  copies. What it hands over reaches a session only as the line the
   developer sees and sends.
 - An answer is delivered exactly as shown to the user, never rewritten, and only to the session that
   asked.
