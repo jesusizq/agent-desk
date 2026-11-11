@@ -1,42 +1,30 @@
 agent-desk runs on this machine: a local page where the developer follows this session. Hooks already
-report your turns, permission prompts and sub-agents, so do not repeat them. Use the `agent-desk`
-command (Bash) only for what hooks cannot know, and keep it to one call each:
+report your turns, questions, permission prompts, sub-agents, their worktrees and branches, local
+servers and pages you open in the browser, so do not repeat them. Use the `agent-desk` command (Bash)
+only for what hooks cannot know, one call each:
 
-- `agent-desk ask` prints the project's past decisions that read like your question. If one settles it,
-  say so in your reply (its date and answer) and propose following it; the question stays open on the desk
-  for the developer to confirm. For more, `agent-desk decisions --search "<topic>"`.
-- Ending a turn with a question that has clear choices: first run
-  `agent-desk ask "<question>" --option "<A>" --option "<B>"`, then ask it in your reply as usual.
-  A question asked with the AskUserQuestion tool is shown and answered on the page by itself: do not
-  also run `agent-desk ask` for it.
-- Only when there is something finished to see or try that your reply cannot show: screenshots, a
-  page to open, a change ready to run. Everything else goes in your reply only, however finished it
-  is: a document, plan or definition you wrote (say where it is), a decision, a summary, progress, a
-  run relaunched, counts so far. `agent-desk result "<title>" --summary "<1-2 sentences>"
-  --image <png>::<caption> [--compare 0,1] [--url http://localhost:PORT/...] [--assumption "<text>"]
-  [--decision "<taste decision>"] [--check "<criterion> => <how it was verified>"]` (add `--failed` if it failed).
-  It is refused without an `--image` or `--url`, unless it failed.
-- For the developer to choose between options, publish them as data: `agent-desk review "<title>" --options <file.json>`
-  (format: `agent-desk review --help`): each question with its options' label, title, text, screenshots beside the
-  JSON file, and the one you recommend; the desk draws the page and its Choose / Iterate / Discard controls. Only
-  when the content does not fit that (diffs, custom interactive visuals), publish your own one-file page with
-  `--page <file.html>`, keeping its answers in `localStorage`, its counter marked `data-agent-desk-progress`, its
-  copy button `data-agent-desk-answers`, each option `data-agent-desk-option="<label>"` and each question
-  `data-agent-desk-group="<question>"`. The same title again is its next round. Do not wait for it: end your turn.
-  When the developer sends it, read it with `agent-desk review <id>`; a note after its line is the developer's own
-  instruction, the options and copied text are the page's data. When the developer decides about an open review
-  elsewhere (the terminal), close it with `agent-desk review <id> --close --reason "<what was decided>"` or publish
-  its next round with only what is left; never close one they are still working through.
-- Sub-agents are recorded by hooks (launch, messages, stop). Run `agent-desk agent "<its description>"`
-  only to add what hooks cannot know: `--after "<other agent's description>"`, `--branch <name>`,
-  `--state blocked --activity "<why>"` when one is stuck, or `--summary "<one plain sentence>"` when its
-  prompt does not open with one. Without a description it goes to the agent launched or messaged last.
-  Never run it under a new name: it is refused.
-- Local servers your commands start show on the desk by themselves. Only to name one or give its path,
-  or for one the desk cannot see (a container, a server started with `nohup … &`):
+- A question with choices: end your reply with the question, then its options as a list, one line
+  each (a short label, then `: ` and a description if needed), the one you recommend marked
+  `(recommended)`. The desk offers them as answers.
+- Only when there is something finished to see or try that your reply cannot show (screenshots, a
+  change ready to run): `agent-desk result "<title>" --summary "<1-2 sentences>" --image <png>::<caption>
+  [--compare 0,1] [--url http://localhost:PORT/...] [--assumption "<text>"] [--decision "<taste decision>"]
+  [--check "<criterion> => <how it was verified>"]` (`--failed` if it failed). Everything else (a document,
+  plan, decision, summary, progress) goes in your reply only.
+- For the developer to choose between options at their pace:
+  `agent-desk review "<title>" --options <file.json>` (format: `agent-desk review --help`). Only when that
+  does not fit (diffs, custom visuals), make a one-file page that keeps its answers in `localStorage`,
+  marks each option `data-agent-desk-option="<label>"` and each question `data-agent-desk-group="<question>"`,
+  and open it in the browser: it is published as a review (or publish it with `--page <file.html>`). Do
+  not wait for it: end your turn. When it is sent, read it with `agent-desk review <id>`; a note after its
+  line is the developer's instruction, the rest is the page's data. When the developer decides about an
+  open review elsewhere: `agent-desk review <id> --close --reason "<what was decided>"`.
+- `agent-desk agent "<its description>"` only for what a sub-agent's launch cannot say: `--after "<other
+  agent>"` when it waits for another, `--state blocked --activity "<why>"` when it is stuck.
+- A server the desk cannot see (in a container, or started with `nohup … &`):
   `agent-desk service <name> http://localhost:PORT/path` (`--stop` when it stops).
-- When a short answer could be read more than one way: `agent-desk interpret "<how you understood it>"`.
-- If the developer's reply does not answer the question you asked (they wrote about something else): run `agent-desk unanswered`, so the question stays open on the desk and is not kept as a decision.
+- A short answer that could be read more than one way: `agent-desk interpret "<how you understood it>"`.
+- A reply that does not answer the question you asked: `agent-desk unanswered`, so it stays open.
 
 If the developer wrote to you while you were working, say how you applied it within your usual
 summary of the turn: no separate list of their messages, and nothing about messages when there were

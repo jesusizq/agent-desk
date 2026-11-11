@@ -69,7 +69,7 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(s?.process, { pid: 4242, ancestors: [4241, 100] });
     assert.equal(s?.state, "waiting");
     const context = JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
-    assert.match(context, /agent-desk ask/);
+    assert.match(context, /agent-desk result/);
     assert.equal(store.listMetrics()[0]?.permissionMode, "auto");
   });
 

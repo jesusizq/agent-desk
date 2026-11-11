@@ -33,7 +33,7 @@ and step away. When you come back, one browser tab shows:
   them, copied, never run).
 - **From your phone,** through your own Tailscale tailnet, behind a PIN.
 
-It costs almost nothing: about 400 tokens per session for its instructions; everything else is done
+It costs almost nothing: about 750 tokens per session for its instructions; everything else is done
 by deterministic hooks that never go through the model. Nothing leaves your machine, and it never
 writes into the projects it follows (no files, no rules, no commits).
 
