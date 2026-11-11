@@ -18,6 +18,9 @@ and step away. When you come back, one browser tab shows:
   press "Go to session" and its exact terminal tab comes to the front.
 - **What finished,** with pictures to review: before/after with a slider, zoom, and the local URL to
   see it live.
+- **Pages to review at your pace:** a page a session made for you to choose from (proposals,
+  variants, a checklist) opens whole on the desk, keeps your answers across devices and days, and
+  goes back to the session with one click.
 - **What is happening now:** each session, its agents, what each one is doing, which are blocked and
   which failed, and which sessions wrote something you have not read.
 - **What was said,** so a question makes sense without scrolling back through the terminal.
@@ -145,6 +148,26 @@ interpretation (`agent-desk interpret`) goes only on an answer given in the sess
 
 It also lists the decisions sessions reported with their results, and the ones archived after 60
 days. `--json` gives the whole records; details in [docs/protocol.md](docs/protocol.md#cli).
+
+## Reviews
+
+A session that makes an HTML page for you to review or choose from publishes it instead of opening
+it from a local server:
+
+```sh
+agent-desk review "Checkout copy proposals" --page proposals.html   # the same title again: its next round
+agent-desk review rv-…                                              # what you answered, read by any later session
+agent-desk reviews                                                  # this project's reviews and where each stands
+```
+
+It shows in To review, never in Needs you. The page opens whole on the desk inside a sandbox with no
+origin and no network: its own scripts and styles run, the images beside it are inlined when it is
+published (only those inside its folder), and nothing else loads. What it keeps in `localStorage`
+is kept on the desk instead, so you can go on from the phone or days later, and the next round
+starts with your answers. Send hands the session a line telling it how to read them, or gives you
+that line to paste into another conversation; your answers are also kept as a decision, so
+`agent-desk decisions --search` finds them. A new session in the project is told about reviews sent
+and not read yet. Details in [docs/protocol.md](docs/protocol.md#reviews).
 
 ## Send keys to a session (tmux)
 

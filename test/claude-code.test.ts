@@ -73,6 +73,54 @@ describe("Claude Code hooks", () => {
     assert.equal(store.listMetrics()[0]?.permissionMode, "auto");
   });
 
+  it("tells a new session of the project about reviews sent from the desk that no session has read", () => {
+    const store = testStore();
+    const contextOf = (out: { stdout?: string }) => JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
+    store.upsertSession({ id: "old", provider: "Claude Code", project: { name: "shop", dir: "/work/shop" } });
+    store.upsertSession({ id: "far", provider: "Claude Code", project: { name: "far", dir: "/work/far" } });
+    const publish = (sessionId: string, title: string) => store.publishReview({ sessionId, title, html: "<html></html>" });
+    const notSent = publish("old", "Not sent");
+    const sent = publish("old", "Proposals");
+    store.sendReview(sent.id, "other");
+    store.closeReview(sent.id);
+    store.sendReview(publish("far", "Elsewhere").id, "other");
+    assert.ok(notSent);
+    let context = contextOf(handleHook(event("SessionStart", { source: "startup" }), ctx(store)));
+    const notice = context.split("\n\n").at(-1) ?? "";
+    assert.equal(notice, `The developer sent the review «Proposals»: agent-desk review ${sent.id} from agent-desk, and no session has read it yet. Read it when it concerns your work or they ask.`);
+    for (const title of ["Two", "Three"]) store.sendReview(publish("old", title).id, "other");
+    context = contextOf(handleHook(event("SessionStart", { source: "startup" }), ctx(store)));
+    const lines = (context.split("\n\n").at(-1) ?? "").split("\n");
+    assert.equal(lines.length, 3, "three lines at most");
+    assert.match(lines[0] ?? "", /^The developer sent 3 reviews from agent-desk that no session has read yet \(the latest 2; agent-desk reviews lists all 3\)/);
+    assert.match(lines[1] ?? "", /^- «Three»: agent-desk review rv-/);
+    for (const r of store.listReviews()) store.collectReview(r.id, "old");
+    context = contextOf(handleHook(event("SessionStart", { source: "startup" }), ctx(store)));
+    assert.doesNotMatch(context, /agent-desk review rv-/, "once read, nothing more is said");
+  });
+
+  it("hands a review sent to the session over at its next step, and keeps its answers when a prompt overtakes it", () => {
+    const store = testStore();
+    const live = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
+    handleHook(event("UserPromptSubmit", { prompt: "make the proposals page" }), live);
+    const review = store.publishReview({ sessionId: "cc-1", title: "Proposals", html: "<html></html>" });
+    store.changeReviewState(review.id, { ops: [], progress: "2/5", summary: "✓ one" }, "local");
+    const { line } = store.sendReview(review.id, "session");
+    assert.equal(line, `Review «Proposals» sent from agent-desk (round 1, 2 of 5 reviewed). Read the answers with: agent-desk review ${review.id}`);
+    const out = deliverWhileWorking(event("PostToolUse", { tool_name: "Bash" }), store);
+    const context = JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
+    assert.ok(context.endsWith(`Verbatim:\n${line}`), context);
+    const again = store.sendReview(review.id, "session");
+    handleHook(event("Stop", { last_assistant_message: "Done." }), live);
+    handleHook(event("UserPromptSubmit", { prompt: "something else" }), live);
+    const decisions = store.listQuestions().filter((q) => q.review);
+    assert.equal(decisions.length, 2);
+    assert.ok(decisions.every((q) => q.status === "answered" && q.answer?.text === "✓ one"), "a prompt typed over the line does not become the review's answers");
+    assert.equal(again.line, line);
+    assert.deepEqual(store.takeInbox("cc-1"), [], "the line not delivered is withdrawn");
+    assert.throws(() => store.unanswered("cc-1", decisions[0]?.id), /holds the answers of review/);
+  });
+
   it("inside tmux, events that do not look up the pane keep the terminal found with it", () => {
     const store = testStore();
     handleHook(event("SessionStart", { source: "resume" }), ctx(store));

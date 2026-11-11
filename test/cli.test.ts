@@ -239,3 +239,97 @@ describe("cli unanswered", () => {
     assert.equal(store.getQuestion(q.id)?.interpretation, undefined);
   });
 });
+
+describe("cli reviews", () => {
+  /** A folder holding a page, images beside it and one outside it, and a symlink inside leading out. */
+  function pageFolder(html: string): { page: string; root: string } {
+    const root = tempHome();
+    const dir = path.join(root, "review");
+    fs.mkdirSync(path.join(dir, "img"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "img", "a.png"), PNG);
+    fs.writeFileSync(path.join(dir, "img", "b c.png"), PNG);
+    fs.writeFileSync(path.join(dir, "icon.svg"), '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"/>');
+    fs.writeFileSync(path.join(dir, "fake.png"), "<script>alert(1)</script>");
+    fs.writeFileSync(path.join(root, "outside.png"), PNG);
+    fs.symlinkSync(path.join(root, "outside.png"), path.join(dir, "link.png"));
+    fs.symlinkSync(root, path.join(dir, "up"));
+    const page = path.join(dir, "page.html");
+    fs.writeFileSync(page, html);
+    return { page, root };
+  }
+  const DATA_PNG = `data:image/png;base64,${PNG.toString("base64")}`;
+
+  it("publishes a page with only the images inside its own folder inlined", async () => {
+    const store = sessionOfThisProcess();
+    const html = [
+      "<!doctype html><html><head><style>.a { background: url('img/a.png') } .b { background: url(../outside.png) }</style></head><body>",
+      '<img src="img/a.png" alt="a > b"><img src=\'img/b%20c.png\'><img src="icon.svg"><img src="fake.png">',
+      '<img src="../outside.png"><img src="link.png"><img src="up/outside.png"><img src="/etc/hosts"><img src="https://example.com/x.png"><img src="missing.png">',
+      '<picture><source srcset="img/a.png 1x, img/a.png?v=2 2x"><img srcset="img/a.png 480w,link.png 800w"></picture>',
+      "<div style=\"background-image: url('img/a.png')\"></div><p>img/a.png</p>",
+      "<script>const s = \"<img src='img/a.png'>\";</script><!-- <img src=\"img/a.png\"> -->",
+      "</body></html>",
+    ].join("\n");
+    const { page } = pageFolder(html);
+    const out = await cli(store.paths.home, "review", "Proposals", "--page", page);
+    assert.equal(out.code, 0, out.stderr);
+    const [review] = store.listReviews();
+    assert.ok(review);
+    assert.match(out.stdout, new RegExp(`^review ${review.id} round 1: Proposals\n.*To review.*agent-desk review ${review.id}`));
+    const kept = store.reviewPage(review.id)?.html ?? "";
+    assert.ok(kept.includes(`.a { background: url(${DATA_PNG}) }`), "CSS url() in <style>");
+    assert.ok(kept.includes(`.b { background: url(../outside.png) }`));
+    assert.ok(kept.includes(`<img src="${DATA_PNG}" alt="a > b">`), "<img src>, keeping its quotes");
+    assert.ok(kept.includes(`<img src='${DATA_PNG}'>`), "a %-escaped name");
+    assert.ok(kept.includes('<img src="data:image/svg+xml;base64,'), "an SVG");
+    for (const left of ['src="fake.png"', 'src="../outside.png"', 'src="link.png"', 'src="up/outside.png"', 'src="/etc/hosts"', 'src="https://example.com/x.png"', 'src="missing.png"']) {
+      assert.ok(kept.includes(left), `${left} is left as is`);
+    }
+    assert.ok(kept.includes(`<source srcset="${DATA_PNG} 1x, ${DATA_PNG} 2x">`), "srcset with descriptors");
+    assert.ok(kept.includes(`<img srcset="${DATA_PNG} 480w,link.png 800w">`), "a symlink out of the folder in a srcset is left");
+    assert.ok(kept.includes(`<div style="background-image: url(${DATA_PNG})">`), "style=\"\"");
+    assert.ok(kept.includes("<p>img/a.png</p>") && kept.includes("const s = \"<img src='img/a.png'>\";") && kept.includes('<!-- <img src="img/a.png"> -->'), "text, scripts and comments are untouched");
+    for (const ref of ["fake.png", "../outside.png", "link.png", "up/outside.png", "/etc/hosts", "https://example.com/x.png", "missing.png"]) {
+      assert.match(out.stderr, new RegExp(`left as is, .*: ${ref.replace(/[.?/]/g, "\\$&")}\\n`), ref);
+    }
+    assert.match(out.stderr, /outside the page's folder \(symlinks resolved\): link\.png/);
+  });
+
+  it("publishes the same title as the next round, and a session reads what was sent", async () => {
+    const store = sessionOfThisProcess();
+    const { page } = pageFolder("<html><head></head><body>1</body></html>");
+    assert.equal((await cli(store.paths.home, "review", "Proposals", "--page", page)).code, 0);
+    const again = await cli(store.paths.home, "review", "proposals", "--page", page);
+    assert.match(again.stdout, /round 2: proposals/);
+    const [review] = store.listReviews();
+    assert.ok(review);
+    store.changeReviewState(review.id, { ops: [{ op: "set", key: "cards", value: '{"1":"yes"}' }], progress: "1/2", summary: "✓ card 1" }, "local");
+    store.sendReview(review.id, "other");
+    assert.match((await cli(store.paths.home, "reviews")).stdout, new RegExp(`^${review.id}  «proposals»  round 2  1 of 2  sent, not read\n$`));
+    const read = await cli(store.paths.home, "review", review.id);
+    assert.equal(read.code, 0, read.stderr);
+    assert.match(read.stdout, /^Review «proposals» \(rv-[^)]+\), project shop \(\/work\/shop\)\nRound 2, published .* by session me\nProgress: 1 of 2\nSent: .* copied for another conversation \(round 2, 1 of 2\)\nAnswers the page copied:\n✓ card 1\nSaved state \(the page's localStorage\), as JSON:\n\{\n {2}"cards": "\{\\"1\\":\\"yes\\"\}"\n\}\n$/);
+    assert.deepEqual(store.getReview(review.id)?.collected && { by: store.getReview(review.id)?.collected?.sessionId, round: store.getReview(review.id)?.collected?.round }, { by: "me", round: 2 });
+    assert.match((await cli(store.paths.home, "reviews")).stdout, /  read\n$/);
+    const decisions = await cli(store.paths.home, "decisions", "--search", "card 1");
+    assert.match(decisions.stdout, /Asked: Review «proposals», round 2\n {2}Answer: ✓ card 1/);
+  });
+
+  it("refuses a bad review id, title or page and exits 2", async () => {
+    const store = sessionOfThisProcess();
+    const { page, root } = pageFolder("<html></html>");
+    const cases: [string[], RegExp][] = [
+      [["review", "../x"], /expected a review id/],
+      [["review", "rv-nothing"], /no review rv-nothing/],
+      [["review", "two\nlines", "--page", page], /one line/],
+      [["review", "T", "--page", path.join(root, "nope.html")], /--page: cannot read/],
+      [["review", "T", "--page", root], /is not a file/],
+    ];
+    for (const [args, message] of cases) {
+      const out = await cli(store.paths.home, ...args);
+      assert.equal(out.code, 2, `${args.join(" ")}: ${out.stderr}`);
+      assert.match(out.stderr, message);
+    }
+    assert.deepEqual(store.listReviews(), []);
+  });
+});

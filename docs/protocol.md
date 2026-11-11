@@ -22,6 +22,9 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `.inbox-pending` | present while any inbox holds an entry, so a hook that runs on every tool call tests one file | the store |
 | `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (marked `step`, when its adapter can tell), and each answer of the developer (typed or from the desk), the latest 500 per session | hooks, the page |
 | `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, size on disk, whether merged into the main branch and commits ahead; total and the day's starting total | `agent-desk scan`, started by adapters at the end of a turn |
+| `reviews/<review>/review.json` | `Review`: title, project, the session that published the latest round, every round (`n`, `at`, `sessionId`, `bytes`), progress parsed from the page's counter, when its saved state last changed and from where (`local`, `remote`), whether the page has handed over the text it copies (`hasSummary`), each send, the last read through the CLI (`collected`), `openedAt`, `closedAt` | `agent-desk review`, the page |
+| `reviews/<review>/round-<n>.html` | the page of that round, its images inlined; the last 5 rounds are kept | `agent-desk review` |
+| `reviews/<review>/state.json` | `ReviewState`: the page's `localStorage` (`data`, string to string), the text it copied (`summary`) and `rev`, one more at each accepted write; never in `DeskState` | the page |
 | `seen.json` | when the developer last marked everything as seen | the page |
 | `plan.json` | per plan window label (`5 h`, `7 d`, as the provider names it), its windows oldest first, the last the current one: `resetsAt` and a sample (`at`, `percent`) each time the percentage rose a point or more. A new reset time starts a window; the last four finished windows are kept, none that reset more than 35 days earlier. A label holding one window object instead of a list (the format of earlier installs) is read as its current window | the server, from the freshest metrics |
 | `secret` | per-install secret for the page's writes | the server, on first start |
@@ -129,6 +132,62 @@ previous turn ended (`turnEndedAt`; for a record without it, its last message's 
 the answer the prompt that started the turn gave, or one given on the desk since. With none, it exits
 2 with "no question was answered this turn" and records nothing.
 
+## Reviews
+
+A session publishes an HTML page it made for the developer to review or choose from
+(`agent-desk review "<title>" --page <file.html>`) and ends its turn. The page is shown in To
+review, never in Needs you; nothing sounds or is pushed.
+
+- **Rounds.** Publishing again with the same title (compared trimmed, ignoring case) in the same
+  project (`project.dir`), while that review is not closed, is its next round: the saved state
+  carries over, so the page shows the earlier answers under the same keys. A closed review's title
+  starts a new review. Publishing holds `reviews/.publish.lock`, so two at once make one review.
+- **The page as kept.** Copied into the store with the images it names by a relative path inlined as
+  `data:` URIs: `<img src>`, `srcset` (on `<img>` and `<source>`), CSS `url()` in `<style>` and in
+  `style=""`, outside scripts and comments. Only a file whose real path (symlinks resolved) is inside
+  the page's own folder, and whose bytes say PNG, JPEG, GIF, WebP or AVIF (an SVG: named `.svg` and
+  opening with its `<svg>` element). Anything else (remote, absolute, outside the folder, missing) is
+  left as is, where the CSP blocks it, and listed on stderr. 25 MB at most after inlining.
+- **Served** only as `GET /review/<id>` and `/review/<id>/raw`, with `Content-Security-Policy:
+  sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';
+  img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none';
+  frame-ancestors 'self'` (`REVIEW_CSP`, `src/server/security.ts`), `nosniff` and `no-referrer`:
+  the page runs with no origin, reaches no network and nothing of the desk, and only the desk may
+  frame it. It is never put inside the desk's own page.
+- **The shim.** `/review/<id>` is the page with, right after its `<head…>` tag (or at its very start
+  without one), `<script>window.__agentDeskReview=<state JSON, "<" as \u003c>;</script><script>`
+  + `src/web/review-shim.js` + `</script>` (`reviewDocument`, `src/server/server.ts`; the service
+  worker builds the same offline from `/raw` and the last state). The shim replaces `localStorage`
+  with the saved state and `sessionStorage` with memory, posts `{ agentDesk: 1, type }` messages to
+  its parent: `set`/`remove`/`clear` on each change, `copy` with what the page copies (clipboard,
+  `execCommand("copy")`, `prompt(msg, text)`), `progress` with the text of
+  `[data-agent-desk-progress]`, `scroll` (0..1), `notice` for an `alert` (one within 1.5 s of a copy
+  is dropped) or a `confirm` (which returns false); `window.open` returns null. On `{ type:
+  "collect" }` from its parent it clicks `[data-agent-desk-answers]`, or posts an empty copy. It
+  scrolls to `#at=<0..1>` of its URL once loaded.
+- **Saved state.** `POST /api/reviews/<id>/state` applies the page's operations in order under the
+  review's lock, so two devices merge per key, the later write winning on a key both set; every
+  accepted write adds 1 to `rev`. `data` ≤ 2 MB as UTF-8 JSON, a key ≤ 200 characters, `summary`
+  ≤ 200 KB (an empty one clears it), the counter's text ≤ 200 characters, read as `12/97`, `12 of
+  97` or `12 de 97` (any other text leaves the progress as it was).
+- **Send.** `POST /api/reviews/<id>/send` builds its line itself, from the review's validated title,
+  id, latest round and progress, never from the page's text:
+  `Review «<title>» sent from agent-desk (round <n>, <d> of <t> reviewed). Read the answers with:
+  agent-desk review <id>` for `session`, `Pick up the review «<title>» from agent-desk (round <n>,
+  <d> of <t> reviewed): agent-desk review <id>` for `other` (without the count when there is no
+  progress). `session` delivers it to the session that published the latest round as a message from
+  the desk (its inbox and conversation), only while it takes messages; otherwise 409 with the
+  reason (it ended, it is gone, or nothing takes messages now). Both record the send and a closed
+  question of that session holding the developer's answers (`review: { id, round }`, text `Review
+  «<title>», round <n>`, answer the text the page copied, cut at 20 000 characters, else the count):
+  `decisions` and History show it, `unanswered` never opens it again, and a prompt typed over an
+  undelivered line leaves it as it is.
+- **Read.** `agent-desk review <id>` prints the review, its sends, the text the page copied and the
+  saved state as JSON, and records `collected` when it runs in a registered session. Any session
+  may read any review. A review is "sent, not read" while its latest send is newer than `collected`;
+  Claude Code's adapter names those of the project, in three lines at most, in the context it gives
+  a starting session.
+
 ## Plan limits
 
 `planForecasts` (`src/core/limits.ts`) names a plan window only when it is a real risk: it runs out
@@ -188,8 +247,11 @@ typed while it works, both reach the session. When the session ends, the questio
 | `interpret "<text>"` | how the session understood the answer of the turn now running (see below) |
 | `unanswered [--question <id>]` | the developer's reply did not answer the question: it opens again (see below) |
 | `scan <project dir> [--if-older-than S]` | measures the project's checkouts with read-only git and a file walk; sizes are re-measured at most hourly |
+| `review "<title>" --page <file.html>` | a review, or its next round (see Reviews); its images inlined |
 
-What a session reads: `decisions [--search "<words>"] [--project <folder or name>] [--limit N]
+What a session reads: `review <id>`, a review's answers and saved state (records it as read);
+`reviews`, its project's reviews with id, title, round, progress and `open`, `sent, not read`,
+`read` or `closed`; and `decisions [--search "<words>"] [--project <folder or name>] [--limit N]
 [--permissions] [--dismissed] [--json]`, what its project already decided, newest first, so it does
 not ask the developer again. It writes nothing.
 
@@ -228,7 +290,7 @@ Tailscale host and login (`SECURITY.md`).
 | Request | Purpose |
 | --- | --- |
 | `GET /` and `/app.js` with the modules it imports (`src/web/*.js`, each listed in `STATIC`), `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
-| `GET /api/state` | `DeskState`: every record (a closed question without its context), plus `gone`, `listening`, `disk`, `planForecasts` (see Plan limits) and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
+| `GET /api/state` | `DeskState`: every record (a closed question without its context; reviews without their saved state), plus `gone`, `listening`, `disk`, `planForecasts` (see Plan limits) and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
 | `GET /api/events` | server-sent events: `changed` with the state's version (the ETag of `/api/state`) on opening and at each change, never the state itself; a `: ping` comment every 20 s; 32 streams at most (503 past them); a remote device's stream ends when its unlock does |
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |
@@ -244,9 +306,14 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/questions/<id>/dismiss` | close without answering |
 | `POST /api/sessions/<id>/message` `{ "text": "…", "images"?: ["<id>"] }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
 | `POST /api/results/<id>/seen`, `POST /api/seen` | mark one result, or everything, as seen |
+| `GET /review/<id>`, `GET /review/<id>/raw` | a review's latest page, with the shim or without, only with `REVIEW_CSP` (see Reviews) |
+| `GET /api/reviews/<id>/state` | `{ data, summary?, rev }` |
+| `POST /api/reviews/<id>/state` `{ "ops": [{ "op": "set", "key", "value" } \| { "op": "remove", "key" } \| { "op": "clear" }], "progress"?: "12/97", "summary"?: "…" }` | applies the page's changes; returns `{ rev }`; 5 MB body at most |
+| `POST /api/reviews/<id>/send` `{ "to": "session" \| "other" }` | returns `{ line }`; 409 `{ error }` when the session takes no message now |
+| `POST /api/reviews/<id>/opened`, `POST /api/reviews/<id>/close` | first opened on the desk; leaves To review (stays in History) |
 
 Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header
-`X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most, except an image.
+`X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most, except an image and a review's state.
 
 ### How the page follows the store
 

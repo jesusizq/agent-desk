@@ -5,11 +5,13 @@ import { createInterface } from "node:readline";
 import * as path from "node:path";
 import { parseArgs, type ParseArgsConfig } from "node:util";
 import { compact, InputError, int, localUrl, nonEmpty, oneOf } from "../core/check.ts";
-import { id, slug } from "../core/ids.ts";
-import { AGENT_STATES, type Agent } from "../core/model.ts";
+import { ID_PATTERN, id, slug } from "../core/ids.ts";
+import { AGENT_STATES, type Agent, type Review, type ReviewProgress, reviewStatus, reviewTitle } from "../core/model.ts";
 import { ancestors, sessionFinished } from "../core/proc.ts";
+import { locateProject } from "../project/locate.ts";
 import { storeHome } from "../store/paths.ts";
 import { type Decision, type DecisionQuery, Store } from "../store/store.ts";
+import { inlinePage } from "./review-page.ts";
 
 /** Decisions listed by default: enough to recall a project's recent ones without filling a model's context. */
 const DECISIONS_SHOWN = 20;
@@ -33,6 +35,11 @@ Posting (from a session; the session is found from the calling process, or --ses
                     the developer's reply did not answer the question: it opens again on the desk and is no
                     decision. Default: the questions the latest answer closed, unless it was given to that very
                     question (on the desk, or in a dialog); --question opens that one whatever its answer
+  agent-desk review "<title>" --page <file.html>
+                    publish an HTML page for the developer to review (one file keeping its answers in
+                    localStorage); its images beside it are inlined. The same title again is its next round
+  agent-desk review <id>     what the developer answered in a review, with its saved state (any session may read it)
+  agent-desk reviews         this project's reviews: open, sent and not read yet, read, closed
   agent-desk decisions [--search "<words>"] [--project <folder or name>] [--limit N] [--permissions] [--dismissed] [--json]
                     what the session's project already decided, newest first (${DECISIONS_SHOWN} by default): each
                     answer verbatim with how it was understood ("next message in the terminal" when it was only
@@ -177,6 +184,33 @@ const COMMANDS: Record<string, Command> = {
     print(values.json ? JSON.stringify({ ...found, problems }, null, 2) : describeDecisions(found, search, limit));
   },
 
+  review(args, store) {
+    const { values, positionals } = parse(args, { page: { type: "string" } }, 1);
+    if (values.page === undefined) {
+      const value = nonEmpty(positionals[0], "review id", 4096);
+      if (!ID_PATTERN.test(value)) throw new InputError(`expected a review id such as rv-…, got ${JSON.stringify(value)}; to publish a page, pass --page <file.html>`);
+      return readReview(store, value, callingSession(store, values.session));
+    }
+    const sessionId = resolveSession(store, values.session);
+    const title = reviewTitle(nonEmpty(positionals[0], "title", 4096).trim(), "title");
+    const page = inlinePage(nonEmpty(values.page, "--page", 4096));
+    for (const s of page.skipped) process.stderr.write(`agent-desk review: left as is, ${s.reason}: ${s.ref}\n`);
+    const review = store.publishReview({ sessionId, title, html: page.html });
+    print(`review ${review.id} round ${review.rounds.at(-1)?.n ?? 1}: ${review.title}`);
+    print(`The developer will find it in To review on the desk${page.inlined ? ` (${page.inlined} image(s) inlined)` : ""}. Do not wait for it: end your turn. When they send it, read it with: agent-desk review ${review.id}`);
+  },
+
+  reviews(args, store) {
+    parse(args, {}, 0);
+    const own = callingSession(store, undefined);
+    const dir = (own === undefined ? undefined : store.getSession(own)?.project.dir) ?? locateProject(process.cwd()).dir;
+    const problems: string[] = [];
+    const mine = store.listReviews(problems).filter((r) => path.resolve(r.project.dir) === path.resolve(dir));
+    for (const problem of problems) process.stderr.write(`agent-desk reviews: skipped an unreadable review: ${problem}\n`);
+    if (mine.length === 0) return print(`No reviews in ${dir}.`);
+    for (const r of mine) print(`${r.id}  «${r.title}»  round ${r.rounds.at(-1)?.n ?? 1}${r.progress ? `  ${progressText(r.progress)}` : ""}  ${reviewStatus(r)}`);
+  },
+
   needs(args, store) {
     parse(args, {}, 0);
     const sessions = new Map(store.listSessions().map((s) => [s.id, s]));
@@ -314,6 +348,28 @@ function describeDecisions(found: { decisions: Decision[]; total: number; projec
     ...(left > 0 ? [`${left} older not shown; narrow with --search or raise --limit (now ${limit}).`] : []),
   ].join("\n\n");
 }
+
+/** What a session reads of a review: where it stands, then what the page copied and its saved state. Recorded as read by the session. */
+function readReview(store: Store, reviewId: string, sessionId: string | undefined): void {
+  if (!store.getReview(reviewId)) throw new InputError(`no review ${reviewId} on the desk; agent-desk reviews lists this project's`);
+  const { review, state } = store.collectReview(reviewId, sessionId);
+  if (sessionId === undefined) process.stderr.write("agent-desk review: not run inside a registered session, so it is not recorded as read\n");
+  const latest = review.rounds.at(-1);
+  print(`Review «${review.title}» (${review.id}), project ${review.project.name} (${review.project.dir})`);
+  if (latest) print(`Round ${latest.n}, published ${stamp(latest.at)} by session ${latest.sessionId}${review.closedAt ? `; closed ${stamp(review.closedAt)}` : ""}`);
+  print(`Progress: ${review.progress ? progressText(review.progress) : "the page shows no counter"}`);
+  print(review.sends.length === 0 ? "Sent: not yet; the developer may still be reviewing it" : `Sent: ${review.sends.map(describeSend).join("; ")}`);
+  print(state.summary === undefined ? "Answers the page copied: none" : `Answers the page copied:\n${state.summary}`);
+  print(`Saved state (the page's localStorage), as JSON:\n${JSON.stringify(state.data, null, 2)}`);
+}
+
+function describeSend(send: Review["sends"][number]): string {
+  const how = send.to === null ? "copied for another conversation" : `to session ${send.to}`;
+  return `${stamp(send.at)} ${how} (round ${send.round}${send.progress ? `, ${progressText(send.progress)}` : ""})`;
+}
+
+const progressText = (p: ReviewProgress) => `${p.done} of ${p.total}`;
+const stamp = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z`;
 
 /** A question's first line, at most 300 characters. */
 function headline(value: string): string {

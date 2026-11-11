@@ -461,3 +461,18 @@ export function reviewLine(review: Pick<Review, "id" | "title">, round: number, 
     ? `Review «${review.title}» sent from agent-desk (round ${round}${reviewed}). Read the answers with: agent-desk review ${review.id}`
     : `Pick up the review «${review.title}» from agent-desk (round ${round}${reviewed}): agent-desk review ${review.id}`;
 }
+
+export const REVIEW_STATUSES = ["open", "sent, not read", "read", "closed"] as const;
+
+/** The send no session has read since, if any: the latest, when it came after the last read. */
+export function unreadSend(review: Review): ReviewSend | undefined {
+  const last = review.sends.at(-1);
+  return last && (review.collected === undefined || review.collected.at < last.at) ? last : undefined;
+}
+
+/** Where a review stands for the sessions that read it. A review sent and closed but not read yet is still unread. */
+export function reviewStatus(review: Review): (typeof REVIEW_STATUSES)[number] {
+  if (unreadSend(review)) return "sent, not read";
+  if (review.closedAt) return "closed";
+  return review.collected ? "read" : "open";
+}

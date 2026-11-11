@@ -113,6 +113,18 @@ describe("reviews in the store", () => {
     assert.ok(state.data.shared !== undefined, "the key both wrote holds the later write");
   });
 
+  it("are part of what the page receives, and of what the feed watches", async () => {
+    const { store, id } = withReview();
+    const { deskState } = await import("../src/server/server.ts");
+    assert.deepEqual(deskState(store).reviews.map((r) => r.id), [id]);
+    assert.ok(store.stateDirs().includes(store.paths.reviewDir(id)), "a change from another device reaches an open page");
+    fs.writeFileSync(path.join(store.paths.reviewsDir, "rv-broken"), "");
+    fs.mkdirSync(path.join(store.paths.reviewsDir, "rv-bad"));
+    fs.writeFileSync(path.join(store.paths.reviewsDir, "rv-bad", "review.json"), "{");
+    assert.equal(deskState(store).reviews.length, 1);
+    assert.match(deskState(store).problems.join("\n"), /rv-bad.*not valid JSON/, "an unreadable review is reported, not skipped");
+  });
+
   it("validates ids before they become paths", () => {
     const store = testStore();
     for (const bad of ["../x", "a/b", ".hidden", "", "a.json"]) assert.throws(() => store.paths.reviewDir(bad), /expected an id/, bad);
@@ -214,6 +226,103 @@ describe("review routes", () => {
       assert.equal(open.status, 200);
       assert.equal(open.headers["content-security-policy"], REVIEW_CSP);
       assert.ok(open.headers["x-agent-desk-unlock-ends"], "the device deletes its copy when the unlock ends");
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("review writes", () => {
+  it("need the secret and the exact Origin, and validate every body", async () => {
+    const { store, id } = withReview();
+    const server = await serve(store);
+    const secret = store.secret();
+    const post = (route: string, body: unknown, headers: Record<string, string> = {}) =>
+      fetch(server.base + route, { method: "POST", headers: { "Content-Type": "application/json", Origin: server.base, "X-Agent-Desk-Secret": secret, ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
+    try {
+      const ops = { ops: [{ op: "set", key: "a", value: "1" }] };
+      for (const headers of [{ Origin: "http://evil.example" }, { Origin: "null" }, { "X-Agent-Desk-Secret": "0".repeat(64) }]) {
+        for (const action of ["state", "send", "opened", "close"]) assert.equal((await post(`/api/reviews/${id}/${action}`, action === "send" ? { to: "other" } : ops, headers)).status, 403, `${action} ${JSON.stringify(headers)}`);
+      }
+      assert.equal(store.reviewState(id).rev, 0, "nothing was written");
+      assert.deepEqual(await (await post(`/api/reviews/${id}/state`, { ...ops, progress: "1 of 4" })).json(), { rev: 1 });
+      assert.deepEqual(store.getReview(id)?.progress, { done: 1, total: 4 });
+      for (const bad of [{ ops: [{ op: "set", key: "a" }] }, { ops: "set" }, { ops: [], summary: 7 }, { ops: [{ op: "set", key: "k".repeat(201), value: "" }] }]) {
+        assert.equal((await post(`/api/reviews/${id}/state`, bad)).status, 400, JSON.stringify(bad));
+      }
+      assert.equal((await post(`/api/reviews/${id}/state`, "{not json")).status, 400);
+      const big = await post(`/api/reviews/${id}/state`, { ops: [{ op: "set", key: "big", value: "v".repeat(REVIEW_STATE_MAX + 1) }] });
+      assert.equal(big.status, 400);
+      assert.match(((await big.json()) as { error: string }).error, /longer than|larger than/);
+      assert.equal((await post(`/api/reviews/${id}/state`, { ops: [{ op: "set", key: "x", value: "v".repeat(6 * 1024 * 1024) }] })).status, 400, "past the body limit");
+      assert.equal((await post(`/api/reviews/../state`, ops)).status, 404);
+      assert.equal((await post(`/api/reviews/a.b/state`, ops)).status, 400);
+      assert.equal((await post(`/api/reviews/rv-none/opened`, {})).status, 400);
+      assert.equal((await post(`/api/reviews/${id}/send`, { to: "everyone" })).status, 400);
+      assert.ok((await (await post(`/api/reviews/${id}/opened`, {})).json() as { openedAt?: string }).openedAt);
+      assert.ok((await (await post(`/api/reviews/${id}/close`, {})).json() as { closedAt?: string }).closedAt);
+      assert.equal(store.reviewState(id).rev, 1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("send the line the server builds: to the session while it takes messages, else 409 with the reason", async () => {
+    const { store, id } = withReview("Proposals «2»");
+    const server = await serve(store);
+    const post = (to: string) => fetch(`${server.base}/api/reviews/${id}/send`, { method: "POST", headers: { "Content-Type": "application/json", Origin: server.base, "X-Agent-Desk-Secret": store.secret() }, body: JSON.stringify({ to }) });
+    try {
+      store.changeReviewState(id, { ops: [], progress: "Done: 3/9 <b>", summary: "<b>my answers</b>" }, "local");
+      const refused = await post("session");
+      assert.equal(refused.status, 409);
+      assert.match(((await refused.json()) as { error: string }).error, /not taking messages.*another conversation/);
+      assert.equal(store.getReview(id)?.sends.length, 0, "nothing recorded");
+      assert.equal(store.listQuestions().length, 0);
+      const stop = store.listen("s1");
+      const sent = await post("session");
+      assert.equal(sent.status, 200);
+      const line = `Review «Proposals «2»» sent from agent-desk (round 1, 3 of 9 reviewed). Read the answers with: agent-desk review ${id}`;
+      assert.deepEqual(await sent.json(), { line });
+      assert.deepEqual(store.takeInbox("s1").map((e) => e.answer), [line], "delivered verbatim, as the desk showed it");
+      assert.equal(store.listMessages("s1").at(-1)?.text, line);
+      stop();
+      const other = await post("other");
+      assert.deepEqual(await other.json(), { line: `Pick up the review «Proposals «2»» from agent-desk (round 1, 3 of 9 reviewed): agent-desk review ${id}` });
+      assert.deepEqual(store.getReview(id)?.sends.map((s) => [s.to, s.round, s.progress]), [["s1", 1, { done: 3, total: 9 }], [null, 1, { done: 3, total: 9 }]]);
+      const decisions = store.listQuestions();
+      assert.equal(decisions.length, 2);
+      assert.ok(decisions.every((q) => q.status === "answered" && q.answer?.text === "<b>my answers</b>" && q.review?.id === id && q.text === "Review «Proposals «2»», round 1"));
+      assert.deepEqual(store.openQuestions(), [], "never in Needs you");
+      const found = store.decisions({ project: { dir: "/work/shop" }, search: "my answers", limit: 10 });
+      assert.equal(found.total, 2);
+      store.upsertSession({ id: "s1", provider: "Test", project: { name: "shop", dir: "/work/shop" }, state: "ended" });
+      assert.match(((await (await post("session")).json()) as { error: string }).error, /has ended/);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("from a tailnet device, only behind the PIN and from its https origin", async () => {
+    const { store, id } = withReview();
+    const remote = { host: "laptop.tail1234.ts.net:8443", user: "dev@example.com" };
+    const server = await serve(store, remote);
+    const call = (headers: Record<string, string>) =>
+      new Promise<number>((resolve, reject) => {
+        const req = http.request({ host: "127.0.0.1", port: server.port, method: "POST", path: `/api/reviews/${id}/state`, headers: { Host: remote.host, "Tailscale-User-Login": remote.user, "Content-Type": "application/json", "X-Agent-Desk-Secret": store.secret(), ...headers } }, (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        });
+        req.on("error", reject);
+        req.end(JSON.stringify({ ops: [{ op: "set", key: "phone", value: "yes" }] }));
+      });
+    try {
+      assert.equal(await call({ Origin: `https://${remote.host}` }), 401, "locked without the PIN");
+      const { RemoteUnlock, setPin } = await import("../src/server/remote-unlock.ts");
+      setPin(store.paths.pin, "424242");
+      const cookie = new RemoteUnlock(store.paths.pin, store.secret()).unlock("424242").split(";")[0] ?? "";
+      assert.equal(await call({ Origin: `http://127.0.0.1:${server.port}`, Cookie: cookie }), 403);
+      assert.equal(await call({ Origin: `https://${remote.host}`, Cookie: cookie }), 200);
+      assert.equal(store.getReview(id)?.updatedFrom, "remote");
     } finally {
       await server.close();
     }

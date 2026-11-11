@@ -1481,7 +1481,8 @@ function fold(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 }
 
-function imageType(data: Buffer): ImageExt | undefined {
+/** The image type its first bytes say, of those the store keeps. */
+export function imageType(data: Buffer): ImageExt | undefined {
   const starts = (...bytes: number[]) => bytes.every((b, i) => data[i] === b);
   if (starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "png";
   if (starts(0xff, 0xd8, 0xff)) return "jpg";

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { id, newId, slug } from "../../src/core/ids.ts";
-import { type Agent, FAILURES_KEPT, type SessionProcess } from "../../src/core/model.ts";
+import { type Agent, FAILURES_KEPT, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
 import { locateProject } from "../../src/project/locate.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
@@ -69,7 +69,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // Started again (resumed, or the plugins reloaded): what its last end left no longer holds.
       store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, ...s }) => ({ ...s, state: "waiting" }));
       retireContinued(input, ctx, problems);
-      return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: instructions() } }) };
+      return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: [instructions(), unreadReviews(input, ctx, problems)].filter(Boolean).join("\n\n") } }) };
 
     case "UserPromptSubmit": {
       const prompt = text(f.prompt ?? "", "hook input.prompt", 10_000_000);
@@ -1027,6 +1027,22 @@ function freeName(store: Store, sessionId: string, base: string): string {
 function firstLine(value: string): string {
   const line = value.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
   return line.length > 200 ? `${line.slice(0, 199)}…` : line;
+}
+
+/**
+ * Reviews of this project the developer sent from the desk and no session has read yet: a new
+ * session is told, in three lines at most, so none is left uncollected.
+ */
+function unreadReviews(input: Common, ctx: HookContext, problems: string[]): string {
+  const dir = locateProject(workDir(input, ctx)).dir;
+  const unread = ctx.store.listReviews(problems).filter((r) => r.project.dir === dir && unreadSend(r));
+  const named = (r: Review) => `«${r.title}»: agent-desk review ${r.id}`;
+  const [first, second] = unread;
+  if (!first) return "";
+  if (!second) return `The developer sent the review ${named(first)} from agent-desk, and no session has read it yet. Read it when it concerns your work or they ask.`;
+  const latest = unread.slice(0, 2).map((r) => `- ${named(r)}`);
+  const more = unread.length > 2 ? ` (the latest 2; agent-desk reviews lists all ${unread.length})` : "";
+  return [`The developer sent ${unread.length} reviews from agent-desk that no session has read yet${more}. Read one when it concerns your work or they ask:`, ...latest].join("\n");
 }
 
 let cachedInstructions: string | undefined;

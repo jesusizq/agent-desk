@@ -16,6 +16,7 @@ command (Bash) only for what hooks cannot know, and keep it to one call each:
   --image <png>::<caption> [--compare 0,1] [--url http://localhost:PORT/...] [--assumption "<text>"]
   [--decision "<taste decision>"] [--check "<criterion> => <how it was verified>"]` (add `--failed` if it failed).
   It is refused without an `--image` or `--url`, unless it failed.
+- When you make an HTML page for the developer to review or choose from (proposals, variants, a checklist), publish it instead of only opening it: `agent-desk review "<title>" --page <file.html>`. Make it one file that keeps its answers in `localStorage`; mark its progress counter with `data-agent-desk-progress` ("12/97") and the button that copies its answers with `data-agent-desk-answers`. Publishing it again under the same title starts its next round and keeps the answers. Do not wait for it: end your turn. When the developer sends it, or says a review is ready, read it with `agent-desk review <id>`.
 - Right after launching each sub-agent, in one call: `agent-desk agent "<the description you gave
   the Agent tool, or the label of a workflow's agent>" --summary "<one plain sentence: what it must deliver>"`, adding
   `--after "<other agent's description>"` and `--branch <name>` when they apply;
