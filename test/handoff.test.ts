@@ -119,6 +119,63 @@ describe("handoff around a compaction", () => {
     assert.deepEqual([broken.code, broken.stdout], [1, ""]);
   });
 
+  it("records the worktree an agent working from the main checkout reaches into: a file it reads or writes, a folder it searches, a leading cd", () => {
+    const { dir, wt } = project();
+    const store = testStore();
+    const c = ctx(store, dir);
+    handleHook(event(dir, "SessionStart", { source: "startup" }), c);
+    const other = path.join(dir, ".claude", "worktrees", "agent-2");
+    git(dir, "worktree", "add", "-q", "-b", "agent/other", other);
+    const call = (agent_id: string, tool_name: string, tool_input: Record<string, unknown>, cwd = dir) =>
+      handleHook(event(cwd, "PostToolUse", { agent_id, tool_name, tool_input }), c);
+    const at = (name: string) => {
+      const a = store.getAgent("cc-1", name);
+      return [a?.worktree, a?.branch];
+    };
+    handleHook(event(dir, "SubagentStart", { agent_id: "r1", agent_type: "workflow-subagent" }), c);
+    call("r1", "Bash", { command: "git diff main...agent/summary" });
+    assert.deepEqual(at("workflow-subagent"), [undefined, undefined], "a command that enters no worktree names none");
+    call("r1", "Bash", { command: "cd .claude/worktrees/agent-1 && node --test" });
+    assert.deepEqual(at("workflow-subagent"), [wt, "agent/summary"], "a leading relative cd");
+    call("r1", "Read", { file_path: path.join(other, "src", "new", "lab.ts") });
+    assert.deepEqual(at("workflow-subagent"), [other, "agent/other"], "the folder of a file, even one not made yet, maps to its worktree's root");
+    call("r1", "Bash", { command: "npm test" });
+    assert.deepEqual(at("workflow-subagent"), [other, "agent/other"], "a later call naming no worktree keeps the last one");
+    call("r1", "Grep", { pattern: "x", path: ".claude/worktrees/agent-1/src" });
+    assert.deepEqual(at("workflow-subagent"), [wt, "agent/summary"], "a search path, relative to the call's folder");
+    call("r1", "Bash", { command: `cd "${other}"; npm test` }, path.join(wt, "src"));
+    assert.deepEqual(at("workflow-subagent"), [wt, "agent/summary"], "the worktree its cwd lies in wins over the one its call names");
+
+    // Folders outside the project's worktrees, and cd paths the shell would expand, name none.
+    const foreign = fs.realpathSync(tempHome());
+    git(foreign, "init", "-q", "-b", "main");
+    git(foreign, "commit", "-q", "--allow-empty", "-m", "first");
+    const foreignWt = path.join(foreign, "wt");
+    git(foreign, "worktree", "add", "-q", "-b", "elsewhere", foreignWt);
+    handleHook(event(dir, "SubagentStart", { agent_id: "r2", agent_type: "Explore" }), c);
+    call("r2", "Bash", { command: `cd ${foreignWt} && ls` });
+    call("r2", "Bash", { command: "cd $WT && ls" });
+    call("r2", "Edit", { file_path: path.join(dir, "README.md") });
+    assert.deepEqual(at("explore"), [undefined, undefined]);
+  });
+
+  it("shows a workflow agent handing back its result as that, not as a StructuredOutput call", () => {
+    const { dir } = project();
+    const store = testStore();
+    const c = ctx(store, dir);
+    handleHook(event(dir, "SessionStart", { source: "startup" }), c);
+    handleHook(event(dir, "SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent" }), c);
+    const call = (hook: string, tool_name: string) => handleHook(event(dir, hook, { agent_id: "w1", tool_name, tool_input: { verdict: "ok" } }), c);
+    const shown = () => {
+      const a = store.getAgent("cc-1", "workflow-subagent");
+      return [a?.activity, a?.activityIsCall];
+    };
+    call("PostToolUseFailure", "StructuredOutput");
+    assert.deepEqual(shown(), ["StructuredOutput", true], "a result refused by its schema is a failed call like any other");
+    call("PostToolUse", "StructuredOutput");
+    assert.deepEqual(shown(), ["Handed back its result", undefined]);
+  });
+
   it("records the branch checked out in an agent's worktree, following a switch there, kept once the worktree is gone, never over one the session reported", async () => {
     const { dir, wt } = project();
     const store = testStore();

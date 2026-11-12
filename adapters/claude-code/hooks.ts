@@ -758,6 +758,7 @@ function settleAgents(input: Common, ctx: HookContext, problems: string[], runni
 const OPEN: ReadonlySet<Agent["state"]> = new Set(["working", "waiting", "blocked", "idle"]);
 const NOT_SEEN_RUNNING = "Not seen running";
 const STOPPED_BY_SESSION = "Stopped by the session";
+const HANDED_BACK = "Handed back its result";
 
 /** What Claude Code lists as still running in the background when a turn ends (Stop's `background_tasks`). */
 type RunningTasks = { agents: Map<string, string>; workflows: boolean };
@@ -843,9 +844,11 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   // Failed calls are kept only while they come in a row: any successful call ends the streak, so a
   // test failing while it is fixed, or a search that finds nothing, does not read as stuck.
   const fails = input.event === "PostToolUseFailure";
+  // A workflow's agent returns its result through this tool: the end of its work, not a call to show.
+  const handsBack = input.raw.tool_name === "StructuredOutput" && !fails;
   const call = {
-    activity: bounded(what, 200),
-    activityIsCall: true,
+    activity: handsBack ? HANDED_BACK : bounded(what, 200),
+    activityIsCall: handsBack ? undefined : true,
     activityAt: at,
     failedWhat: fails ? bounded(what, 200) : undefined,
     waitsForJob: (!fails && waitsOnJob(input.raw.tool_name, input.raw.tool_input)) || undefined,
@@ -871,13 +874,42 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   syncFailingMarker(ctx.store, fails, problems);
 }
 
-/** The linked worktree of the session's project a sub-agent's call ran in (`cwd`, maybe a subfolder of it), if it ran in one. */
+/**
+ * The linked worktree of the session's project a sub-agent's call worked in: the one its `cwd` lies
+ * in, else, for an agent working from outside one (a workflow's reviewer reaching into an
+ * implementer's worktree), the one holding the folder its call names (callTarget).
+ */
 function agentWorktree(input: Common, ctx: HookContext): string | undefined {
-  const there = locateProject(input.cwd);
+  const project = locateProject(workDir(input, ctx)).dir;
+  const target = callTarget(input.raw.tool_input, input.cwd, ctx.env.HOME);
+  return worktreeHolding(input.cwd, project) ?? (target === undefined ? undefined : worktreeHolding(target, project));
+}
+
+/** The root of the linked worktree of `project` that holds `dir` (maybe a subfolder of it, or not made yet), if one does. */
+function worktreeHolding(dir: string, project: string): string | undefined {
+  const there = locateProject(dir);
   if (there.worktree === undefined) return undefined;
   // A subfolder of a worktree maps to the same subfolder of the main checkout: both climb back to their roots.
-  const up = path.relative(there.dir, locateProject(workDir(input, ctx)).dir);
+  const up = path.relative(there.dir, project);
   return up === "" || /^\.\.(?:\/\.\.)*$/.test(up) ? path.resolve(there.worktree, up) : undefined;
+}
+
+const LEADING_CD = /^\s*cd\s+(?:"([^"$`\\]+)"|'([^']+)'|([^\s;&|$`"'\\]+))\s*(?:&&|;|$)/;
+
+/**
+ * The folder a tool call names to work in: the folder of the file it reads or writes, the folder it
+ * searches, or the folder a command's leading `cd` enters (literal paths only, `~` for the home).
+ */
+export function callTarget(toolInput: unknown, cwd: string, home: string | undefined): string | undefined {
+  if (typeof toolInput !== "object" || toolInput === null) return undefined;
+  const f = toolInput as Fields;
+  const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
+  const file = str(f.file_path) ?? str(f.notebook_path);
+  const cd = LEADING_CD.exec(str(f.command) ?? "");
+  const dir = file !== undefined ? path.dirname(file) : (str(f.path) ?? (cd ? (cd[1] ?? cd[2] ?? cd[3]) : undefined));
+  if (dir === undefined) return undefined;
+  if (dir === "~" || dir.startsWith("~/")) return home ? path.join(home, dir.slice(1)) : undefined;
+  return path.resolve(cwd, dir);
 }
 
 /**

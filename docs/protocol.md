@@ -109,8 +109,9 @@ behind it is done, "Not seen running", so no record says it works when nothing d
   error. They are stored by record name.
 - **`--state`** cannot change an ended record (`done`, `failed`): its state belongs to the hooks.
 - **`--branch`** is needed only for an agent that works on a branch outside a linked worktree of the
-  project: the adapter records an agent's `worktree` from its calls' folder and, at each of those
-  calls, the branch checked out there (`branch`, with `branchFromWorktree: true`), read from git's own
+  project: the adapter records an agent's `worktree` from its calls' folder (or, for an agent
+  working from outside one, from the folder a call names inside one: a file, a search path, a
+  leading `cd`) and, at each of those calls, the branch checked out there (`branch`, with `branchFromWorktree: true`), read from git's own
   files (the worktree's `.git` file, then its `HEAD`; `checkedOutBranch`, `src/project/locate.ts`),
   no git command run. It follows a branch switched in the worktree, keeps the last one while the head
   is detached (a rebase) and once the worktree is gone, and takes only plain branch names. A branch
