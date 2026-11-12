@@ -184,8 +184,9 @@ export function sendKept() {
 
 /**
  * `data`: the page's saved state as this page's frame has it, once `known`: what the desk holds besides
- * is another device's change. `link`: a local preview the page asked to open that the browser did not let open.
- * @typedef {{ id: string, frame: HTMLIFrameElement, known: boolean, seen: string | undefined, data: Map<string, string>,
+ * is another device's change. `edits`: how many changes the page made to `data`. `link`: a local preview the page
+ * asked to open that the browser did not let open.
+ * @typedef {{ id: string, frame: HTMLIFrameElement, known: boolean, seen: string | undefined, data: Map<string, string>, edits: number,
  *   summary: string, options: string, progress: { done: number, total: number } | undefined, sync: boolean, collecting: number, strayed: boolean,
  *   link: string | null }} Current
  */
@@ -251,7 +252,7 @@ export function openReview(id, { fromRoute = false } = {}) {
   if (fromRoute) history.replaceState(null, "", location.pathname + location.search);
   if (history.state?.review !== id) history.pushState({ review: id }, "", `#rv=${encodeURIComponent(id)}`);
   const frame = newFrame(id);
-  current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), summary: "", options: "", progress: r.progress, sync: false, collecting: 0, strayed: false, link: null };
+  current = { id, frame, known: false, seen: r.updatedAt, data: new Map(), edits: 0, summary: "", options: "", progress: r.progress, sync: false, collecting: 0, strayed: false, link: null };
   const shown = current;
   if (unseenRound(r)) run(post(`/api/reviews/${id}/opened`));
   drawView();
@@ -390,9 +391,13 @@ export function renderReview() {
   if (r.updatedAt !== current.seen && !flying.has(r.id) && !pending.has(r.id) && !current.sync) {
     current.seen = r.updatedAt;
     const shown = current;
+    const edits = shown.edits;
     run(
       fetchSaved(r.id).then((saved) => {
-        if (current === shown && shown.known && !sameData(saved.data, shown.data)) showSync();
+        if (current !== shown || !shown.known) return;
+        // The page changed while the desk answered: what it sent is older than this frame's, so it is checked again later.
+        if (shown.edits !== edits) shown.seen = undefined;
+        else if (!sameData(saved.data, shown.data)) showSync();
       }),
     );
   }
@@ -434,13 +439,16 @@ addEventListener("message", (e) => {
     case "set":
       if (!text(m.key, KEY_MAX) || !text(m.value, STATE_MAX)) return bad(`a value for "${String(m.key).slice(0, 40)}" too large or not text`);
       current.data.set(/** @type {string} */ (m.key), /** @type {string} */ (m.value));
+      current.edits++;
       return queue(id, { clear: false, keys: new Map([[/** @type {string} */ (m.key), /** @type {string} */ (m.value)]]) });
     case "remove":
       if (!text(m.key, KEY_MAX)) return bad("a key too long or not text");
       current.data.delete(/** @type {string} */ (m.key));
+      current.edits++;
       return queue(id, { clear: false, keys: new Map([[/** @type {string} */ (m.key), null]]) });
     case "clear":
       current.data.clear();
+      current.edits++;
       return queue(id, { clear: true, keys: new Map() });
     case "progress": {
       if (!text(m.text, PROGRESS_MAX)) return bad("a progress text too long");

@@ -3388,6 +3388,32 @@ paint();
       store.closeReview(r.id);
     });
 
+    it("never tells of changes from elsewhere while the one window open is typing", async () => {
+      const r = publish("rv-typing", "Typed comment", {}, reviewHtml(3));
+      const page = await openReview("Typed comment");
+      // A phone over the tailnet: every request takes a while, so the developer types on while the desk checks.
+      await page.eval(`(() => { const f = window.fetch; window.fetch = (...a) => f(...a).then((res) => new Promise((r) => setTimeout(() => r(res), 300))); return true; })()`);
+      // A comment typed key by key, in bursts with pauses long enough for each to be saved; the page saves its
+      // whole state on every key, as a textarea's input does.
+      const typed = await page.inFrame<number>(
+        "/review/",
+        `new Promise(async (done) => {
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+          let n = 0;
+          for (const pause of [450, 600, 750, 900, 1050, 1200]) {
+            for (let i = 0; i < 15; i++) (localStorage.setItem("comment", "x".repeat(++n)), await wait(60));
+            await wait(pause);
+          }
+          done(n);
+        })`,
+      );
+      await page.waitFor(`document.querySelector('.rv-saved')?.textContent.startsWith('Saved')`);
+      await new Promise((r) => setTimeout(r, 1500));
+      assert.equal(await page.eval<boolean>("!!document.querySelector('.rv-sync')"), false, "no chip: nothing changed anywhere else");
+      assert.equal(store.reviewState(r.id).data.comment, "x".repeat(typed));
+      store.closeReview(r.id);
+    });
+
     it("closes a page that opens another address in its frame, and opens the review again on a click", async () => {
       // The first time it loads, the page navigates its own frame away, which no CSP stops.
       const leaving = `<!doctype html><html><head><title>leaves</title></head><body><p id="here">here</p><script>
