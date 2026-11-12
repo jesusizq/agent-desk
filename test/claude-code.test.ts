@@ -565,6 +565,32 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.summary]), [["reverify-phone", "w1", "done", "Checks the phone fixes"]]);
   });
 
+  it("ends failed, under its label, a workflow's agent its run's journal marks failed, at its siblings' start or stop and at a turn's end", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    const journal = (lines: unknown[]) => fs.writeFileSync(path.join(wf.run, "journal.jsonl"), `${lines.map((l) => JSON.stringify(l)).join("\n")}\n{"half`);
+    const start = (id: string) => handleHook(event("SubagentStart", { agent_id: id, agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    const rows = () => store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.activity]);
+
+    start("w1");
+    start("w2");
+    journal([{ type: "launched" }, { type: "started", agentId: "w1", label: "QA-7" }, { type: "started", agentId: "w2", label: "QA-8" }, { type: "failed", agentId: "w1" }]);
+    start("w3");
+    assert.deepEqual(
+      rows().filter(([, ref]) => ref !== "w3"),
+      [["qa-7", "w1", "failed", "Failed in its workflow, with no result"], ["workflow-subagent-2", "w2", "working", undefined]],
+      "named after the journal's label when no notes were written; one the journal does not mark failed works on",
+    );
+
+    // Its notes' label wins over the journal's, and a turn's end settles it too, failed rather than "Not seen running".
+    start("w4");
+    wf.note("w4", "QA-9 (round 2)");
+    journal([{ type: "started", agentId: "w4", label: "other" }, { type: "failed", agentId: "w4" }]);
+    handleHook(event("Stop", { last_assistant_message: "Waiting for the batch.", transcript_path: wf.transcript, background_tasks: [] }), ctx(store));
+    assert.deepEqual(store.listAgents("cc-1").find((a) => a.ref === "w4")?.name, "qa-9-round-2");
+    assert.deepEqual(store.listAgents("cc-1").find((a) => a.ref === "w4")?.state, "failed");
+  });
+
   it("adds the result a workflow's agent handed back to the conversation as its report, once, from its last turn only", () => {
     const store = testStore();
     const wf = workflowRun();
@@ -583,6 +609,7 @@ describe("Claude Code hooks", () => {
     );
     stop("w1");
     assert.deepEqual(reports(), [["agent", "QA-12", "status: done\ncommits:\n- abc123 Fix the total\ndecisions: none\nreport:\nRounding was applied twice.\nNow once."]], "the last result, read past a half-written line");
+    assert.deepEqual([store.listAgents("cc-1")[0]?.activity, store.listAgents("cc-1")[0]?.activityIsCall], ["Handed back its result", undefined], "also when its StructuredOutput call was not seen");
 
     // An agent that handed nothing back in its last turn adds nothing, even with a result in an earlier one.
     handleHook(event("SubagentStart", { agent_id: "w2", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));

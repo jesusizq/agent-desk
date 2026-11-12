@@ -150,12 +150,15 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (f.tool_name === "SendMessage") messageAgent(input, ctx);
       return { code: 0 };
 
+    // While a workflow runs, its other agents' starts and stops are what tell of one that died.
     case "SubagentStart":
       startAgent(input, ctx, problems);
+      pairing(store, sid, () => settleWorkflowFailures(input, ctx, problems));
       return { code: 0 };
 
     case "SubagentStop":
       stopAgent(input, ctx, problems);
+      pairing(store, sid, () => settleWorkflowFailures(input, ctx, problems));
       ctx.startScan?.(locateProject(workDir(input, ctx)).dir); // its branch may have moved
       return { code: 0 };
 
@@ -739,6 +742,7 @@ function settleAgents(input: Common, ctx: HookContext, problems: string[], runni
   const sid = input.sessionId;
   pairing(store, sid, () => {
     settleLaunches(input, ctx, problems);
+    settleWorkflowFailures(input, ctx, problems);
     for (const agent of store.listAgents(sid)) {
       if (agent.state !== "working" || !agent.ref || agent.ref.startsWith(PENDING)) continue;
       const meta = subagentMeta(input, agent.ref);
@@ -754,11 +758,51 @@ function settleAgents(input: Common, ctx: HookContext, problems: string[], runni
   });
 }
 
+/**
+ * A workflow's agent that dies (an API error after its retries) makes no further call and gets no
+ * SubagentStop; its run's journal (`journal.jsonl` beside its notes) marks it `failed`. Its record
+ * then ends failed, named after its label. Runs under the session's agents lock (pairing).
+ */
+function settleWorkflowFailures(input: Common, ctx: HookContext, problems: string[]): void {
+  const open = ctx.store.listAgents(input.sessionId).filter((a) => OPEN.has(a.state) && a.launch === undefined && a.ref !== undefined && !a.ref.startsWith(PENDING));
+  if (open.length === 0) return;
+  const journals = workflowRuns(input).map((run) => ({ run, journal: readWorkflowJournal(path.join(run, "journal.jsonl")) }));
+  for (const agent of open) {
+    const ref = agent.ref ?? "";
+    const found = journals.find((j) => j.journal.failed.has(ref));
+    if (!found) continue;
+    settleName(input, ctx, ref, launchNotes(path.join(found.run, `agent-${ref}.meta.json`), problems).description ?? found.journal.labels.get(ref));
+    updateByRef(ctx.store, input.sessionId, ref, (a) => (OPEN.has(a.state) ? { state: "failed", activity: FAILED_IN_WORKFLOW, activityIsCall: undefined, waitsForJob: undefined } : undefined));
+  }
+}
+
+type WorkflowJournal = { failed: Set<string>; labels: Map<string, string> };
+
+/** The agents a workflow run's journal marks failed, and the label each agent started with. */
+export function readWorkflowJournal(file: string): WorkflowJournal {
+  const journal: WorkflowJournal = { failed: new Set(), labels: new Map() };
+  for (const line of readTail(file, TRANSCRIPT_TAIL).split("\n")) {
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // a tail's first line is cut, and the last may be half written
+    }
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Fields;
+    if (typeof e.agentId !== "string" || !/^[\w-]{1,200}$/.test(e.agentId)) continue;
+    if (e.type === "failed") journal.failed.add(e.agentId);
+    if (e.type === "started" && typeof e.label === "string" && e.label.trim() !== "") journal.labels.set(e.agentId, bounded(e.label.trim(), 2000));
+  }
+  return journal;
+}
+
 /** States of an agent that may still be at work. */
 const OPEN: ReadonlySet<Agent["state"]> = new Set(["working", "waiting", "blocked", "idle"]);
 const NOT_SEEN_RUNNING = "Not seen running";
 const STOPPED_BY_SESSION = "Stopped by the session";
 const HANDED_BACK = "Handed back its result";
+const FAILED_IN_WORKFLOW = "Failed in its workflow, with no result";
 
 /** What Claude Code lists as still running in the background when a turn ends (Stop's `background_tasks`). */
 type RunningTasks = { agents: Map<string, string>; workflows: boolean };
@@ -1360,9 +1404,10 @@ function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
   const last = firstLine(text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000));
   // Usually one record; more only where an older adapter recorded a restarted agent twice. The goal
   // comes with the notes when they were not written yet at the agent's start.
-  updateByRef(ctx.store, input.sessionId, agentId, (agent) => compact({ state: "done" as const, activity: last || undefined, goal: agent.goal ? undefined : label }));
   // A workflow's agent hands its result to the script, never to the session: it joins the conversation as the agent's report.
   const result = transcript === undefined ? undefined : handedBack(readTail(transcript, TRANSCRIPT_TAIL));
+  const ended = result ? { activity: HANDED_BACK, activityIsCall: undefined } : { activity: last || undefined };
+  updateByRef(ctx.store, input.sessionId, agentId, (agent) => ({ ...compact({ state: "done" as const, goal: agent.goal ? undefined : label }), ...(ended.activity === undefined ? {} : ended) }));
   if (result) {
     const sent = { from: "agent" as const, text: result, ref: agentId };
     ctx.store.addMessage(compact({ sessionId: input.sessionId, from: sent.from, sender: senderOf(ctx.store, input.sessionId, sent), text: sent.text }));
@@ -1486,9 +1531,15 @@ function subagentMeta(input: Common, agentId: string): string | undefined {
   const dir = path.join(transcript.slice(0, -".jsonl".length), "subagents");
   const file = `agent-${agentId}.meta.json`;
   if (fs.existsSync(path.join(dir, file))) return path.join(dir, file);
-  const workflows = path.join(dir, "workflows");
-  const runs = fs.existsSync(workflows) ? fs.readdirSync(workflows) : [];
-  return runs.map((run) => path.join(workflows, run, file)).find((f) => fs.existsSync(f));
+  return workflowRuns(input).map((run) => path.join(run, file)).find((f) => fs.existsSync(f));
+}
+
+/** The folders of the session's workflow runs (`<session>/subagents/workflows/<run>`), from its transcript's path. */
+function workflowRuns(input: Common): string[] {
+  const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
+  if (!transcript?.endsWith(".jsonl") || path.basename(transcript).startsWith("agent-")) return [];
+  const workflows = path.join(transcript.slice(0, -".jsonl".length), "subagents", "workflows");
+  return fs.existsSync(workflows) ? fs.readdirSync(workflows).map((run) => path.join(workflows, run)) : [];
 }
 
 /** What Claude Code noted on a sub-agent's launch: its label (`description`). */

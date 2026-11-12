@@ -20,7 +20,7 @@ answers given on the page back to the session that asked.
 | `PostToolUse`, `PostToolUseFailure` (`Agent`, `Task`) | the call's result settles its launch: the sub-agent it names (`tool_response.agentId`) is the one paired with that launch; a failed call (`error`) leaves a launch no sub-agent started failed, with the error as its activity (done, "Interrupted before it started", when interrupted). A background launch (`status: async_launched`) stays working until its sub-agent stops |
 | `PostToolUse` (`deliver`) | while `.inbox-pending` exists in the store, hands the session the messages written to it on the desk while it works, as context it reads before its next step; a sub-agent's tool call leaves them |
 | `Notification` (`elicitation_dialog`, `agent_needs_input`) | a question with the notification's text |
-| `PreToolUse` (`Agent`, `Task`), `SubagentStart`, `SubagentStop` | one agent per launch, named after the description given to the Agent tool (for agents launched otherwise, such as a workflow's, the label Claude Code notes in `<session>/subagents/…/agent-<id>.meta.json`), with the prompt's opening sentence as its summary when it reads as one (a sentence of its own line, 4 words to 160 characters, no code, path, link, markup, label or role), and the sub-agent that launched it when one did; done when it stops, or when a turn starts or ends and its transcript ends interrupted (an interrupted agent gets no `SubagentStop`). A workflow's agent hands its result to the workflow, not to the session: at its `SubagentStop`, the result of its last turn's `StructuredOutput` call, read from the end of its transcript (`agent_transcript_path`), joins the conversation as that agent's report, one `key: value` line per field and a list as its items. The session never registers one: `agent-desk agent` only adds to these records |
+| `PreToolUse` (`Agent`, `Task`), `SubagentStart`, `SubagentStop` | one agent per launch, named after the description given to the Agent tool (for agents launched otherwise, such as a workflow's, the label Claude Code notes in `<session>/subagents/…/agent-<id>.meta.json`), with the prompt's opening sentence as its summary when it reads as one (a sentence of its own line, 4 words to 160 characters, no code, path, link, markup, label or role), and the sub-agent that launched it when one did; done when it stops, or when a turn starts or ends and its transcript ends interrupted (an interrupted agent gets no `SubagentStop`). A workflow's agent hands its result to the workflow, not to the session: at its `SubagentStop`, the result of its last turn's `StructuredOutput` call, read from the end of its transcript (`agent_transcript_path`), joins the conversation as that agent's report, one `key: value` line per field and a list as its items, and its activity becomes "Handed back its result". The session never registers one: `agent-desk agent` only adds to these records |
 | `PreToolUse` (`SendMessage`) | a message to one of the session's sub-agents (`to` its id) works its record again, its activity the message's `summary` (else its first line), whether it resumes a stopped agent or redirects a running one; its `SubagentStart` and `SubagentStop` follow under the same id. Recorded before the message goes, so a resumed agent's stop always comes after it |
 | `PostToolUse` (`Bash`) | a local HTML page the call opens in a browser (`xdg-open`, `open`, `python -m webbrowser`, a browser with its path or `file:` URL, not headless) is published as a review titled after its `<title>`, as `agent-desk review --page` publishes one, unless it lies outside the project, its worktrees and the temporary folder or under a folder of generated pages (`node_modules`, coverage and test reports, build output), loads scripts or styles from beside it, was published this turn already, or is unchanged since its review's latest round (see `docs/protocol.md`, Reviews); `PostToolUse` always starts the adapter for a `Bash` call that names an `.htm…` file, a `file:` URL or `webbrowser` |
 | `PostToolUse` (`TaskStop`) | stopping a sub-agent (`task_type: local_agent`) ends its record, done with "Stopped by the session"; `PostToolUse` always starts the adapter for it |
@@ -84,13 +84,18 @@ button in the session panel.
   waiting for a start are settled when a turn starts or ends, from the call's result in the last
   1 MB of the session's transcript (a `tool_result` entry, with the Agent tool's `toolUseResult`
   beside it); a launch whose result is not there yet stays working until a later turn finds it.
-- Those notes and the transcript's entries are Claude Code's internal files, not a documented
-  interface: if they move or change shape, the corrections stop and agents launched outside the
-  Agent tool lose their goal.
+- Those notes, a workflow run's journal and the transcript's entries are Claude Code's internal
+  files, not a documented interface: if they move or change shape, the corrections stop, agents
+  launched outside the Agent tool lose their goal and a workflow's agent that died stays open.
 - `Stop`'s `background_tasks` (`id`, `type`: `subagent`, `workflow`…, `description`) lists only the
   tasks running in the background (read from Claude Code 2.1.322, not documented). Without it, the
   turn's end closes only records that never followed a sub-agent. A workflow's agents are not listed
-  one by one: they stay open while any workflow runs. A sub-agent addressed by a name rather than its
+  one by one: they stay open while any workflow runs, except one its run's journal
+  (`<session>/subagents/workflows/<run>/journal.jsonl`, a `failed` entry with its `agentId`) marks
+  failed, an agent that died on an API error and gets no `SubagentStop`: it ends failed, under the
+  label the journal started it with unless its notes name it, at the next start or stop of any
+  sub-agent of the session or at a turn's start or end (verified 2026-11-12 with an agent given a
+  model that does not exist). A sub-agent addressed by a name rather than its
   id (`SendMessage`) is marked working by its own `SubagentStart` only.
 - Claude Code shows the AskUserQuestion dialog in the terminal while the `PermissionRequest` hook
   waits (verified 2026-10-29), so it can be answered in either place. For permission prompts this is
