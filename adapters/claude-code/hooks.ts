@@ -1361,6 +1361,49 @@ function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
   // Usually one record; more only where an older adapter recorded a restarted agent twice. The goal
   // comes with the notes when they were not written yet at the agent's start.
   updateByRef(ctx.store, input.sessionId, agentId, (agent) => compact({ state: "done" as const, activity: last || undefined, goal: agent.goal ? undefined : label }));
+  // A workflow's agent hands its result to the script, never to the session: it joins the conversation as the agent's report.
+  const result = transcript === undefined ? undefined : handedBack(readTail(transcript, TRANSCRIPT_TAIL));
+  if (result) {
+    const sent = { from: "agent" as const, text: result, ref: agentId };
+    ctx.store.addMessage(compact({ sessionId: input.sessionId, from: sent.from, sender: senderOf(ctx.store, input.sessionId, sent), text: sent.text }));
+  }
+}
+
+/**
+ * The result an agent's last turn handed back through StructuredOutput (a workflow's agent), as
+ * readable text, read from the end of its transcript; undefined when that turn handed back none.
+ */
+export function handedBack(tail: string): string | undefined {
+  for (const line of tail.split("\n").reverse()) {
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // the first line of the tail is cut, and the last may be half written
+    }
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Fields;
+    const content = typeof e.message === "object" && e.message !== null ? (e.message as Fields).content : undefined;
+    const blocks = Array.isArray(content) ? content.filter((b): b is Fields => typeof b === "object" && b !== null) : [];
+    if (e.type === "user" && (typeof content === "string" || !blocks.some((b) => b.type === "tool_result"))) return undefined; // a prompt: the turn starts after it
+    const call = e.type === "assistant" ? blocks.findLast((b) => b.type === "tool_use" && b.name === "StructuredOutput") : undefined;
+    if (call) return readableResult(call.input) || undefined;
+  }
+  return undefined;
+}
+
+/** A structured result as the lines a reader scans: `key: value`, a list as its items, an empty one as "none". */
+export function readableResult(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value === undefined ? "" : JSON.stringify(value);
+  const lines: string[] = [];
+  for (const [key, v] of Object.entries(value)) {
+    if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) continue;
+    if (typeof v === "string") lines.push(v.includes("\n") ? `${key}:\n${v.trim()}` : `${key}: ${v.trim()}`);
+    else if (Array.isArray(v)) lines.push(v.length === 0 ? `${key}: none` : `${key}:\n${v.map((x) => `- ${typeof x === "string" ? x : JSON.stringify(x)}`).join("\n")}`);
+    else lines.push(`${key}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
+  }
+  return lines.join("\n");
 }
 
 /** What the notes' label settles: which launch the agent is (settlePairing), then its name (settleName). */

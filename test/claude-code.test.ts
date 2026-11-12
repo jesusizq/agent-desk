@@ -565,6 +565,33 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(store.listAgents("cc-1").map((a) => [a.name, a.ref, a.state, a.summary]), [["reverify-phone", "w1", "done", "Checks the phone fixes"]]);
   });
 
+  it("adds the result a workflow's agent handed back to the conversation as its report, once, from its last turn only", () => {
+    const store = testStore();
+    const wf = workflowRun();
+    const line = (type: string, content: unknown) => JSON.stringify({ type, isSidechain: true, message: { role: type, content } });
+    const handBack = (input: unknown) => line("assistant", [{ type: "tool_use", id: "t1", name: "StructuredOutput", input }]);
+    const result = line("user", [{ type: "tool_result", tool_use_id: "t1", content: "ok" }]);
+    const stop = (id: string) =>
+      handleHook(event("SubagentStop", { agent_id: id, agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, `agent-${id}.jsonl`), last_assistant_message: "" }), ctx(store));
+    const reports = () => store.listMessages("cc-1").map((m) => [m.from, m.sender, m.text]);
+
+    handleHook(event("SubagentStart", { agent_id: "w1", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    wf.note("w1", "QA-12");
+    fs.writeFileSync(
+      path.join(wf.run, "agent-w1.jsonl"),
+      [line("user", "Fix QA-12."), handBack({ status: "partial" }), result, handBack({ status: "done", commits: ["abc123 Fix the total"], decisions: [], handoff: "", report: "Rounding was applied twice.\nNow once." }), result, '{"half'].join("\n"),
+    );
+    stop("w1");
+    assert.deepEqual(reports(), [["agent", "QA-12", "status: done\ncommits:\n- abc123 Fix the total\ndecisions: none\nreport:\nRounding was applied twice.\nNow once."]], "the last result, read past a half-written line");
+
+    // An agent that handed nothing back in its last turn adds nothing, even with a result in an earlier one.
+    handleHook(event("SubagentStart", { agent_id: "w2", agent_type: "workflow-subagent", transcript_path: wf.transcript }), ctx(store));
+    fs.writeFileSync(path.join(wf.run, "agent-w2.jsonl"), [line("user", "Review it."), handBack({ defects: [] }), result, line("user", "Check again."), line("assistant", [{ type: "text", text: "Fine." }])].join("\n"));
+    stop("w2");
+    handleHook(event("SubagentStop", { agent_id: "w3", agent_type: "workflow-subagent", agent_transcript_path: path.join(wf.run, "agent-missing.jsonl") }), ctx(store));
+    assert.equal(reports().length, 1);
+  });
+
   it("keeps the name of an agent launched with the Agent tool, and the record the session reported for it", () => {
     const store = testStore();
     const wf = workflowRun();
