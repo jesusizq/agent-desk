@@ -8,7 +8,7 @@ recent() {
   [ "$major" -gt 22 ] || { [ "$major" -eq 22 ] && [ "$minor" -ge 18 ]; }
 }
 for node in "$(command -v node)" $(ls -d "${NVM_DIR:-$HOME/.nvm}"/versions/node/v*/bin/node 2>/dev/null | sort -rV); do
-  if [ -n "$node" ] && recent "$node"; then exec "$node" "$@"; fi
+  if [ -n "$node" ] && recent "$node"; then exec "$node" --import "$(dirname "$(readlink -f "$0")")/compile-cache.mjs" "$@"; fi
 done
 echo "agent-desk needs Node.js 22.18 or later, and the one on PATH is $(node --version 2>/dev/null || echo missing); install a newer one (nvm install 22) or put it on PATH" >&2
 exit 1

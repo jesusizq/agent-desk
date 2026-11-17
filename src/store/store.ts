@@ -137,9 +137,22 @@ export type ImageExt = keyof typeof IMAGE_TYPES;
 /** How long a question asked during a turn waits for that turn's end before it shows anyway. */
 const WRITING_MAX_MS = 5 * 60_000;
 
+type ReadRecord = { ino: bigint; size: bigint; mtimeNs: bigint; value: unknown };
+
+/** Frozen all the way down: a record read once is shared by every later read, so no caller may change it. */
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+  }
+  return value;
+}
+
 export class Store {
   readonly paths: StorePaths;
   private readonly now: Clock;
+  /** Records read before, by folder and file name, reused while their file is unchanged (readAll). */
+  private readonly readCache = new Map<string, { reader: unknown; files: Map<string, ReadRecord> }>();
 
   constructor(home: string, now: Clock = () => new Date()) {
     this.paths = new StorePaths(home);
@@ -1568,16 +1581,32 @@ export class Store {
    */
   private readAll<T>(dir: string, read: (value: unknown, where: string) => T, problems?: string[]): T[] {
     const out: T[] = [];
+    const before = this.readCache.get(dir);
+    const known = before?.reader === read ? before.files : undefined;
+    const files = new Map<string, ReadRecord>();
     for (const name of listJson(dir)) {
       const file = path.join(dir, name);
       try {
+        // Every write replaces the file (writeAtomic), so the same inode, size and time is the same record.
+        const stat = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
+        if (stat === undefined) continue; // removed since the listing
+        const hit = known?.get(name);
+        if (hit && hit.ino === stat.ino && hit.size === stat.size && hit.mtimeNs === stat.mtimeNs) {
+          files.set(name, hit);
+          out.push(hit.value as T);
+          continue;
+        }
         const raw = readJson(file);
-        if (raw !== undefined) out.push(read(raw, file)); // undefined: removed since the listing
+        if (raw === undefined) continue; // removed since the listing
+        const value = deepFreeze(read(raw, file));
+        files.set(name, { ino: stat.ino, size: stat.size, mtimeNs: stat.mtimeNs, value });
+        out.push(value);
       } catch (error) {
         if (!problems) throw error;
         problems.push((error as Error).message);
       }
     }
+    this.readCache.set(dir, { reader: read, files });
     return out;
   }
 

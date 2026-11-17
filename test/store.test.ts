@@ -63,6 +63,35 @@ describe("store files", () => {
   });
 });
 
+describe("records read before", () => {
+  it("are read again once another writer replaces their file, even at the same size, and gone once it is removed", () => {
+    const store = testStore();
+    addSession(store);
+    store.upsertAgent("s1", "builder", { goal: "Build A" });
+    store.upsertAgent("s1", "tester", { goal: "Test" });
+    const goals = () => store.listAgents("s1").map((a) => a.goal);
+    assert.deepEqual(goals(), ["Build A", "Test"]);
+    // Another process (a hook) rewrites one record, same length, as the store writes: a new file renamed over it.
+    const size = fs.statSync(store.paths.agent("s1", "builder")).size;
+    new Store(store.paths.home).upsertAgent("s1", "builder", { goal: "Build B" });
+    assert.equal(fs.statSync(store.paths.agent("s1", "builder")).size, size, "the same size: only the file's identity tells");
+    assert.deepEqual(goals(), ["Build B", "Test"]);
+    fs.rmSync(store.paths.agent("s1", "tester"));
+    assert.deepEqual(goals(), ["Build B"]);
+  });
+
+  it("are shared between reads, so none can be changed by its caller", () => {
+    const store = testStore();
+    addSession(store);
+    store.upsertAgent("s1", "builder", { goal: "Build", after: ["tester"] });
+    const [agent] = store.listAgents("s1");
+    assert.ok(agent);
+    assert.throws(() => Object.assign(agent, { goal: "Changed" }), TypeError);
+    assert.throws(() => (agent.after as string[]).push("other"), TypeError);
+    assert.deepEqual(store.listAgents("s1").map((a) => [a.goal, a.after]), [["Build", ["tester"]]]);
+  });
+});
+
 describe("concurrency", () => {
   it("loses no update when processes write the same record at once", async () => {
     const home = tempHome();

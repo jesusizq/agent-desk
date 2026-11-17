@@ -29,6 +29,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `seen.json` | when the developer last marked everything as seen | the page |
 | `plan.json` | per plan window label (`5 h`, `7 d`, as the provider names it), its windows oldest first, the last the current one: `resetsAt` and a sample (`at`, `percent`) each time the percentage rose a point or more. A new reset time starts a window; the last four finished windows are kept, none that reset more than 35 days earlier. A label holding one window object instead of a list (the format of earlier installs) is read as its current window | the server, from the freshest metrics |
 | `secret` | per-install secret for the page's writes | the server, on first start |
+| `compile-cache/` | Node's compiled code of the desk's own TypeScript, kept between runs so a hook does not strip its types again (about 60 ms of each hook, measured 2026-11-17); Node checks each file's source and recompiles what changed | `bin/compile-cache.mjs`, preloaded by every command |
 
 Ids match `^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$` before they become a path segment, and every resolved
 path is checked to stay inside the store.
@@ -55,6 +56,9 @@ Hooks, the CLI and the server write the same files from different processes.
   one waiter.
 - Answering from the page closes the question first and writes the inbox entry second; if the
   second step fails, the question is reopened.
+- A process reads each record once: a later read of the same folder (`Store.readAll`) reuses it,
+  frozen, while its file keeps the same inode, size and modification time to the nanosecond, which
+  every write changes, being a new file renamed over the old.
 
 ## Sessions and their terminal
 
