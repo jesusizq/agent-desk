@@ -432,8 +432,10 @@ export function splitQuestion(paragraph: string): { question: string; rest: stri
 export type OfferedQuestion = { question: string; options: string[]; several: boolean; context: string };
 
 const OPTIONS_MAX = 8;
-const OPTION_LABEL_MAX = 80;
-const OPTION_LABEL_WORDS = 12;
+type LabelLimit = { chars: number; words: number };
+/** An option's label is short; a longer one only in a list the question clearly offers to choose from. */
+const OPTION_LABEL: LabelLimit = { chars: 80, words: 12 };
+const OPTION_LABEL_CHOSEN: LabelLimit = { chars: 200, words: 40 };
 /** A one-line item: a bullet, or a number or letter that counts from the first. */
 const OPTION_ITEM = /^( {0,3})(?:([-*+•])|(\d{1,2})[.)]|([a-zA-Z])[.)])\s+(\S.*)$/;
 /** The developer's convention for the option the session recommends. */
@@ -510,13 +512,14 @@ function offer(at: Layout): OfferedQuestion | undefined {
   // A list between two questions answers either.
   const above = at.intro.length > 0 ? at.intro.join("\n") : (at.others.at(-1) ?? "");
   if (!at.after && askingSentences(above).length > 0) return undefined;
-  const options = optionItems(at.list);
-  if (options === undefined) return undefined;
   const words = folded(asked.join(" "));
+  const recommended = at.list.filter((l) => RECOMMENDED.test(l)).length === 1;
+  // A list the question asks to choose from, with one item recommended, is a choice however long its items.
+  const options = optionItems(at.list, OPTION_LABEL) ?? (CHOOSING.test(words) && recommended ? optionItems(at.list, OPTION_LABEL_CHOSEN) : undefined);
+  if (options === undefined) return undefined;
   const lastLine = (text: string | undefined) => text?.split("\n").filter((l) => l.trim() !== "").at(-1) ?? "";
   const lead = at.after ? lastLine(at.question) : at.intro.length > 0 ? lastLine(at.intro.join("\n")) : lastLine(at.others.at(-1));
   const introduced = /:\**$/.test(lead.trimEnd()) && INTRODUCING.test(folded(lead));
-  const recommended = at.list.filter((l) => RECOMMENDED.test(l)).length === 1;
   if (!CHOOSING.test(words) && !introduced && !recommended) return undefined;
   const { question, rest } = splitQuestion(at.question);
   // Descriptions are read under the question; bare labels are the options themselves.
@@ -543,7 +546,7 @@ function closesWithQuestion(paragraph: string): boolean {
 }
 
 /** The options of a list, when every line is an option item of one kind and indentation, in order; undefined otherwise. */
-function optionItems(list: string[]): { label: string; described: boolean }[] | undefined {
+function optionItems(list: string[], limit: LabelLimit): { label: string; described: boolean }[] | undefined {
   if (list.length < 2 || list.length > OPTIONS_MAX) return undefined;
   const out: { label: string; described: boolean }[] = [];
   let shape: string | undefined;
@@ -555,7 +558,7 @@ function optionItems(list: string[]): { label: string; described: boolean }[] | 
     if ((shape ??= kind) !== kind) return undefined;
     if (number !== undefined && Number(number) !== i + 1) return undefined;
     if (letter !== undefined && letter.toLowerCase().charCodeAt(0) !== "a".charCodeAt(0) + i) return undefined;
-    const option = optionLabel(item);
+    const option = optionLabel(item, limit);
     if (!option) return undefined;
     out.push(option);
   }
@@ -564,7 +567,7 @@ function optionItems(list: string[]): { label: string; described: boolean }[] | 
 }
 
 /** An item's label: the item as written before its description (after ": " or a spaced dash), without bold marks. */
-function optionLabel(item: string): { label: string; described: boolean } | undefined {
+function optionLabel(item: string, limit: LabelLimit): { label: string; described: boolean } | undefined {
   if (/[?¿？]/.test(unquoted(item))) return undefined; // an item that asks is a question of its own
   const spans = quotedSpans(item);
   let cut: number | undefined;
@@ -577,7 +580,7 @@ function optionLabel(item: string): { label: string; described: boolean } | unde
     if (separates && depth === 0 && !spans.some(([from, to]) => i >= from && i < to)) cut = i;
   }
   const label = balanced((cut === undefined ? item : item.slice(0, cut)).trim()).replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a: string | undefined, b: string | undefined) => a ?? b ?? "").trim();
-  if (label === "" || label.length > OPTION_LABEL_MAX || label.split(/\s+/).length > OPTION_LABEL_WORDS || sentences(label).length > 1) return undefined;
+  if (label === "" || label.length > limit.chars || label.split(/\s+/).length > limit.words || sentences(label).length > 1) return undefined;
   const described = cut !== undefined && item.slice(cut).replace(/^(?::| [—–-] )/, "").replace(/\*+/g, "").trim() !== "";
   return { label, described };
 }

@@ -1230,6 +1230,23 @@ describe("options a turn's question offers", () => {
     assert.deepEqual(asked("¿Por dónde empiezo? Opciones:\n\na) El login\nb) El checkout\nc) Las facturas")?.options, ["El login", "El checkout", "Las facturas"], "lettered, after a line that introduces them");
   });
 
+  it("takes long items as options only when the question asks to choose and one item is recommended", () => {
+    const list = [
+      "- Los puntos 1 y 2, midiendo antes y después (recomendado)",
+      "- Solo el 1, que es una línea y sin riesgo",
+      "- Los 1 y 2, y además mirar qué lleva el estado de 2 MB para que decidas sobre los puntos 3 y 4",
+    ];
+    assert.deepEqual(asked(["Esto es lo que he medido.", "", "¿Qué hago?", ...list].join("\n")), {
+      text: "¿Qué hago?",
+      options: list.map((l) => l.slice(2)),
+      several: false,
+      context: "Esto es lo que he medido.",
+    });
+    const unmarked = list.map((l) => l.replace(" (recomendado)", ""));
+    assert.deepEqual(asked(["Esto es lo que he medido.", "", "¿Qué hago?", ...unmarked].join("\n"))?.options, [], "without one recommended, a long item is prose, not an option");
+    assert.deepEqual(asked(["Esto es lo que he medido.", "", "¿Lo dejo así?", ...list].join("\n"))?.options, [], "nor when the question does not ask to choose");
+  });
+
   it("takes the list right before the question, the labels before a colon or a dash, the descriptions kept under the question", () => {
     const message = [
       "He medido las dos variantes en el móvil.",

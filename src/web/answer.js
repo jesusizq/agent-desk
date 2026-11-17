@@ -396,17 +396,27 @@ function contextFold(q, scrolls) {
 }
 
 /**
+ * Whether every paragraph of a question's context is in a message the conversation shows: the
+ * session's message the question was read from, which the panel's conversation shows right above.
+ * @param {string | undefined} context @param {string[]} shown
+ */
+function repeats(context, shown) {
+  const parts = (context ?? "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((p) => shown.some((t) => t.includes(p)));
+}
+
+/**
  * What an item asks and what it takes to answer it: the question, what the session said around it and its
  * earlier messages on demand, then the options and the box. Questions asked together come as numbered parts, each answered on its own, under a
  * line saying the session waits for all of them. In the session panel the question shows whole in a
- * box of its own height, the conversation above holding the rest. @param {Item} item @param {{ panel?: boolean }} [where]
+ * box of its own height, without what the conversation above already shows (`shown`, its messages' texts). @param {Item} item @param {{ panel?: boolean, shown?: string[] }} [where]
  */
-export function askBody(item, { panel = false } = {}) {
+export function askBody(item, { panel = false, shown = [] } = {}) {
   /** @param {Question} q */
   const text = (q) => (q.kind === "permission" ? h("pre", { class: "qcode", "data-scroll": `code-${q.id}` }, q.text) : panel ? h("div", { class: "pq-text", "data-scroll": `pq-${q.id}` }, questionText(q.text)) : questionText(q.text));
   /** @param {Question} q @param {Child} [earlier] */
   const ask = (q, earlier = null) => {
-    const more = [contextFold(q, panel), earlier].flat().filter(Boolean);
+    const more = [repeats(q.context, shown) ? null : contextFold(q, panel), earlier].flat().filter(Boolean);
     return [text(q), q.status === "open" ? answerForm(q, more.length ? h("div", { class: "qmore" }, more) : null) : resolvedLine(q)];
   };
   const [first] = item.questions;

@@ -3006,6 +3006,23 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    it("in its session's panel, leaves out what the conversation right above already shows", async () => {
+      store.upsertSession({ id: "said-above", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "said above", state: "waiting" });
+      const message = Array.from({ length: 12 }, (_, i) => `Paragraph ${i + 1} of the measurements.`).join("\n\n");
+      store.addMessage({ sessionId: "said-above", from: "session", text: `${message}\n\nWhich one do I do?\n- Both (recommended)\n- Only the first` });
+      const q = store.ask({ sessionId: "said-above", kind: "waiting", text: "Which one do I do?", context: message, options: ["Both (recommended)", "Only the first"] });
+      try {
+        const page = await open();
+        await page.click(".scard", "said above");
+        await page.waitFor(`${arrived("session")} && document.querySelector('#session .panel-question') && [...document.querySelectorAll('#session .chat .msg')].some((el) => el.textContent.includes('Paragraph 12 of the measurements.'))`);
+        const order = await page.eval<string[]>(`[...document.querySelectorAll('#session .panel-question :is(.qtext, .pq-text, .qctx, .opts, textarea)')].map((el) => el.matches('.qtext, .pq-text') ? 'title' : el.matches('.qctx') ? 'context' : el.matches('.opts') ? 'options' : 'box')`);
+        assert.deepEqual([...new Set(order)], ["title", "options", "box"], "the message is not repeated in the box");
+        assert.ok(await page.eval<boolean>("(() => { const f = document.querySelector('#session .chat-footer'); return f.getBoundingClientRect().height <= innerHeight / 2 + 1; })()"), "the box takes at most half the window");
+      } finally {
+        store.dismiss(q.id);
+      }
+    });
+
     it("sends a single choice with one click, as Send does, and the next card takes the keys", async () => {
       store.upsertSession({ id: "one-click", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "one click answers", state: "waiting" });
       store.ask({ sessionId: "one-click", kind: "question", text: "Answered with one click?", options: ["Yes, at once", "No"] });

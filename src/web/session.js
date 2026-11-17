@@ -294,7 +294,7 @@ export function chat(s) {
               h("span", { class: "spacer" }),
               h("button", { class: "linkish", onclick: () => answerOnDesk(asking.key) }, TEXT.conversation.openQuestion),
             ),
-            askBody(asking, { panel: true }),
+            askBody(asking, { panel: true, shown: list.map((m) => m.text) }),
           )
         : // One box whatever the session does, inert while it cannot take a message: the panel's foot never jumps.
           replyBox(`message-${s.id}`, [], s.id, {
