@@ -11,7 +11,7 @@ import { sessionStatus } from "../../src/project/refresh.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { AgentFields, Store, TurnCheck } from "../../src/store/store.ts";
 import { publishOpenedPages } from "./pages.ts";
-import { inHandoffs, refreshResumes } from "./resumes.ts";
+import { inHandoffs, refreshResumes, resumesIdOf } from "./resumes.ts";
 import { readTally, type Tally, tallyTranscript } from "./usage.ts";
 
 export const PROVIDER = "Claude Code";
@@ -250,11 +250,13 @@ function register(input: Common, ctx: HookContext): void {
   const terminal = ctx.env.TERM_PROGRAM;
   // Where the session runs inside tmux changes only when the terminal attaches or detaches.
   const tmux = ["SessionStart", "UserPromptSubmit", "Stop"].includes(input.event) ? ctx.tmuxLocation?.() : undefined;
+  const dir = workDir(input, ctx);
   ctx.store.upsertSession(
     compact({
       id: input.sessionId,
       provider: PROVIDER,
-      project: locateProject(workDir(input, ctx)),
+      project: locateProject(dir),
+      resumesId: resumesIdOf(dir),
       title: title || undefined,
       process: proc,
       takesMessagesWhileWorking: true, // deliverWhileWorking, after each tool call

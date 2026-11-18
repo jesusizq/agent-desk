@@ -77,6 +77,7 @@ export function readSession(value: unknown, where = "session"): Session {
     terminal: optional(f.terminal, `${where}.terminal`, label),
     tmux: optional(f.tmux, `${where}.tmux`, readTmux),
     takesMessagesWhileWorking: optional(f.takesMessagesWhileWorking, `${where}.takesMessagesWhileWorking`, bool),
+    resumesId: optional(f.resumesId, `${where}.resumesId`, id),
     activity: optional(f.activity, `${where}.activity`, line),
     activityIsCall: optional(f.activityIsCall, `${where}.activityIsCall`, bool),
     activityAt: optional(f.activityAt, `${where}.activityAt`, isoTime),

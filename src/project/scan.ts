@@ -86,6 +86,9 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
   const main = listed[0];
   if (!main) throw new Error(`${dir}: git lists no worktree`);
   const base = main.branch;
+  // Every checkout is compared against the base's head as listed, not its name: one that moves
+  // mid-scan would compare a checkout's counts against two different heads.
+  const baseHead = base === undefined ? undefined : main.head;
   const problems: string[] = [];
   const paths = new Set(listed.map((w) => path.resolve(w.path)));
   const known = new Map((previous?.worktrees ?? []).map((w) => [path.resolve(w.path), w]));
@@ -106,7 +109,7 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
     const entry: Worktree = { path: w.path, head: w.head, main: isMain, ...(w.branch ? { branch: w.branch } : {}) };
     if (size.bytes !== undefined && size.sizedAt !== undefined) Object.assign(entry, size);
     try {
-      Object.assign(entry, await headState(dir, w.head, isMain ? undefined : base, timeoutMs));
+      Object.assign(entry, await headState(dir, w.head, isMain ? undefined : baseHead, timeoutMs));
       const own = path.resolve(w.path);
       const nested = [...paths].filter((p) => p.startsWith(`${own}/`)).map((p) => path.relative(own, p));
       entry.dirty = await changedFiles(w.path, nested, timeoutMs);
@@ -129,7 +132,7 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
   const branches: BranchState[] = [];
   for (const name of new Set(options.branches ?? [])) {
     if (checkedOut.has(name)) continue;
-    branches.push(await branchState(dir, name, base, timeoutMs));
+    branches.push(await branchState(dir, name, baseHead, timeoutMs));
   }
   const totalBytes = worktrees.reduce((n, w) => n + (w.bytes ?? 0), 0);
   const day = now.toISOString().slice(0, 10);
@@ -148,7 +151,7 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
 }
 
 /**
- * A head's last commit and, against the main branch when given, whether its work is merged and how
+ * A head's last commit and, against the main branch's head when given, whether its work is merged and how
  * far ahead and behind it is. Merged: an ancestor of the base, or each of its commits landed there by
  * cherry-pick (a patch-equivalent commit), which only `ahead`, counted without those, then tells.
  * An empty commit matches any other empty one and a merge none, so neither is taken as landed: a

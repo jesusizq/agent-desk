@@ -196,6 +196,36 @@ describe("pending handoffs", () => {
     assert.deepEqual(store.listResumes().map((r) => r.notes.map((n) => [n.title, n.command])), [[["Handoff a.md", "/ahorro:handoff-load"]]], "the one list the subfolder's session shows too");
   });
 
+  it("removes the list an earlier version kept for the session's own folder, a subfolder or a path through a symlink, and names the one it files under", () => {
+    const cache = tempHome();
+    const root = fs.realpathSync(tempHome());
+    const repo = path.join(root, "shop");
+    const sub = path.join(repo, "web");
+    const link = path.join(root, "link");
+    fs.mkdirSync(sub, { recursive: true });
+    gitIn(repo, "init", "-q");
+    fs.symlinkSync(repo, link);
+    const folder = path.join(cache, "claude-handoffs", "shop");
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, "a.md"), "## Objetivo\nHandoff a\n");
+    const store = testStore();
+    // As the version before one record per handoff folder left them: numbered before b.md was loaded.
+    const before = [note("Handoff b", "/ahorro:handoff-load 1"), note("Handoff a", "/ahorro:handoff-load 2")];
+    for (const dir of [sub, link]) store.putResumes({ id: projectId(dir), name: path.basename(dir), dir, at: new Date().toISOString(), notes: before });
+    // Another handoff folder's list stays.
+    const other = path.join(root, "elsewhere");
+    store.putResumes({ id: projectId(other), name: "elsewhere", dir: other, at: new Date().toISOString(), notes: before });
+    const hookIn = (dir: string) => handleHook(readHookInput(JSON.stringify({ session_id: `cc-${path.basename(dir)}`, cwd: dir, hook_event_name: "Stop", last_assistant_message: "x" })), { store, env: { CLAUDE_PROJECT_DIR: dir, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined });
+    hookIn(sub);
+    hookIn(link);
+    assert.deepEqual(
+      store.listResumes().map((r) => [r.name, r.notes.map((n) => n.command)]).sort(),
+      [["elsewhere", ["/ahorro:handoff-load 1", "/ahorro:handoff-load 2"]], ["shop", ["/ahorro:handoff-load"]]],
+      "no stale list still offers /ahorro:handoff-load 1, which now loads another handoff",
+    );
+    assert.deepEqual(store.listSessions().map((x) => [x.project.name, x.resumesId]).sort(), [["link", projectId(repo)], ["web", projectId(repo)]], "each session names the list it files under");
+  });
+
   it("names the handoff folder as the plugin's loader does, from git's common dir, symlinks resolved", () => {
     const root = fs.realpathSync(tempHome());
     const repo = path.join(root, "shop");

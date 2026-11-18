@@ -1444,9 +1444,10 @@ export class Store {
   /**
    * Replaces a project's notes with what `read` finds now, read and written under the record's lock,
    * so that of two adapters reading their source at different moments the later read is kept. Writes
-   * only when the notes changed; a stored record that cannot be read is reported and replaced.
+   * only when the notes changed; a stored record that cannot be read is reported and replaced. `read`
+   * gets the stored record; notes left empty remove it.
    */
-  refreshResumes(project: Omit<ProjectResumes, "at" | "notes">, read: () => ResumeNote[], problems: string[], now = new Date()): void {
+  refreshResumes(project: Omit<ProjectResumes, "at" | "notes">, read: (stored: ProjectResumes | undefined) => ResumeNote[], problems: string[], now = new Date()): void {
     const file = this.paths.resumes(project.id);
     withLock(file, () => {
       let before: ProjectResumes | undefined;
@@ -1457,7 +1458,7 @@ export class Store {
         unreadable = true;
         problems.push(`${(error as Error).message}; replaced by the notes read now`);
       }
-      const notes = read();
+      const notes = read(before);
       if (!unreadable && JSON.stringify(before?.notes ?? []) === JSON.stringify(notes)) return;
       this.putResumes({ ...project, at: now.toISOString(), notes });
     });

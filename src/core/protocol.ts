@@ -40,6 +40,11 @@ export type Session = {
    * does with what the developer types mid-turn); otherwise only while it waits.
    */
   takesMessagesWhileWorking?: boolean;
+  /**
+   * The id of the `ProjectResumes` record its adapter files the notes it can resume from under, which
+   * may not be its project's (a session in a subfolder shares its repository's): its project's filter shows them.
+   */
+  resumesId?: string;
   /** What the session is doing now, sampled from its tool calls (e.g. "Edit: src/app.ts"). */
   activity?: string;
   /**

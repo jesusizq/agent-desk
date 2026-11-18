@@ -120,6 +120,29 @@ describe("git state of a project's checkouts", () => {
     assert.match(line(wt.partly), / · 1 ahead, 8 behind · clean · /);
   });
 
+  it("compares each checkout against one head of the main branch, even when it moves during the scan", async () => {
+    const { main } = landedRepo();
+    const picked = gitIn(main, "rev-parse", "agent/picked").trim();
+    // main merges agent/picked between the commands that count where it stands (after the first).
+    const merge = gitIn(main, "commit-tree", "main^{tree}", "-p", "main", "-p", "agent/picked", "-m", "Merge agent/picked").trim();
+    const bin = path.join(tempHome(), "bin");
+    fs.mkdirSync(bin);
+    const moved = path.join(bin, "moved");
+    const real = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
+    fs.writeFileSync(path.join(bin, "git"), `#!/bin/sh\ncase " $* " in *" --cherry-pick "*"${picked}"*) [ -e "${moved}" ] || { "${real}" -C "${main}" update-ref refs/heads/main ${merge} && : > "${moved}"; };; esac\nexec "${real}" "$@"\n`, { mode: 0o755 });
+    const saved = process.env.PATH;
+    process.env.PATH = `${bin}:${saved}`;
+    let scan;
+    try {
+      scan = await scanProject(main, undefined, new Date(), { sizes: false });
+    } finally {
+      process.env.PATH = saved;
+    }
+    assert.ok(fs.existsSync(moved), "main moved during the scan");
+    const w = scan.worktrees.find((x) => x.branch === "agent/picked");
+    assert.deepEqual([w?.merged, w?.cherryPicked, w?.ahead, w?.behind], [true, true, 0, 8], "as main stood when listed: its two commits landed as copies");
+  });
+
   it("takes neither an empty commit, which matches any other empty one, nor a merge as landed by cherry-pick", async () => {
     const { main } = landedRepo();
     gitIn(main, "commit", "-q", "--allow-empty", "-m", "an empty one on main");

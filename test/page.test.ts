@@ -435,6 +435,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const { root, main, wt } = landedRepo();
     const detached = path.join(root, "shop-detached");
     gitIn(main, "worktree", "add", "-q", "--detach", detached, "agent/merged");
+    // A folder whose name holds what dash's echo reads as an escape (\c ends its output).
+    const escaped = path.join(root, "shop-\\c-escaped");
+    gitIn(main, "worktree", "add", "-q", "--detach", escaped, "agent/merged");
     // Merged and left alone since the scan: removed, the branch with branch -d. And one on a branch
     // that stays put while its checkout leaves it for commits of its own.
     const quiet = path.join(root, "shop-quiet");
@@ -450,7 +453,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.upsertSession({ id: "landed", provider: "Test", project: { name: "shop", dir: main }, title: "landed work", state: "waiting" });
     store.upsertAgent("landed", "picker", { goal: "Pick me", worktree: wt.picked, state: "done" });
     // Checkouts move after the scan: the copied commands must remove nothing they did not check.
-    for (const moved of [wt.moved, wt.merged, detached]) gitIn(moved, "commit", "-q", "--allow-empty", "-m", "after the scan");
+    for (const moved of [wt.moved, wt.merged, detached, escaped]) gitIn(moved, "commit", "-q", "--allow-empty", "-m", "after the scan");
     gitIn(switched, "switch", "-q", "--detach");
     gitIn(switched, "commit", "-q", "--allow-empty", "-m", "after the scan, on no branch");
     try {
@@ -474,23 +477,23 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.match(await page.eval<string>("[...document.querySelectorAll('#session .wt-list .arow')].find((r) => r.textContent.startsWith('agent/picked')).textContent"), /picked · landed by cherry-pick/);
       await page.click("#session .wt-actions button");
       const commands = (await page.eval<string>("navigator.clipboard.readText()")).split("\n");
-      assert.equal(commands.length, 8, "merged, picked, dirty, moved, detached, quiet, still and switched; not the one partly picked");
+      assert.equal(commands.length, 9, "merged, picked, dirty, moved, detached, escaped, quiet, still and switched; not the one partly picked");
       const kept: string[] = [];
       for (const c of commands) {
         try {
           execFileSync("sh", ["-c", c], { stdio: "pipe" });
         } catch (error) {
-          // Expected for the dirty checkout and the four that moved: each line fails, saying which it kept.
+          // Expected for the dirty checkout and the five that moved: each line fails, saying which it kept.
           kept.push(String((error as { stderr?: Buffer }).stderr));
         }
       }
-      assert.equal(kept.length, 5, kept.join("\n"));
-      for (const moved of [wt.moved, wt.merged, detached, switched]) assert.ok(kept.some((e) => e.includes(`kept ${moved}: its HEAD or branch is no longer at`)), `${moved} said kept`);
+      assert.equal(kept.length, 6, kept.join("\n"));
+      for (const moved of [wt.moved, wt.merged, detached, escaped, switched]) assert.ok(kept.some((e) => e.includes(`kept ${moved}: its HEAD or branch is no longer at`)), `${moved} said kept, its path whole`);
       assert.ok(kept.some((e) => e.includes(wt.dirty) && /modified or untracked/.test(e)), "git says why the dirty one stays");
       assert.deepEqual(gitIn(main, "branch", "--format=%(refname:short)").trim().split("\n").sort(), ["agent/dirty", "agent/merged", "agent/moved", "agent/partly", "agent/switched", "main"]);
       assert.deepEqual(
         gitIn(main, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)).sort(),
-        [main, wt.dirty, wt.partly, wt.moved, wt.merged, detached, switched].sort(),
+        [main, wt.dirty, wt.partly, wt.moved, wt.merged, detached, escaped, switched].sort(),
         "the picked, quiet and still checkouts go: the dirty one is kept, and so are those that moved since the scan, with their branches",
       );
       await page.press("Escape");
@@ -623,6 +626,26 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.equal(await page.eval<string>("navigator.clipboard.readText()"), "/load 1");
     } finally {
       store.putResumes({ ...resumes, notes: [] });
+    }
+  });
+
+  it("shows under a project's filter the handoffs its sessions file under, named after another folder", async () => {
+    const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
+    // A session in the repository's subfolder: its filter says "shop-ui", its handoffs are the repository's.
+    const resumes = { id: "shop-0badc0de", name: "shop", dir: "/home/demo/Projects/shop", at: iso(0), notes: [{ title: "Wire the cart", writtenAt: iso(-3600_000), expiresAt: iso(40 * 3600_000), command: "/load" }] };
+    store.putResumes(resumes);
+    store.upsertSession({ id: "in-subfolder", provider: "Test", project: { name: "shop-ui", dir: "/home/demo/Projects/shop/shop-ui" }, resumesId: resumes.id, title: "subfolder work", state: "waiting" });
+    try {
+      const page = await open();
+      await page.click("#projects button", "shop-ui");
+      await page.waitFor("[...document.querySelectorAll('#strip .resume-chip')].map((c) => c.textContent).join() === 'shop: 1 handoff to resume'");
+      await page.click("#projects button", "invoices-api");
+      await page.waitFor("document.querySelectorAll('#strip .resume-chip').length === 0");
+      await page.click("#projects button", "All");
+    } finally {
+      store.putResumes({ ...resumes, notes: [] });
+      store.updateSession("in-subfolder", (x) => ({ ...x, state: "ended" }));
+      store.forgetSession("in-subfolder");
     }
   });
 

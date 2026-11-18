@@ -63,8 +63,14 @@ export function openProject(projectId) {
 
 /** A project's notes that can still be loaded: one past its end is hidden even when no hook ran since. @param {ProjectResumes} p */
 export const pendingNotes = (p) => p.notes.filter((n) => Date.parse(n.expiresAt) > Date.now());
-/** The projects shown that have work left for a new conversation. */
-export const resumesInView = () => data.resumes.filter((p) => (ui.project === null || p.name === ui.project) && pendingNotes(p).length > 0);
+/**
+ * The projects shown that have work left for a new conversation: under a project's filter, those of
+ * its name and those its sessions' adapters file their notes under (a subfolder's, its repository's).
+ */
+export function resumesInView() {
+  const filed = new Set(data.sessions.flatMap((s) => (s.project.name === ui.project && s.resumesId ? [s.resumesId] : [])));
+  return data.resumes.filter((p) => (ui.project === null || p.name === ui.project || filed.has(p.id)) && pendingNotes(p).length > 0);
+}
 
 /**
  * Pending handoffs, newest first: what each is about, its age, until when it is offered, and the
@@ -120,7 +126,7 @@ export function cleanupCommands(dir, merged) {
   return merged
     .map((w) => {
       const checks = [at(`git -C ${q(w.path)} rev-parse HEAD`, w.head), ...(w.branch ? [at(`${g} rev-parse ${q(`refs/heads/${w.branch}`)}`, w.head)] : [])];
-      const kept = `{ echo ${q(TEXT.worktrees.kept(w.path, w.head))} >&2; false; }`;
+      const kept = `{ printf '%s\\n' ${q(TEXT.worktrees.kept(w.path, w.head))} >&2; false; }`;
       const remove = `${checks.join(" && ")} || ${kept} && ${g} worktree remove ${q(w.path)}`;
       return w.branch ? `${remove} && ${g} branch ${w.cherryPicked ? "-D" : "-d"} ${q(w.branch)}` : remove;
     })
