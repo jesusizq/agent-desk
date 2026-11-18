@@ -31,6 +31,11 @@ function scrollerOf(el) {
 }
 /** Where a scroll area starts showing its content, in the window. @param {Element} scroller */
 const viewTop = (scroller) => (scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top + scroller.clientTop);
+/** What a scroll area's scroll carries: its children, not those fixed to the window or over the page. @param {Element} scroller */
+const contentOf = (scroller) =>
+  [...(scroller === document.scrollingElement ? document.body : scroller).children].filter(
+    /** @returns {el is HTMLElement} */ (el) => el instanceof HTMLElement && shown(el) && getComputedStyle(el).position !== "fixed" && !el.matches(":modal, :popover-open"),
+  );
 
 /** @param {Element} el */
 const shown = (el) => el.getClientRects().length > 0;
@@ -149,6 +154,8 @@ function animateColumn({ list, scroller, items, was, now, added }, leaving, outO
   for (const el of now) stop(el);
   const gap = gapOf(list);
   const scroll = scrolls.get(scroller) ?? { top: scroller.scrollTop, edge: viewTop(scroller) };
+  // The farthest the scroll can stand once the cards end where the redraw put them (the gone ones are out).
+  const end = scroller.scrollHeight - scroller.clientHeight;
   // A card that shrinks or folds from above the top of its scroll area loses its hidden part at once, the
   // scroll going up as much: the motion starts from what shows, and the browser never clamps the scroll
   // mid-way (the rows below would jump, the card's content scroll back).
@@ -229,6 +236,16 @@ function animateColumn({ list, scroller, items, was, now, added }, leaving, outO
   scroll.top -= cutSum();
   scrolls.set(scroller, scroll);
   scroller.scrollTop = scroll.top;
+  // What is left ending above the area's bottom, the browser would pull the scroll down mid-way, in whole
+  // pixels as the cards shrink by fractions, and all below would shake: the scroll goes there at once and
+  // what it carries slides down instead, measured before the slides below.
+  if (scroller.scrollTop - end > 0.5) {
+    const from = scroller.scrollTop;
+    scroller.scrollTop = end;
+    scroll.top = scroller.scrollTop;
+    const by = from - scroll.top;
+    for (const el of contentOf(scroller)) el.animate([{ transform: `translateY(${-by}px)` }, { transform: "translateY(0px)" }], { ...options, composite: "add" });
+  }
   // Measured with the folds and openings at their start: as those run, the layout carries each card
   // the rest of the way, along the same curve, so it ends where the redraw put it. A card cut, and those
   // above it, came down with the scroll: they start from there.

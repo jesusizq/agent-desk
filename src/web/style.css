@@ -1008,16 +1008,15 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .tabbar { display: none; }
 @media (max-width: 700px), (max-height: 500px) {
   #views { display: none; }
-  /* As a native tab bar, it sits on the bottom edge and takes the home indicator's room; the credit moves to the display menu. */
-  body { --bar: 54px; padding-bottom: calc(var(--bar) + env(safe-area-inset-bottom)); }
+  /* As a native tab bar, it sits on the bottom edge and takes the home indicator's room; the credit moves to the display menu.
+     The page only grows to scroll its foot above a keyboard that covers it (layout.js measures it, whatever the pointer). */
+  body { --bar: 54px; padding-bottom: max(calc(var(--bar) + env(safe-area-inset-bottom)), calc(var(--keyboard, 0px) + 16px)); }
   .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--border);
     padding: 2px max(6px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(6px, env(safe-area-inset-left));
     transition: transform var(--dur-2) var(--ease-out), visibility var(--dur-2); }
   .credits { display: none; }
   .menu .menu-credit { display: block; } /* outranks .menu-credit, written further down */
-  /* While the keyboard is up (layout.js), the tab bar slides away under it. The page keeps its
-     height, so what is under the finger stays; it only grows to scroll its foot above a keyboard that covers it. */
-  :root[data-keyboard] body { padding-bottom: max(calc(var(--bar) + env(safe-area-inset-bottom)), calc(var(--keyboard, 0px) + 16px)); }
+  /* While the keyboard is up (layout.js), the tab bar slides away under it. The page keeps its height, so what is under the finger stays. */
   :root[data-keyboard] .tabbar { transform: translateY(100%); visibility: hidden; }
   .tabbar button { flex: 1 1 0; position: relative; border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 2px; min-height: 50px; font: 500 0.6875rem var(--sans); color: var(--muted); }

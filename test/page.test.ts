@@ -3214,6 +3214,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
             assert.equal(frames.at(-1)?.card, null, `the card went: ${log}`);
             // Where what is left is shorter than the window, the scroll follows the content down, never back up.
             assert.ok(frames.every((f, i) => i === 0 || f.scroll <= frames[i - 1]!.scroll + 0.5), `the scroll never goes back up: ${log}`);
+            // And it moves once, at the redraw: pulled down mid-way, in whole pixels while the cards shrink by fractions, it would shake all below.
+            assert.ok(new Set(frames.map((f) => f.scroll)).size <= 2, `the scroll goes where it ends at once: ${log}`);
             const staying = frames.filter((f) => !f.leaving && f.row !== null).map((f) => f.row!);
             assert.ok(staying.every((top, i) => i === 0 || top <= staying[i - 1]! + 0.5), `the rows below the answered card only rise: ${log}`);
             for (const f of frames.filter((f) => f.resolved && f.card !== null)) assert.ok(f.card! >= -1, `the answered card shows from its top: ${log}`);
