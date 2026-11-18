@@ -19,22 +19,22 @@ export const MACHINE: MachineSources = { proc: "/proc", sys: "/sys", cores: os.a
  * The readings past their limits, each with its value and limit: the 1-minute load above the core
  * count, MemAvailable under MEMORY_FLOOR, the hottest zone at HOT_C or more. A file that does not exist
  * (another OS, a VM without thermal zones) skips its reading; one that cannot be read or parsed goes
- * to `problems`. Each value and limit is rounded to the digit the page shows, the value away from its
- * limit and the limit away from the value, so the shown reading is always past the shown limit, and a
- * reading moving within its last digit leaves the state's version alone.
+ * to `problems`. Each value and limit is rounded to the digit the page shows so that the shown reading
+ * is always past (or, for the temperature, at least at) the shown limit, and a reading moving within
+ * its last digit leaves the state's version alone.
  */
 export function machineWarnings(problems: string[], from: MachineSources = MACHINE): MachineWarning[] {
   const out: MachineWarning[] = [];
+  // In whole hundredths, as the file gives it: compared and rounded on the same exact number.
   const load = reading(path.join(from.proc, "loadavg"), loadOf, problems);
-  // In hundredths first, as the file gives it, so that 8.1 is not taken for 8.1000001 and shown as 8.2.
-  if (load !== undefined && load > from.cores) out.push({ reading: "load", value: Math.ceil(Math.round(load * 100) / 10) / 10, limit: from.cores });
+  if (load !== undefined && load > from.cores * 100) out.push({ reading: "load", value: Math.ceil(load / 10) / 10, limit: from.cores });
   const memory = reading(path.join(from.proc, "meminfo"), memoryOf, problems);
   if (memory) {
     const floor = Math.round(Math.min(MEMORY_FLOOR.bytes, MEMORY_FLOOR.ratio * memory.total));
     if (memory.available < floor) out.push({ reading: "memory", value: Math.floor(memory.available / 1e8) * 1e8, limit: Math.ceil(floor / 1e8) * 1e8 });
   }
   const hottest = hottestZone(path.join(from.sys, "class", "thermal"), problems);
-  if (hottest !== undefined && hottest >= HOT_C * 1000) out.push({ reading: "temperature", value: Math.ceil(hottest / 1000), limit: HOT_C });
+  if (hottest !== undefined && hottest >= HOT_C * 1000) out.push({ reading: "temperature", value: Math.round(hottest / 1000), limit: HOT_C });
   return out;
 }
 
@@ -72,10 +72,12 @@ function reading<T>(file: string, parse: (text: string) => T | undefined, proble
   return value;
 }
 
-/** The 1-minute load, the first field of /proc/loadavg. */
+/** The 1-minute load in hundredths, the first field of /proc/loadavg, rounded up past its second decimal. */
 function loadOf(text: string): number | undefined {
-  const m = /^(\d+(?:\.\d+)?)\s/.exec(text);
-  return m ? Number(m[1]) : undefined;
+  const m = /^(\d+)(?:\.(\d+))?\s/.exec(text);
+  if (!m) return undefined;
+  const decimals = m[2] ?? "";
+  return Number(m[1]) * 100 + Number(decimals.slice(0, 2).padEnd(2, "0")) + (/[1-9]/.test(decimals.slice(2)) ? 1 : 0);
 }
 
 /** MemTotal and MemAvailable of /proc/meminfo, in bytes (the file says kB, meaning KiB). */

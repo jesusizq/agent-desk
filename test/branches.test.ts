@@ -222,6 +222,8 @@ describe("git state of a project's checkouts", () => {
       ["bash", "-eo", "pipefail", "+O", "extglob", "load-gate.sh"],
       ["bash", "--rcfile", "/home/u/.bashrc", "--norc", "load-gate.sh"],
       ["bash", "--init-file", "x", "--", "scripts/load-gate.sh", "--max", "8"],
+      ["bash", "-", "load-gate.sh"],
+      ["sh", "-e", "-", "./load-gate.sh", "--max", "8"],
       ["bash", "--rcfile=/home/u/.bashrc", "load-gate.sh"],
       ["zsh", "-o", "errexit", "-C", "load-gate.sh"],
     ];
@@ -237,6 +239,8 @@ describe("git state of a project's checkouts", () => {
       ["fish", "--command", "load-gate.sh"],
       ["bash", "-o", "load-gate.sh"],
       ["bash", "--rcfile", "load-gate.sh"],
+      ["bash", "-", "run.sh", "load-gate.sh"],
+      ["bash", "--", "run.sh", "load-gate.sh"],
       ["env", "load-gate.sh"],
       ["cat", "load-gate.sh"],
       ["vim", "/home/u/bin/load-gate.sh"],

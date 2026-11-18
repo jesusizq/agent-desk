@@ -173,16 +173,19 @@ script of the desk's install (`src/`, `adapters/`, `bin/`), `agent-desk` or `age
 shell whose `-c` script runs one of those as a command (a hook's).
 
 An agent waits for the machine (`waitingFor: "machine-load"` on its record in `DeskState.agents`,
-never stored) while a process of its session's own tree runs the load gate: a script whose basename
-is `load-gate.sh`, run directly or as a shell's script file, its first argument past the shell's
-options and their values (`-o pipefail`, `+O extglob`, `--rcfile <file>`, `--init-file <file>`);
-never a shell's `-c` command string, in any option cluster, nor one reading its input (`-s`), since
-the gate such a shell runs shows in /proc as its own process (`runsLoadGate`,
-`src/project/busy.ts`), whose working folder is in the agent's checkout (its row in the session's
-branches, the deepest checkout of the scan holding the folder). An orchestration's gate blocks,
-sleeping, before a heavy command while the machine is loaded. The server reads it at every state,
-since a scan runs too rarely for a wait; only a `working` agent with a checkout is marked, and the
-page shows it waiting for the machine's load, neither working nor quiet. The rules of `busy` hold but
+never stored) while a process of its session's own tree runs the load gate with its working folder
+in the agent's checkout (its row in the session's branches, the deepest checkout of the scan holding
+the folder): a script whose basename is `load-gate.sh`, run directly or as a shell's script file, its
+first argument past the shell's options and their values (`-o pipefail`, `+O extglob`, `--rcfile
+<file>`, `--init-file <file>`, up to a `--` or `-`); never a shell's `-c` command string, in any
+option cluster, nor one reading its input (`-s`), since the gate such a shell runs shows in /proc as
+its own process (`runsLoadGate`, `src/project/busy.ts`). The gate is seen only while it runs as a
+process of its own: a script with a shebang, run by its path (from a shell's `-c` command too), or a
+shell given it as its file. A sourced gate (`. load-gate.sh`), or one without a shebang that a `-c`
+shell runs in a subshell, never shows its name in /proc, and its agent shows as working. An
+orchestration's gate blocks, sleeping, before a heavy command while the machine is loaded. The server
+reads it at every state, since a scan runs too rarely for a wait; only a `working` agent with a
+checkout is marked, and the page shows it waiting for the machine's load, neither working nor quiet. The rules of `busy` hold but
 for shells, which count here, since a shell runs the script.
 
 Sizes are walked at most hourly by the background scan; `agent-desk status` and the handoff read git
@@ -214,11 +217,13 @@ files of `/sys/class/thermal/thermal_zone*/`, nothing else:
 |---|---|---|---|
 | `load` | 1-minute load, rounded up to one decimal | core count (`os.availableParallelism()`) | above the limit |
 | `memory` | `MemAvailable` in bytes, rounded down to 0.1 GB | 5 GB, or 10 % of `MemTotal` if lower (`MEMORY_FLOOR`), rounded up to 0.1 GB | under the limit |
-| `temperature` | hottest zone in °C, rounded up | 95 (`HOT_C`) | at or above the limit |
+| `temperature` | hottest zone in °C, rounded to the nearest | 95 (`HOT_C`) | at or above the limit |
 
-Each value and limit is rounded to the digit the page shows, the value away from its limit and the
-limit away from the value, so the shown reading is always past the shown limit (never "3.2 GB free,
-under 3.2 GB"), and a reading moving within its last digit leaves the state's version alone. A
+Each value and limit is rounded to the digit the page shows so that the shown reading is always past
+the shown limit (never "3.2 GB free, under 3.2 GB"; a temperature, warned of from 95 °C, rounds to
+95 or more), and a reading moving within its last digit leaves the state's version alone. The load
+is compared and rounded on the same number, in whole hundredths as the file gives it (a finer
+reading rounded up to its hundredth), so 8.001 on 8 cores warns, shown as 8.1. A
 missing file (another OS, a VM without thermal zones) and a switched-off sensor (its `temp` answering `ENODATA`, `EINVAL`, `EAGAIN` or `EIO`) skip their reading; a file that cannot be read or
 parsed goes to `problems`.
 

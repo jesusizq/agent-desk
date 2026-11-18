@@ -39,6 +39,10 @@ describe("machine health", () => {
     assert.deepEqual(warnings(machine({ loadavg: loadavg("8.01") })).warnings, [{ reading: "load", value: 8.1, limit: 8 }], "rounded up, so it shows above its limit");
     assert.deepEqual(warnings(machine({ loadavg: loadavg("8.10") })).warnings, [{ reading: "load", value: 8.1, limit: 8 }], "a load the file gives to the digit shown stays as it is");
     assert.deepEqual(warnings(machine({ loadavg: loadavg("34.88") }, 18)).warnings, [{ reading: "load", value: 34.9, limit: 18 }]);
+    // A finer reading is compared and shown on the same number: just above its cores shows above them.
+    assert.deepEqual(warnings(machine({ loadavg: loadavg("8.001") })).warnings, [{ reading: "load", value: 8.1, limit: 8 }]);
+    assert.deepEqual(warnings(machine({ loadavg: loadavg("8.000") })).warnings, []);
+    assert.deepEqual(warnings(machine({ loadavg: loadavg("9") })).warnings, [{ reading: "load", value: 9, limit: 8 }]);
   });
 
   it("warns of memory available under 5 GB, or under 10 % of a smaller machine's total", () => {
@@ -57,7 +61,8 @@ describe("machine health", () => {
   it(`warns when the hottest thermal zone reaches ${HOT_C} °C, reading only the zones' temp files`, () => {
     assert.deepEqual(warnings(machine({ zones: ["47000\n", "94999\n", "-273000\n"] })), { warnings: [], problems: [] }, "a cooling device's file is not a zone's");
     assert.deepEqual(warnings(machine({ zones: ["47000\n", "95000\n", "50\n"] })).warnings, [{ reading: "temperature", value: 95, limit: HOT_C }]);
-    assert.deepEqual(warnings(machine({ zones: ["96400\n", "95000\n"] })).warnings, [{ reading: "temperature", value: 97, limit: HOT_C }], "the hottest one, rounded up");
+    assert.deepEqual(warnings(machine({ zones: ["96400\n", "95000\n"] })).warnings, [{ reading: "temperature", value: 96, limit: HOT_C }], "the hottest one, rounded: 96.4 °C is not shown as 97");
+    assert.deepEqual(warnings(machine({ zones: ["95499\n"] })).warnings, [{ reading: "temperature", value: 95, limit: HOT_C }], "rounded, it still reads at the limit");
     assert.deepEqual(warnings(machine({ zones: [null, "97000\n"] })).warnings, [{ reading: "temperature", value: 97, limit: HOT_C }], "a zone without its file is skipped");
   });
 
