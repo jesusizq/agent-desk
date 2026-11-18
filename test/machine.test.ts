@@ -36,7 +36,8 @@ describe("machine health", () => {
   it("warns of a 1-minute load above the core count, not at it", () => {
     assert.deepEqual(warnings(machine({ loadavg: loadavg("8.00") })), { warnings: [], problems: [] });
     assert.deepEqual(warnings(machine({ loadavg: loadavg("7.99") })).warnings, []);
-    assert.deepEqual(warnings(machine({ loadavg: loadavg("8.04") })).warnings, [{ reading: "load", value: 8, limit: 8 }], "rounded as shown");
+    assert.deepEqual(warnings(machine({ loadavg: loadavg("8.01") })).warnings, [{ reading: "load", value: 8.1, limit: 8 }], "rounded up, so it shows above its limit");
+    assert.deepEqual(warnings(machine({ loadavg: loadavg("8.10") })).warnings, [{ reading: "load", value: 8.1, limit: 8 }], "a load the file gives to the digit shown stays as it is");
     assert.deepEqual(warnings(machine({ loadavg: loadavg("34.88") }, 18)).warnings, [{ reading: "load", value: 34.9, limit: 18 }]);
   });
 
@@ -48,13 +49,15 @@ describe("machine health", () => {
     // 16 GB in all: the floor is 1.6 GB, 1562500 KiB.
     assert.deepEqual(warnings(machine({ meminfo: meminfo(15625000, 1562500) })).warnings, [], "at the floor is not under it");
     assert.deepEqual(warnings(machine({ meminfo: meminfo(15625000, 1562499) })).warnings, [{ reading: "memory", value: 1.5e9, limit: 1.6e9 }]);
+    // 32.2 GB in all: the floor is 3.22 GB; 3.21 GB free would show "3.2 GB free, under 3.2 GB" with the limit rounded to the nearest.
+    assert.deepEqual(warnings(machine({ meminfo: meminfo(31445313, 3134766) })).warnings, [{ reading: "memory", value: 3.2e9, limit: 3.3e9 }], "the limit rounded up, the reading down");
     assert.deepEqual(warnings(machine({ meminfo: meminfo(15625000, 4000000) })).warnings, [], "4 GB free is plenty on 16 GB");
   });
 
   it(`warns when the hottest thermal zone reaches ${HOT_C} °C, reading only the zones' temp files`, () => {
     assert.deepEqual(warnings(machine({ zones: ["47000\n", "94999\n", "-273000\n"] })), { warnings: [], problems: [] }, "a cooling device's file is not a zone's");
     assert.deepEqual(warnings(machine({ zones: ["47000\n", "95000\n", "50\n"] })).warnings, [{ reading: "temperature", value: 95, limit: HOT_C }]);
-    assert.deepEqual(warnings(machine({ zones: ["96400\n", "95000\n"] })).warnings, [{ reading: "temperature", value: 96, limit: HOT_C }], "the hottest one");
+    assert.deepEqual(warnings(machine({ zones: ["96400\n", "95000\n"] })).warnings, [{ reading: "temperature", value: 97, limit: HOT_C }], "the hottest one, rounded up");
     assert.deepEqual(warnings(machine({ zones: [null, "97000\n"] })).warnings, [{ reading: "temperature", value: 97, limit: HOT_C }], "a zone without its file is skipped");
   });
 

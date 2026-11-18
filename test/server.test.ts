@@ -544,6 +544,7 @@ describe("agents waiting for the machine", () => {
     // This test's process stands for the session: what it starts through a shell is its work.
     own.upsertSession({ id: "orch", provider: "Test", project: { name: "shop", dir: main }, process: { pid: process.pid, start: me.start, ancestors: [] } });
     own.upsertAgent("orch", "gated", { goal: "Gated agent", worktree: nested });
+    own.upsertAgent("orch", "mainline", { goal: "Agent on the main checkout", branch: "main" });
     own.upsertAgent("orch", "plain", { goal: "Plain agent", worktree: beside });
     own.upsertAgent("orch", "over", { goal: "Finished agent", worktree: over, state: "done" });
     const checkout = (p: string, branch: string, isMain = false) => ({ path: p, branch, head: "abc1234", main: isMain });
@@ -560,17 +561,23 @@ describe("agents waiting for the machine", () => {
     const waiting = () => {
       const state = deskState(own, new Date(), QUIET_MACHINE);
       assert.deepEqual(state.problems, []);
-      return state.agents.filter((a) => a.waitingFor === "machine-load").map((a) => a.name);
+      return state.agents.filter((a) => a.waitingFor === "machine-load").map((a) => a.name).sort();
     };
     assert.deepEqual(waiting(), []);
-    const started = [await runScript(gate, main), await runScript(build, beside), await runScript(gate, over)];
+    const started = [await runScript(build, beside), await runScript(gate, over)];
     try {
-      assert.deepEqual(waiting(), [], "the gate in the main checkout is not the nested worktree's, another script is no gate, and a finished agent waits for nothing");
-      const gated = await runScript(gate, path.join(nested, "src"), true);
+      assert.deepEqual(waiting(), [], "another script is no gate, and a finished agent waits for nothing");
+      // Given to a shell with an option that takes a value, unlike the shebang runs: /proc shows `sh -o errexit <script>`.
+      const gated = await runScript(gate, path.join(nested, "src"), ["sh", "-o", "errexit"]);
       started.push(gated);
-      assert.deepEqual(waiting(), ["gated"], "run by a shell, in a folder of the agent's checkout");
+      assert.deepEqual(waiting(), ["gated"], "in a folder of the nested worktree, the deepest checkout holding it: not the main checkout's agent");
+      const atMain = await runScript(gate, main);
+      started.push(atMain);
+      assert.deepEqual(waiting(), ["gated", "mainline"], "through its shebang, in the main checkout");
       await gated.end();
-      assert.deepEqual(waiting(), [], "the gate open, it works again");
+      assert.deepEqual(waiting(), ["mainline"], "the nested worktree's gate open, its agent works again, and the main checkout's gate is not its");
+      await atMain.end();
+      assert.deepEqual(waiting(), []);
     } finally {
       await Promise.all(started.map((s) => s.end()));
     }

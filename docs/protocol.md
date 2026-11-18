@@ -174,30 +174,16 @@ shell whose `-c` script runs one of those as a command (a hook's).
 
 An agent waits for the machine (`waitingFor: "machine-load"` on its record in `DeskState.agents`,
 never stored) while a process of its session's own tree runs the load gate: a script whose basename
-is `load-gate.sh`, run directly or as a shell's script argument (`runsLoadGate`,
+is `load-gate.sh`, run directly or as a shell's script file, its first argument past the shell's
+options and their values (`-o pipefail`, `+O extglob`, `--rcfile <file>`, `--init-file <file>`);
+never a shell's `-c` command string, in any option cluster, nor one reading its input (`-s`), since
+the gate such a shell runs shows in /proc as its own process (`runsLoadGate`,
 `src/project/busy.ts`), whose working folder is in the agent's checkout (its row in the session's
 branches, the deepest checkout of the scan holding the folder). An orchestration's gate blocks,
 sleeping, before a heavy command while the machine is loaded. The server reads it at every state,
 since a scan runs too rarely for a wait; only a `working` agent with a checkout is marked, and the
 page shows it waiting for the machine's load, neither working nor quiet. The rules of `busy` hold but
 for shells, which count here, since a shell runs the script.
-
-## Machine health
-
-`DeskState.machine` holds this machine's readings past their limits, empty while it is healthy
-(`src/core/machine.ts`), read at every state from `/proc/loadavg`, `/proc/meminfo` and the `temp`
-files of `/sys/class/thermal/thermal_zone*/`, nothing else:
-
-| `reading` | `value` | `limit` | Warns when |
-|---|---|---|---|
-| `load` | 1-minute load, to one decimal | core count (`os.availableParallelism()`) | above the limit |
-| `memory` | `MemAvailable` in bytes, rounded down to 0.1 GB | 5 GB, or 10 % of `MemTotal` if lower (`MEMORY_FLOOR`) | under the limit |
-| `temperature` | hottest zone in °C | 95 (`HOT_C`) | at or above the limit |
-
-Values are rounded as the page shows them, so a reading moving within its last digit leaves the
-state's version alone. A missing file (another OS, a VM without thermal zones) and a switched-off sensor
-(its `temp` answering `ENODATA`, `EINVAL`, `EAGAIN` or `EIO`) skip their reading; a file that cannot be read or
-parsed goes to `problems`.
 
 Sizes are walked at most hourly by the background scan; `agent-desk status` and the handoff read git
 only, keeping known sizes. One scan of a project runs at a time (`claimScan`); a status read while
@@ -217,6 +203,24 @@ remove` (which refuses a checkout with changes), then, only once it succeeded, `
 branch merged as an ancestor, or for one landed by cherry-pick `git branch -D` behind a check that
 the branch still points at the head the scan found landed, so commits added since are never
 deleted.
+
+## Machine health
+
+`DeskState.machine` holds this machine's readings past their limits, empty while it is healthy
+(`src/core/machine.ts`), read at every state from `/proc/loadavg`, `/proc/meminfo` and the `temp`
+files of `/sys/class/thermal/thermal_zone*/`, nothing else:
+
+| `reading` | `value` | `limit` | Warns when |
+|---|---|---|---|
+| `load` | 1-minute load, rounded up to one decimal | core count (`os.availableParallelism()`) | above the limit |
+| `memory` | `MemAvailable` in bytes, rounded down to 0.1 GB | 5 GB, or 10 % of `MemTotal` if lower (`MEMORY_FLOOR`), rounded up to 0.1 GB | under the limit |
+| `temperature` | hottest zone in °C, rounded up | 95 (`HOT_C`) | at or above the limit |
+
+Each value and limit is rounded to the digit the page shows, the value away from its limit and the
+limit away from the value, so the shown reading is always past the shown limit (never "3.2 GB free,
+under 3.2 GB"), and a reading moving within its last digit leaves the state's version alone. A
+missing file (another OS, a VM without thermal zones) and a switched-off sensor (its `temp` answering `ENODATA`, `EINVAL`, `EAGAIN` or `EIO`) skip their reading; a file that cannot be read or
+parsed goes to `problems`.
 
 ## Past decisions
 

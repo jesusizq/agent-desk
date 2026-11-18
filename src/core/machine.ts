@@ -19,20 +19,22 @@ export const MACHINE: MachineSources = { proc: "/proc", sys: "/sys", cores: os.a
  * The readings past their limits, each with its value and limit: the 1-minute load above the core
  * count, MemAvailable under MEMORY_FLOOR, the hottest zone at HOT_C or more. A file that does not exist
  * (another OS, a VM without thermal zones) skips its reading; one that cannot be read or parsed goes
- * to `problems`. Values are rounded as the page shows them, so a reading moving within its last digit
- * leaves the state's version alone.
+ * to `problems`. Each value and limit is rounded to the digit the page shows, the value away from its
+ * limit and the limit away from the value, so the shown reading is always past the shown limit, and a
+ * reading moving within its last digit leaves the state's version alone.
  */
 export function machineWarnings(problems: string[], from: MachineSources = MACHINE): MachineWarning[] {
   const out: MachineWarning[] = [];
   const load = reading(path.join(from.proc, "loadavg"), loadOf, problems);
-  if (load !== undefined && load > from.cores) out.push({ reading: "load", value: Math.round(load * 10) / 10, limit: from.cores });
+  // In hundredths first, as the file gives it, so that 8.1 is not taken for 8.1000001 and shown as 8.2.
+  if (load !== undefined && load > from.cores) out.push({ reading: "load", value: Math.ceil(Math.round(load * 100) / 10) / 10, limit: from.cores });
   const memory = reading(path.join(from.proc, "meminfo"), memoryOf, problems);
   if (memory) {
-    const floor = Math.min(MEMORY_FLOOR.bytes, MEMORY_FLOOR.ratio * memory.total);
-    if (memory.available < floor) out.push({ reading: "memory", value: Math.floor(memory.available / 1e8) * 1e8, limit: Math.round(floor / 1e8) * 1e8 });
+    const floor = Math.round(Math.min(MEMORY_FLOOR.bytes, MEMORY_FLOOR.ratio * memory.total));
+    if (memory.available < floor) out.push({ reading: "memory", value: Math.floor(memory.available / 1e8) * 1e8, limit: Math.ceil(floor / 1e8) * 1e8 });
   }
   const hottest = hottestZone(path.join(from.sys, "class", "thermal"), problems);
-  if (hottest !== undefined && hottest >= HOT_C * 1000) out.push({ reading: "temperature", value: Math.round(hottest / 1000), limit: HOT_C });
+  if (hottest !== undefined && hottest >= HOT_C * 1000) out.push({ reading: "temperature", value: Math.ceil(hottest / 1000), limit: HOT_C });
   return out;
 }
 

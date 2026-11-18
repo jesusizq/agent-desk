@@ -480,15 +480,13 @@ export type ProjectResumes = { id: string; name: string; dir: string; at: string
 export type DiskWarning = { dir: string; projects: string[]; freeBytes: number; totalBytes: number };
 
 /** What an agent's work waits for, besides other agents and its own jobs. */
-export const WAITING_FOR = ["machine-load"] as const;
-export type WaitingFor = (typeof WAITING_FOR)[number];
+export type WaitingFor = "machine-load";
 
-export const MACHINE_READINGS = ["load", "memory", "temperature"] as const;
 /**
  * A reading of this machine past its limit (src/core/machine.ts): the 1-minute load above the core
  * count, the bytes of memory available under the floor, or the hottest thermal zone's °C at or above the ceiling.
  */
-export type MachineWarning = { reading: (typeof MACHINE_READINGS)[number]; value: number; limit: number };
+export type MachineWarning = { reading: "load" | "memory" | "temperature"; value: number; limit: number };
 
 /** Limits of a review: its page after images are inlined, its saved state, a key in it, the text it copies, its counter's text. */
 export const REVIEW_PAGE_MAX = 25 * 1024 * 1024;

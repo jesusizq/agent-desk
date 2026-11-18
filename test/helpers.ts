@@ -66,9 +66,13 @@ export function waitingScript(name: string): string {
   return file;
 }
 
-/** A shell this process starts, as a session runs a command, running `script` (as `sh <script>` when `throughSh`) in `cwd`, once it waits. */
-export async function runScript(script: string, cwd: string, throughSh = false): Promise<{ end: () => Promise<void> }> {
-  const child = spawn("sh", ["-c", `${throughSh ? "sh " : ""}"${script}"; true`], { cwd, stdio: ["pipe", "pipe", "inherit"] });
+/**
+ * A shell this process starts, as a session runs a command, running `script` in `cwd`, once it waits:
+ * through its shebang (/proc shows `/bin/sh <script>`), or given to the shell command `through`
+ * (`["sh", "-o", "errexit"]`: /proc shows that command line with the script last).
+ */
+export async function runScript(script: string, cwd: string, through: readonly string[] = []): Promise<{ end: () => Promise<void> }> {
+  const child = spawn("sh", ["-c", `${through.map((a) => `${a} `).join("")}"${script}"; true`], { cwd, stdio: ["pipe", "pipe", "inherit"] });
   await new Promise<void>((resolve, reject) => {
     child.stdout.once("data", () => resolve());
     child.once("error", reject);

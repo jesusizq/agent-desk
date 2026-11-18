@@ -50,13 +50,42 @@ export function workingIn(dirs: readonly string[], sessions: readonly LiveProces
 /** The script an orchestration runs before a heavy command: it blocks, sleeping, while the machine is loaded. */
 export const LOAD_GATE = "load-gate.sh";
 
-/** Whether a command line runs the load gate: the script itself, or a shell given it as its script. */
+/** Whether a command line runs the load gate: the program itself, or a shell given it as its script file. */
 export function runsLoadGate(args: readonly string[]): boolean {
   const [program, ...rest] = args;
   if (program === undefined) return false;
   if (path.basename(program) === LOAD_GATE) return true;
-  const script = SHELLS.has(path.basename(program)) ? rest.find((a) => !a.startsWith("-")) : undefined;
+  if (!SHELLS.has(path.basename(program)) || path.basename(program) === "env") return false; // env execs what it runs: /proc then shows that
+  const script = scriptOf(rest);
   return script !== undefined && path.basename(script) === LOAD_GATE;
+}
+
+/** Long options of the shells that take the next argument as their value. */
+const LONG_WITH_VALUE = new Set(["--rcfile", "--init-file", "--init-command", "--config", "--env-config"]);
+/** Short options that take the next argument as their value, in a cluster too (`-o pipefail`, `-eo pipefail`, `+O extglob`). */
+const SHORT_WITH_VALUE = new Set(["o", "O"]);
+
+/**
+ * The script file a shell's arguments give it, past its options and their values; undefined when it has
+ * none, or when it runs a command string (`-c`, in any option cluster) or reads its commands from its input (`-s`):
+ * then its other arguments are only words of that command.
+ */
+function scriptOf(args: readonly string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? "";
+    if (arg === "--" || arg === "-") return args[i + 1];
+    if (arg.startsWith("--")) {
+      const name = arg.split("=", 1)[0] ?? arg;
+      if (name === "--command" || name === "--commands") return undefined;
+      if (LONG_WITH_VALUE.has(name) && !arg.includes("=")) i++;
+      continue;
+    }
+    if (!/^[-+]./.test(arg)) return arg;
+    const flags = arg.slice(1);
+    if (flags.includes("c") || flags.includes("s")) return undefined;
+    i += [...flags].filter((f) => SHORT_WITH_VALUE.has(f)).length;
+  }
+  return undefined;
 }
 
 /**
