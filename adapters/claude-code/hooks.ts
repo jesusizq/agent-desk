@@ -173,13 +173,15 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       ctx.startScan?.(locateProject(workDir(input, ctx)).dir); // its branch may have moved
       return { code: 0 };
 
-    case "Stop":
+    case "Stop": {
+      const end = stopInput(input); // all of it checked before anything changes
       retireContinued(input, ctx, problems);
-      endTurn(input, ctx, problems);
+      endTurn(input, end, ctx, problems);
       store.releaseQuestions(sid, problems); // last: with the turn's message already on them
       ctx.startScan?.(locateProject(workDir(input, ctx)).dir);
       recordResumes(input, ctx, problems); // a handoff loaded this turn is gone
       return { code: 0 };
+    }
 
     case "SessionEnd":
       store.withdrawInbox(sid);
@@ -284,17 +286,33 @@ function register(input: Common, ctx: HookContext): void {
   if (input.permissionMode) ctx.store.mergeMetrics({ sessionId: input.sessionId, permissionMode: input.permissionMode });
 }
 
+/** What a Stop hook is told about the turn's end. */
+interface StopInput {
+  readonly message: string;
+  readonly continued: boolean;
+  readonly running: RunningTasks | undefined;
+  readonly shells: number;
+}
+
+function stopInput(input: Common): StopInput {
+  transcriptOf(input);
+  const message = text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000).trim();
+  const continued = optional(input.raw.stop_hook_active, "hook input.stop_hook_active", bool) === true;
+  const running = runningTasks(input.raw.background_tasks);
+  const tasks = Array.isArray(input.raw.background_tasks) ? input.raw.background_tasks : [];
+  const shells = tasks.filter((t) => typeof t === "object" && t !== null && (t as Fields).type === "shell").length;
+  return { message, continued, running, shells };
+}
+
 /** The turn ended: the session waits for the developer. Unless it already asked a question, its last message is what waits. */
-function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
+function endTurn(input: Common, { message, continued, running, shells }: StopInput, ctx: HookContext, problems: string[]): void {
   const { store } = ctx;
   const sid = input.sessionId;
   store.closeOpen(sid, { kinds: ["permission"], problems });
   syncPermissionMarker(store, problems);
-  const message = text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000).trim();
   const at = new Date().toISOString();
   // Continued by a Stop hook's refusal: the refusals so far are those counted on the session, or read
   // from the transcript's tail, whichever saw more (a long fix loop pushes the early ones out of it).
-  const continued = optional(input.raw.stop_hook_active, "hook input.stop_hook_active", bool) === true;
   const seen = continued ? reopenedBy(stopRounds(transcriptOf(input))) : undefined;
   settleEarlierEnd(sid, store, continued, problems);
   // The turn is over: what its calls were doing, failing in a row or waiting on, ends with it.
@@ -311,10 +329,8 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     }),
   );
   recordTurnTexts(input, store, message);
-  settleAgents(input, ctx, problems, runningTasks(input.raw.background_tasks));
+  settleAgents(input, ctx, problems, running);
   if (message) store.addMessage({ sessionId: sid, from: "session", text: message });
-  const tasks = Array.isArray(input.raw.background_tasks) ? input.raw.background_tasks : [];
-  const shells = tasks.filter((t) => typeof t === "object" && t !== null && (t as Fields).type === "shell").length;
   store.mergeMetrics({ sessionId: sid, backgroundShells: shells });
   if (message === "") return;
   const { last, before } = splitLastParagraph(message);

@@ -1034,6 +1034,23 @@ describe("Claude Code hooks", () => {
     assert.match(open?.context ?? "", /Two layouts fit/, "shown with its message");
   });
 
+  it("a turn's end with malformed input changes nothing", () => {
+    const store = testStore();
+    handleHook(event("UserPromptSubmit", { prompt: "list the files" }), ctx(store));
+    const permission = store.ask({ sessionId: "cc-1", kind: "permission", text: "Bash: ls" });
+    const kept = () => {
+      const { updatedAt: _updated, ...s } = store.getSession("cc-1") ?? {};
+      return s;
+    };
+    const before = kept();
+    for (const [field, bad] of [["last_assistant_message", 42], ["stop_hook_active", "yes"], ["background_tasks", [{ type: "subagent", id: "../x" }]]] as const) {
+      assert.throws(() => handleHook(event("Stop", { last_assistant_message: "Done.", [field]: bad }), ctx(store)), new RegExp(field));
+      assert.equal(store.getQuestion(permission.id)?.status, "open", `${field}: its permission prompt still open`);
+      assert.deepEqual(kept(), before, `${field}: still working`);
+      assert.deepEqual(store.listMessages("cc-1").filter((m) => m.from === "session"), [], `${field}: no message recorded`);
+    }
+  });
+
   it("does not hold what a session asked if the session ended or its process died", () => {
     const store = testStore();
     const live: HookContext = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
