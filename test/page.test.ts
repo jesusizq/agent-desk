@@ -3371,13 +3371,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
           const target = Object.getOwnPropertyDescriptor(KeyframeEffect.prototype, 'target');
           window.measures = 0;
           Object.defineProperty(effect, 'target', { get: () => target.get.call(effect), set: (el) => { if (el === null) measures++; target.set.call(effect, el); } });
+          // Listing the page's animations forces a style pass too.
+          const list = document.getAnimations.bind(document);
+          window.listings = 0;
+          document.getAnimations = () => (listings++, list());
         })()`);
         await page.eval("import('/state.js').then((m) => m.page.renderView())");
-        assert.equal(await page.eval<number>("measures"), 0, "a redraw that changes no list forces no layout to measure");
+        assert.deepEqual(await page.eval("({ measures, listings })"), { measures: 0, listings: 0 }, "a redraw that changes no list forces no layout to measure, nor lists the page's animations");
         store.ask({ sessionId: id, kind: "question", text: "Asked to change a column?", options: ["Yes", "No"] });
         await page.waitFor("[...document.querySelectorAll('.col-needs .qrow')].some((r) => r.textContent.includes('Asked to change a column?'))");
-        assert.equal(await page.eval<number>("measures"), 1, "a row added to Needs you is measured, once");
-        await page.eval("boardMotion.cancel()");
+        assert.deepEqual(await page.eval("({ measures, listings })"), { measures: 1, listings: 1 }, "a row added to Needs you is measured, once");
+        await page.eval("boardMotion.cancel(); delete document.getAnimations");
       } finally {
         done();
       }

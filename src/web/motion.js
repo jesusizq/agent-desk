@@ -87,12 +87,12 @@ function carries(scroller, el) {
  * carries taken off and its cards on their way out hidden, then all put back, and the scrolls the measure
  * clamped with it, before anything is painted. What the areas do not carry is left alone: restoring a
  * scroll ends any smooth scroll it was in, the developer's own in a panel.
- * @param {Element[]} scrollers
+ * @param {Element[]} scrollers @param {Animation[]} animations the page's
  */
-function finalReaches(scrollers) {
+function finalReaches(scrollers, animations) {
   /** @param {Element} el */
   const carried = (el) => scrollers.some((s) => carries(s, el));
-  const running = document.getAnimations().flatMap((a) => (a.id === MOTION && a.effect instanceof KeyframeEffect && a.effect.target && carried(a.effect.target) ? [{ effect: a.effect, target: a.effect.target }] : []));
+  const running = animations.flatMap((a) => (a.id === MOTION && a.effect instanceof KeyframeEffect && a.effect.target && carried(a.effect.target) ? [{ effect: a.effect, target: a.effect.target }] : []));
   const leaving = [...document.querySelectorAll("[data-leaving]")].filter(/** @returns {el is HTMLElement} */ (el) => el instanceof HTMLElement && carried(el));
   /** @type {Set<Element>} */
   const areas = new Set(scrollers);
@@ -168,7 +168,6 @@ export function animateLists(scope, update) {
   /** @type {Map<Element, DOMRect>} */
   const glides = new Map([...scope.querySelectorAll("[data-glide]")].map((el) => [el, el.getBoundingClientRect()]));
   update();
-  const earlier = document.getAnimations();
   /** @type {Map<string, Seen & { list: Element }>} cards no longer in their list, by what they show */
   const gone = new Map();
   for (const { list, items } of before) for (const it of items) if (it.el.parentElement !== list) gone.set(flipId(it.el), { ...it, list });
@@ -197,6 +196,8 @@ export function animateLists(scope, update) {
   const slidesOf = [];
   /** @type {Set<Element>} */
   const scrolling = new Set();
+  /** @type {Animation[]} what runs before the columns move, taken only for a redraw that moves one: it forces a style pass */
+  let earlier = [];
   /** @type {Map<Element, number> | null} measured only for a redraw that moves a column: it forces a layout */
   let reaches = null;
   for (const change of changes) {
@@ -207,8 +208,12 @@ export function animateLists(scope, update) {
     const scroll = /** @type {Scroll} */ (scrolls.get(change.scroller));
     if (change.grid) slidesOf.push(animateGrid(change, leaving, scroll, t));
     else {
-      // Before any column's motion starts: an earlier column's folds back at their height would count.
-      reaches ??= finalReaches(columns);
+      // Before any column's motion starts: an earlier column's folds back at their height would count, and
+      // be started again. A grid's motions may be in by then: none changes a height.
+      if (!reaches) {
+        earlier = document.getAnimations();
+        reaches = finalReaches(columns, earlier);
+      }
       slidesOf.push(animateColumn(change, leaving, outOf, grows, scroll, t));
       scrolling.add(change.scroller);
     }
