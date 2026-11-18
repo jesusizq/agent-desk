@@ -3301,29 +3301,36 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     it("on a phone, a redraw that changes the view at once mid-way stops the header and the strip with the cards", async () => {
       const id = "scrolled-instant";
       const done = asking(id, "stopped mid-way");
-      const context = Array.from({ length: 16 }, (_, i) => `Line ${i + 1}: what the session found before asking.`).join("\n");
+      // A project of its own, shown alone: what earlier tests left on the desk would fill the window, and the page would not slide.
+      store.upsertSession({ id, provider: "Test", project: { name: "instant-shop", dir: "/home/demo/Projects/instant-shop" }, title: "stopped mid-way", state: "waiting" });
+      // A context nearly full keeps a chip in the phone's strip, which hides when empty.
+      store.mergeMetrics({ sessionId: id, contextPercent: 90 });
+      const context = Array.from({ length: 28 }, (_, i) => `Line ${i + 1}: what the session found before asking.`).join("\n");
       store.ask({ sessionId: id, kind: "question", text: "Dismissed, then all projects?", context, options: ["Yes", "No"] });
       try {
         const page = await open(390, 1000);
-        await page.click(".qrow", "Dismissed, then all projects?");
-        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Dismissed, then all projects?') && ${STILL}`);
-        // Dismissed 120 px past its top, the page slides down as it goes; 4 frames on, a project's button redraws the view at once.
-        const seen = await page.eval<{ moving: number; left: [string, number, string][] }>(`new Promise((done) => {
+        await page.click("#projects button", "instant-shop");
+        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Dismissed, then all projects?') && document.querySelector('#strip .chip.warn') && ${STILL}`);
+        // Dismissed 120 px past its top, the page slides down as it goes; 4 frames on, All projects redraws the view at once.
+        const seen = await page.eval<{ top: number; moving: [string, number][]; left: [string, number, string][] }>(`new Promise((done) => {
           const card = document.querySelector('.next');
           document.scrollingElement.scrollTop += card.getBoundingClientRect().top + 120;
+          const top = card.getBoundingClientRect().top;
           ${DISMISS};
           const parts = ['header.top', '#strip'].map((s) => document.querySelector(s));
           const motion = (el) => el.getAnimations().filter((a) => a.id === 'motion').length;
+          const named = (el) => (el.matches('header') ? 'header' : el.id);
           let frames = 0;
           const tick = () => {
             if (!card.hasAttribute('data-leaving') || ++frames < 4) return requestAnimationFrame(tick);
-            const moving = parts.reduce((n, el) => n + motion(el), 0);
-            document.querySelector('#projects button').click();
-            done({ moving, left: parts.map((el) => [el.matches('header') ? 'header' : el.id, motion(el), getComputedStyle(el).transform]) });
+            const moving = parts.map((el) => [named(el), motion(el)]);
+            document.querySelector('#projects button[data-key=""]').click();
+            done({ top, moving, left: parts.map((el) => [named(el), motion(el), getComputedStyle(el).transform]) });
           };
           requestAnimationFrame(tick);
         })`);
-        assert.ok(seen.moving > 0, `the header and the strip slid with the page: ${JSON.stringify(seen)}`);
+        assert.ok(seen.top < -100, `the card's top starts out of sight: ${JSON.stringify(seen)}`);
+        assert.ok(seen.moving.every(([, n]) => n > 0), `the header and the strip slid with the page: ${JSON.stringify(seen)}`);
         assert.deepEqual(seen.left, [["header", 0, "none"], ["strip", 0, "none"]], "they stand where the layout puts them, as the board does");
       } finally {
         done();
