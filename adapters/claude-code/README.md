@@ -147,8 +147,13 @@ same line, the reason told once per hook.
   `stop_hook_active`, else it stood), never by an answer on the desk, which the waiter delivers also
   before the round is read or while a refused end goes on (a prompt reads that end's round from the
   transcript when it is there; what an end replaced shows again after 10 minutes with that end
-  unsettled and no tool call of the session, as after an interrupt, which fires no `Stop`); while its waiter
-  reads the round its listener says so (`checks`), and the page says the checks run again only then;
+  unsettled and no prompt or finished tool call of the main thread, as after an interrupt, which
+  fires no `Stop`: a sub-agent's calls do not renew that clock, nor does one call running longer, and
+  a prompt typed after it ran out, even about the item shown again, may be taken as the probable
+  answer of the newer question); while its waiter
+  reads the round its listener says so (`checks`), and the page says the checks run again only then
+  (a reading the store cannot record is recorded again, as first read, at each poll, 120 times at
+  most, about a minute, then the waiter says on its stderr that it gave up and stops reading);
   a turn refused
   earlier that now ends with a Stop hook's message to the developer has a check still failing, and
   gets the `checkFailing` item; a turn refused earlier that now ends silently has passed and clears

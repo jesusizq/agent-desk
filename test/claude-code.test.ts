@@ -1958,6 +1958,38 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     assert.deepEqual([store.getSession("cc-1")?.state, store.getSession("cc-1")?.checkReopened], ["working", { times: 4, reason: checkExcerpt(REASON), at: now }]);
   });
 
+  it("a waiter that could not ask that a check still fails asks it at a later poll, from the refusals the session had counted", { skip: process.getuid?.() === 0 && "root writes into a read-only folder" }, async () => {
+    const store = testStore();
+    // A long fix loop: the tail read holds none of the earlier refusals, the session counted three.
+    const file = transcript([rows.said("I could not fix it.", at(40))]);
+    handleHook(event("UserPromptSubmit", { prompt: "fix the table" }), ctx(store));
+    store.updateSession("cc-1", (s) => ({ ...s, checkReopened: { times: 3, reason: "tests failed", at: at(30) } }));
+    handleHook(event("Stop", { last_assistant_message: "I could not fix it.", transcript_path: file, stop_hook_active: true }), ctx(store));
+    const open = store.paths.questionDir("open");
+    fs.mkdirSync(open, { recursive: true, mode: 0o700 });
+    fs.chmodSync(open, 0o500);
+    let waiting: ReturnType<typeof waitForAnswer> | undefined;
+    try {
+      waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+      await new Promise((r) => setTimeout(r, 50));
+      const now = new Date().toISOString();
+      write(file, [rows.told(GAVE_UP, now), rows.summary([], now), rows.turnEnd(now)]);
+      // The session is written, its count gone, before the item that says the check still fails can be asked.
+      for (let i = 0; i < 100 && store.getSession("cc-1")?.checkReopened !== undefined; i++) await new Promise((r) => setTimeout(r, 10));
+      assert.equal(store.getSession("cc-1")?.checkReopened, undefined);
+    } finally {
+      fs.chmodSync(open, 0o700);
+    }
+    let q = store.openQuestions("cc-1").find((x) => x.checkFailing);
+    for (let i = 0; i < 100 && !q; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      q = store.openQuestions("cc-1").find((x) => x.checkFailing);
+    }
+    assert.deepEqual([q?.text, q?.context], [GAVE_UP, "tests failed"], "still failing, not taken as a turn no check refused");
+    store.updateSession("cc-1", (s) => ({ ...s, state: "ended" }));
+    assert.match((await waiting)?.stderr ?? "", /could not record how the checks ended the turn \(failing\).*EACCES/);
+  });
+
   it("a waiter that reads its end's checks after a newer end of the turn was recorded changes nothing", async () => {
     const { Store } = await import("../src/store/store.ts");
     const store = new Store(tempHome());
@@ -2229,6 +2261,48 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
       assert.equal(out?.stderr?.match(/could not record how the checks ended the turn \(reopened\).*EACCES/g)?.length, 1, "told once");
       assert.equal(store.getSession("cc-1")?.state, "working");
       assert.deepEqual([store.getQuestion(a.id)?.status, store.heldQuestions().has(a.id), store.getQuestion(b.id)?.status], ["open", false, "dismissed"]);
+    });
+
+    it("a waiter that keeps failing to record how the checks ended the turn gives up, says so and stops reading the checks", { skip: process.getuid?.() === 0 && "root writes into a read-only folder" }, async () => {
+      const file = transcript([rows.prompt(wake, at(30)), rows.said("Build done. Shall I fix only two?", at(31))]);
+      const { store, a } = await askedTwice(file);
+      const closed = store.paths.questionDir("closed");
+      fs.mkdirSync(closed, { recursive: true, mode: 0o700 });
+      fs.chmodSync(closed, 0o500);
+      try {
+        const waiting = waitForAnswer("cc-1", store, { pollMs: 1, armWithinMs: 1000, deadline: Date.now() + 20_000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+        await new Promise((r) => setTimeout(r, 50));
+        const now = new Date().toISOString();
+        write(file, [...rows.refusal(REASON, now), rows.summary([REASON], now)]);
+        let reading = true;
+        for (let i = 0; i < 1000 && reading; i++) {
+          await new Promise((r) => setTimeout(r, 5));
+          reading = store.listeners("cc-1").some((l) => l.checks);
+        }
+        assert.equal(reading, false, "the dashboard no longer says its checks run again");
+        assert.equal(store.listeners("cc-1").length, 1, "it still listens for answers");
+        assert.deepEqual([store.getSession("cc-1")?.state, store.heldQuestions().has(a.id)], ["waiting", true]);
+        store.updateSession("cc-1", (s) => ({ ...s, state: "ended" }));
+        const out = await waiting;
+        assert.equal(out.stderr?.match(/could not record how the checks ended the turn \(reopened\)/g)?.length, 1, "told once");
+        assert.match(out.stderr ?? "", /gave up recording how the checks ended the turn \(reopened\) after 120 tries: .*EACCES/);
+      } finally {
+        fs.chmodSync(closed, 0o700);
+      }
+    });
+
+    it("a prompt whose transcript_path is malformed changes nothing", async () => {
+      const { store, a, b } = await askedTwice();
+      // Every hook registers the session first; what the prompt would change must stay as it was.
+      const kept = () => {
+        const { updatedAt: _updated, ...s } = store.getSession("cc-1") ?? {};
+        return s;
+      };
+      const before = kept();
+      assert.throws(() => handleHook(event("UserPromptSubmit", { prompt: "only two", transcript_path: 42 }), ctx(store)), /transcript_path/);
+      assert.deepEqual(kept(), before, "still waiting, its prompt not taken");
+      assert.deepEqual(store.listMessages("cc-1").filter((m) => m.from === "developer"), []);
+      assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(b.id)?.status], ["open", "open"]);
     });
 
     it("settles at the next end what no waiter read: a refused end keeps what it replaced and loses what it asked", async () => {

@@ -302,11 +302,16 @@ what the refused end asked. An answer on the desk settles nothing: it reaches th
 a check refuses that end (its waiter delivers it before reading the round, or no waiter can read it),
 and the end that follows tells how it went. So an end whose checks no waiter reads (no transcript,
 one that cannot be read, a waiter not started in time) is settled by the next of those, if one comes. What an end replaced is held only while its session is live and for at most 10 minutes
-past the later of its marking and the session's last tool call, so a session interrupted before a
+past the later of its marking and the session's `activityAt`, so a session interrupted before a
 next end (Escape fires no Stop), or gone without ending, shows it again beside what replaced it: no
-item is lost or hidden for good, at the cost of seeing both for a while. A prompt typed while an end's
-round is unread settles it from the transcript when the round is there (refused: what it replaced
-takes the prompt as its probable answer), else as stood. A reading of an
+item is lost or hidden for good, at the cost of seeing both for a while. That clock is renewed only by
+the main thread's prompts and finished tool calls (the Claude Code adapter records `activityAt` at
+each prompt and after each of its calls), never by a sub-agent's calls nor while one long call runs,
+so a check or a call longer than 10 minutes shows the replaced item again while the end is still
+unsettled. A prompt typed while an end's round is unread settles it from the transcript when the
+round is there (refused: what it replaced takes the prompt as its probable answer), else as stood;
+so a prompt typed once the hold has ended, even one answering the replaced item shown again, may be
+taken as the probable answer of the newer question, while the replaced one is dismissed. A reading of an
 end's checks settles only what that end replaced, a reading that a newer end of the turn has
 overtaken records nothing, and a waiter reads none once a newer turn waiter listens (a permission
 prompt's or a dialog's hook listening does not count). When a check that refused the turn lets it end without

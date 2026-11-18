@@ -81,6 +81,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
 
     case "UserPromptSubmit": {
       const prompt = text(f.prompt ?? "", "hook input.prompt", 10_000_000);
+      const transcript = transcriptOf(input); // validated before anything is written
       recordResumes(input, ctx, problems); // a turn interrupted after loading a handoff ran no Stop
       const sent = fromAnother(prompt);
       if (sent || fromClaudeCode(prompt)) {
@@ -112,7 +113,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (!wasWorking) store.withdrawInbox(sid, prompt);
       // The developer wrote: the end that replaced an item stood, so that item answers nothing, unless
       // its unread round refused it (the prompt then comes mid-turn), keeping that item for the prompt.
-      settleEarlierEnd(sid, store, refusedUnread(input, store, problems), problems);
+      settleEarlierEnd(sid, store, refusedUnread(sid, transcript, store, problems), problems);
       // What was typed next may be about something else: probable, never a certain answer.
       store.closeOpen(sid, { answer: prompt, probable: true, problems });
       syncPermissionMarker(store, problems);
@@ -363,10 +364,9 @@ function settleEarlierEnd(sid: string, store: Store, continued: boolean, problem
  * transcript, refused it. Undecided (no round to read: the prompt already cut it, or there is no
  * transcript) reads as the end having stood, the usual case.
  */
-function refusedUnread(input: Common, store: Store, problems: string[]): boolean {
-  const ended = store.getSession(input.sessionId)?.turnEndedAt;
-  if (ended === undefined || !store.openQuestions(input.sessionId, problems).some((q) => q.replacedAt !== undefined)) return false;
-  const transcript = transcriptOf(input);
+function refusedUnread(sid: string, transcript: string, store: Store, problems: string[]): boolean {
+  const ended = store.getSession(sid)?.turnEndedAt;
+  if (ended === undefined || !store.openQuestions(sid, problems).some((q) => q.replacedAt !== undefined)) return false;
   try {
     return turnCheck(stopRounds(transcript), ended)?.outcome === "reopened";
   } catch (error) {
@@ -1924,18 +1924,23 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
   return out.code === 2 || problems.length === 0 ? out : { ...out, stderr: [out.stderr, ...problems.map((p) => `agent-desk: ${p}`)].filter(Boolean).join("\n") };
 }
 
+/** Tries at recording a turn's checks: a minute at the adapter's half-second polls, past a stale lock's 15 s. */
+const RECORD_TRIES = 120;
+
 /**
  * Reads, while the waiter runs, how the Stop hooks of the turn's end it was started by ended the turn
  * (turnCheck), and records it once on the desk; the transcript is read again only when it grew. A
  * transcript that cannot be read ends the reading, never the wait: answers still reach the session.
- * A reading the store cannot record is recorded again at the next poll.
- * Once the reading ends, the waiter's listener no longer says it reads the checks (`checksRead`).
+ * A reading the store cannot record is recorded again, as first read, at the next polls, up to
+ * RECORD_TRIES times. Once the reading ends, the waiter's listener no longer says it reads the checks (`checksRead`).
  */
 function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => TurnCheck["outcome"] | undefined) & { problems: string[] } {
   const problems: string[] = [];
   let size = -1;
   let done = false;
-  let unrecorded = false;
+  let failures = 0;
+  // The reading first made, recorded as it is at every try: the session it was read from may already be written.
+  let read: { check: TurnCheck; checkedAt: string } | undefined;
   const finish = () => {
     done = true;
     try {
@@ -1944,8 +1949,8 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
       problems.push(`could not record that this waiter no longer reads the turn's checks: ${(error as Error).message}`);
     }
   };
-  const step = () => {
-    if (done) return undefined;
+  /** This end's reading, once its Stop hooks have finished; undefined until then, or when the transcript cannot be read. */
+  const readEnd = (): typeof read => {
     let rounds: StopRound[];
     try {
       const now = fs.statSync(end.transcript).size;
@@ -1960,22 +1965,31 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
     }
     const round = endRound(rounds, end.since);
     if (round === undefined) return undefined;
-    let check: TurnCheck | undefined;
+    // This end's Stop hooks have finished, the desk's own among them: the session holds the turn's
+    // earlier refusals it counted. A newer end may have counted this one's too: the store then
+    // records nothing (checkedAt).
+    const check = turnCheck(rounds, end.since, store.getSession(sessionId)?.checkReopened);
+    return check && { check, checkedAt: round.finishedAt };
+  };
+  const step = () => {
+    if (done) return undefined;
     try {
-      // This end's Stop hooks have finished, the desk's own among them: the session holds the
-      // turn's earlier refusals it counted. A newer end may have counted this one's too: the store
-      // then records nothing (round.finishedAt).
-      check = turnCheck(rounds, end.since, store.getSession(sessionId)?.checkReopened);
-      if (check) store.recordTurnCheck(sessionId, check, { checkedAt: round.finishedAt, problems });
+      read ??= readEnd();
+      if (done || read === undefined) return undefined;
+      store.recordTurnCheck(sessionId, read.check, { checkedAt: read.checkedAt, problems });
     } catch (error) {
-      // recordTurnCheck is safe to repeat: the next poll reads the round again and records it whole.
-      size = -1;
-      if (!unrecorded) problems.push(`could not record how the checks ended the turn${check ? ` (${check.outcome})` : ""}: ${(error as Error).message}; trying again at each poll`);
-      unrecorded = true;
+      // recordTurnCheck is safe to repeat with the same reading; a session unreadable before it, to read again.
+      if (read === undefined) size = -1;
+      failures++;
+      const what = `how the checks ended the turn${read ? ` (${read.check.outcome})` : ""}`;
+      if (failures === 1) problems.push(`could not record ${what}: ${(error as Error).message}; trying again at each poll`);
+      if (failures < RECORD_TRIES) return undefined;
+      problems.push(`gave up recording ${what} after ${RECORD_TRIES} tries: ${(error as Error).message}; the desk may show this session's items as they were before its checks ended the turn`);
+      finish();
       return undefined;
     }
     finish();
-    return check?.outcome;
+    return read.check.outcome;
   };
   return Object.assign(step, { problems });
 }
