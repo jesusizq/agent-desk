@@ -228,7 +228,7 @@ function continuedElsewhere(transcript: string): boolean {
 /** The project's pending handoffs, read again where one may have been written or loaded (see resumes.ts). */
 function recordResumes(input: Common, ctx: HookContext, problems: string[]): void {
   try {
-    refreshResumes(locateProject(workDir(input, ctx)), ctx.store, ctx.env, problems);
+    refreshResumes(workDir(input, ctx), ctx.store, ctx.env, problems);
   } catch (error) {
     problems.push(`pending handoffs not recorded: ${(error as Error).message}`);
   }

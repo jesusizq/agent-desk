@@ -1,18 +1,55 @@
 // Pending handoffs as resume notes of their project: the Claude Code adapter reads the developer's
 // handoff folder at the moments its hooks run anyway, and the store keeps only what the page shows.
 import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 import { handleHook, type HookContext, readHookInput } from "../adapters/claude-code/hooks.ts";
 import { handoffFolder, objective, pendingHandoffs } from "../adapters/claude-code/resumes.ts";
-import { readProjectResumes } from "../src/core/model.ts";
+import { readProjectResumes, type ResumeNote } from "../src/core/model.ts";
 import { projectId } from "../src/project/scan.ts";
 import { StorePaths } from "../src/store/paths.ts";
-import { tempHome, testStore } from "./helpers.ts";
+import { gitIn, tempHome, testStore } from "./helpers.ts";
+
+const run = promisify(execFile);
 
 const SHOP = projectId("/work/shop");
 const HOUR = 3600_000;
+const WORKER = path.join(import.meta.dirname, "fixtures", "worker.ts");
+
+/** A note still offered, written an hour ago. */
+const note = (title: string, command: string): ResumeNote => ({ title, writtenAt: new Date(Date.now() - HOUR).toISOString(), expiresAt: new Date(Date.now() + 47 * HOUR).toISOString(), command });
+
+/**
+ * Another process holding the project's resumes lock for a second (fixtures/worker.ts): `reading`
+ * once it holds it, `done` once it wrote and let go.
+ */
+function holding(home: string, task: "slow-resumes" | "corrupt-resumes", project: { id: string; name: string; dir: string }, notes: ResumeNote[]) {
+  fs.writeFileSync(path.join(home, "resumes.json"), JSON.stringify({ project, notes }));
+  const done = run(process.execPath, [WORKER, home, task, "1000"]);
+  const reading = (async () => {
+    for (let waited = 0; !fs.existsSync(path.join(home, "reading")); waited += 10) {
+      if (waited > 10_000) throw new Error("the worker never took the lock");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  })();
+  return { reading, done };
+}
+
+/** The folder name the plugin's loader (`project_name`) gives `cwd`, asking git as it does. */
+function loaderName(cwd: string): string {
+  const ask = (...args: string[]) => {
+    try {
+      return execFileSync("git", ["-C", cwd, "rev-parse", ...args], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+    } catch {
+      return ""; // outside git: the loader keeps the folder itself
+    }
+  };
+  const common = ask("--path-format=absolute", "--git-common-dir");
+  return path.basename(common.endsWith("/.git") ? common.slice(0, -5) : ask("--show-toplevel") || cwd);
+}
 
 /** A cache folder holding the developer's handoffs, and a hook context that reads it. */
 function setup() {
@@ -118,31 +155,79 @@ describe("pending handoffs", () => {
     assert.equal(hook("Stop", { last_assistant_message: "Done." }).stderr, undefined);
   });
 
-  it("reads the notes and writes them under the record's lock, so a stale read cannot win over a later one", () => {
-    const { store, record } = setup();
-    const lock = path.join(path.dirname(record), `.${path.basename(record)}.lock`);
-    let locked = false;
-    store.refreshResumes({ id: SHOP, name: "shop", dir: "/work/shop" }, () => ((locked = fs.existsSync(lock)), []), []);
-    assert.equal(locked, true);
+  it("reads the notes and writes them under the record's lock: of two overlapping refreshes, the later read is what stays", async () => {
+    const home = tempHome();
+    const store = testStore(home);
+    const project = { id: SHOP, name: "shop", dir: "/work/shop" };
+    const stale = [note("Loaded meanwhile", "/ahorro:handoff-load 1"), note("Still pending", "/ahorro:handoff-load 2")];
+    const fresh = [note("Still pending", "/ahorro:handoff-load")];
+    // Another hook reads the folder before the handoff is loaded, and is slow to write what it read.
+    const other = holding(home, "slow-resumes", project, stale);
+    await other.reading;
+    store.refreshResumes(project, () => fresh, []);
+    await other.done;
+    assert.deepEqual(store.getResumes(SHOP)?.notes, fresh, "the stale read was written before this one was taken, not after");
   });
 
-  it("reads the folder the plugin writes to: the repository main checkout's, also from a subfolder", () => {
+  it("keeps one list per handoff folder: sessions in the repository and in its subfolder share it, numbered as now", () => {
     const cache = tempHome();
     const repo = path.join(fs.realpathSync(tempHome()), "shop");
     const sub = path.join(repo, "web");
-    fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
-    fs.mkdirSync(sub);
+    fs.mkdirSync(sub, { recursive: true });
+    gitIn(repo, "init", "-q");
     const folder = path.join(cache, "claude-handoffs", "shop");
     fs.mkdirSync(folder, { recursive: true });
-    const file = path.join(folder, "a.md");
-    fs.writeFileSync(file, "## Objetivo\nFrom the repository's folder\n");
+    for (const [name, hoursAgo] of [["a.md", 2], ["b.md", 1]] as const) {
+      const file = path.join(folder, name);
+      fs.writeFileSync(file, `## Objetivo\nHandoff ${name}\n`);
+      const t = new Date(Date.now() - hoursAgo * HOUR);
+      fs.utimesSync(file, t, t);
+    }
     const store = testStore();
-    const ctx: HookContext = { store, env: { CLAUDE_PROJECT_DIR: sub, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined };
-    handleHook(readHookInput(JSON.stringify({ session_id: "cc-1", cwd: sub, hook_event_name: "PostToolUse", tool_name: "Write", tool_input: { file_path: file, content: "" }, tool_response: {} })), ctx);
-    const got = store.getResumes(projectId(sub));
-    assert.equal(got?.notes[0]?.title, "From the repository's folder");
-    assert.deepEqual([got?.name, got?.dir], ["web", sub], "kept as the session's project, where the command loads it");
-    assert.equal(handoffFolder(path.join(tempHome(), "plain")), "plain", "outside git, the folder itself");
+    const hookIn = (dir: string) => handleHook(readHookInput(JSON.stringify({ session_id: "cc-1", cwd: dir, hook_event_name: "Stop", last_assistant_message: "x" })), { store, env: { CLAUDE_PROJECT_DIR: dir, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined });
+    hookIn(sub);
+    hookIn(repo);
+    // Kept as the handoff folder's, not the subfolder session's own project ("web"): a record per
+    // session project gave the same handoffs twice, and loading one from the repository left the
+    // subfolder's list numbered as before, so its "/ahorro:handoff-load 1" loaded another handoff.
+    assert.deepEqual(store.listResumes().map((r) => [r.id, r.name, r.dir, r.notes.length]), [[projectId(repo), "shop", repo, 2]]);
+    fs.renameSync(path.join(folder, "b.md"), path.join(folder, "b.md.usado"));
+    hookIn(repo);
+    assert.deepEqual(store.listResumes().map((r) => r.notes.map((n) => [n.title, n.command])), [[["Handoff a.md", "/ahorro:handoff-load"]]], "the one list the subfolder's session shows too");
+  });
+
+  it("names the handoff folder as the plugin's loader does, from git's common dir, symlinks resolved", () => {
+    const root = fs.realpathSync(tempHome());
+    const repo = path.join(root, "shop");
+    fs.mkdirSync(path.join(repo, "web"), { recursive: true });
+    gitIn(repo, "init", "-q");
+    gitIn(repo, "commit", "-q", "--allow-empty", "-m", "first");
+    const linked = path.join(repo, ".claude", "worktrees", "agent-a");
+    gitIn(repo, "worktree", "add", "-q", "-b", "agent/a", linked);
+    fs.mkdirSync(path.join(linked, "src"));
+    fs.symlinkSync(repo, path.join(root, "link"));
+    fs.symlinkSync(linked, path.join(root, "wt-link"));
+    // A bare repository with its worktrees beside it: git's common dir is `.bare`, not a `.git` folder.
+    gitIn(root, "clone", "-q", "--bare", repo, path.join(root, "bare", ".bare"));
+    gitIn(path.join(root, "bare", ".bare"), "worktree", "add", "-q", path.join(root, "bare", "trunk"));
+    fs.mkdirSync(path.join(root, "bare", "trunk", "lib"));
+    fs.mkdirSync(path.join(root, "plain"));
+    const cases: [string, string][] = [
+      [repo, "shop"],
+      [path.join(repo, "web"), "shop"],
+      [linked, "shop"],
+      [path.join(linked, "src"), "shop"],
+      [path.join(root, "link"), "shop"],
+      [path.join(root, "link", "web"), "shop"],
+      [path.join(root, "wt-link", "src"), "shop"],
+      [path.join(root, "bare", "trunk"), "trunk"],
+      [path.join(root, "bare", "trunk", "lib"), "trunk"],
+      [path.join(root, "plain"), "plain"],
+    ];
+    for (const [dir, name] of cases) {
+      assert.equal(handoffFolder(dir), name, dir);
+      assert.equal(handoffFolder(dir), loaderName(dir), `${dir}: as /ahorro:handoff-load finds it`);
+    }
   });
 
   it("never writes into the handoff folder", () => {
@@ -199,14 +284,56 @@ describe("resume notes in the store", () => {
     assert.deepEqual(store.snapshot().resumes, []);
   });
 
+  const ended = { id: SHOP, name: "shop", dir: "/work/shop", at: "2026-01-01T09:00:00.000Z", notes: [{ writtenAt: "2026-01-01T08:00:00.000Z", expiresAt: "2026-01-03T08:00:00.000Z", command: "/load" }] };
+  const cutoff = new Date("2026-03-01T00:00:00.000Z");
+
+  it("archives a project's record each time its notes all ended, overwriting none archived before", () => {
+    const store = testStore();
+    const archived = path.dirname(store.paths.archived(store.paths.resumes(SHOP)));
+    for (let i = 0; i < 2; i++) {
+      store.putResumes(ended); // the same project, even at the same time, ends twice
+      store.archiveOlderThan(cutoff);
+    }
+    const kept = fs.readdirSync(archived);
+    assert.equal(kept.length, 2, kept.join(", "));
+    for (const name of kept) assert.deepEqual(JSON.parse(fs.readFileSync(path.join(archived, name), "utf8")), ended);
+  });
+
+  it("leaves a record that was refreshed after it was listed, and reports one that turned unreadable, archiving the rest", async () => {
+    const home = tempHome();
+    const store = testStore(home);
+    const project = { id: SHOP, name: "shop", dir: "/work/shop" };
+    const offered = [note("Written meanwhile", "/ahorro:handoff-load")];
+    store.putResumes(ended);
+    const refresh = holding(home, "slow-resumes", project, offered);
+    await refresh.reading;
+    store.archiveOlderThan(cutoff); // lists the ended record, then waits for the refresh's lock
+    await refresh.done;
+    assert.deepEqual(store.getResumes(SHOP)?.notes, offered, "not refreshed meanwhile is checked again under the lock");
+
+    const pay = { ...ended, id: projectId("/work/pay"), name: "pay", dir: "/work/pay" };
+    store.putResumes(ended);
+    store.putResumes(pay);
+    fs.rmSync(path.join(home, "reading"));
+    const corrupt = holding(home, "corrupt-resumes", project, offered);
+    await corrupt.reading;
+    const problems: string[] = [];
+    store.archiveOlderThan(cutoff, problems);
+    await corrupt.done;
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0] ?? "", /resumes.*at.*not archived/s);
+    assert.ok(fs.existsSync(store.paths.resumes(SHOP)), "left for its adapter to replace");
+    assert.equal(fs.existsSync(store.paths.resumes(pay.id)), false, "the next record is archived all the same");
+  });
+
   it("moves a project's record to the archive once all its notes ended before the cutoff, and keeps one still offered", () => {
     const store = testStore();
-    const ended = { id: SHOP, name: "shop", dir: "/work/shop", at: "2026-01-01T09:00:00.000Z", notes: [{ writtenAt: "2026-01-01T08:00:00.000Z", expiresAt: "2026-01-03T08:00:00.000Z", command: "/load" }] };
     const kept = { ...ended, id: projectId("/work/pay"), name: "pay", dir: "/work/pay", notes: [...ended.notes, { writtenAt: "2026-03-10T08:00:00.000Z", expiresAt: "2026-03-12T08:00:00.000Z", command: "/load 1" }] };
     store.putResumes(ended);
     store.putResumes(kept);
-    store.archiveOlderThan(new Date("2026-03-01T00:00:00.000Z"));
+    store.archiveOlderThan(cutoff);
     assert.deepEqual(store.listResumes().map((r) => r.name), ["pay"]);
-    assert.ok(fs.existsSync(store.paths.archived(store.paths.resumes(SHOP))), "moved, not deleted");
+    const archived = path.dirname(store.paths.archived(store.paths.resumes(SHOP)));
+    assert.deepEqual(fs.readdirSync(archived).filter((n) => n.startsWith(SHOP)).length, 1, "moved, not deleted");
   });
 });

@@ -435,6 +435,14 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const { root, main, wt } = landedRepo();
     const detached = path.join(root, "shop-detached");
     gitIn(main, "worktree", "add", "-q", "--detach", detached, "agent/merged");
+    // Merged and left alone since the scan: removed, the branch with branch -d. And one on a branch
+    // that stays put while its checkout leaves it for commits of its own.
+    const quiet = path.join(root, "shop-quiet");
+    const still = path.join(root, "shop-still");
+    const switched = path.join(root, "shop-switched");
+    gitIn(main, "worktree", "add", "-q", "-b", "agent/quiet", quiet, "agent/merged");
+    gitIn(main, "worktree", "add", "-q", "--detach", still, "agent/merged");
+    gitIn(main, "worktree", "add", "-q", "-b", "agent/switched", switched, "agent/merged");
     const scan = await scanProject(main, undefined, new Date(), { sizes: false });
     const demo = store.listProjectScans().find((p) => p.name === "web-shop");
     assert.ok(demo);
@@ -443,6 +451,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     store.upsertAgent("landed", "picker", { goal: "Pick me", worktree: wt.picked, state: "done" });
     // Checkouts move after the scan: the copied commands must remove nothing they did not check.
     for (const moved of [wt.moved, wt.merged, detached]) gitIn(moved, "commit", "-q", "--allow-empty", "-m", "after the scan");
+    gitIn(switched, "switch", "-q", "--detach");
+    gitIn(switched, "commit", "-q", "--allow-empty", "-m", "after the scan, on no branch");
     try {
       await browser.send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
       const page = await open();
@@ -464,21 +474,24 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.match(await page.eval<string>("[...document.querySelectorAll('#session .wt-list .arow')].find((r) => r.textContent.startsWith('agent/picked')).textContent"), /picked · landed by cherry-pick/);
       await page.click("#session .wt-actions button");
       const commands = (await page.eval<string>("navigator.clipboard.readText()")).split("\n");
-      assert.equal(commands.length, 5, "merged, picked, dirty, moved and detached; not the one partly picked");
-      const failed = commands.filter((c) => {
+      assert.equal(commands.length, 8, "merged, picked, dirty, moved, detached, quiet, still and switched; not the one partly picked");
+      const kept: string[] = [];
+      for (const c of commands) {
         try {
           execFileSync("sh", ["-c", c], { stdio: "pipe" });
-          return false;
-        } catch {
-          return true; // expected for the dirty checkout and the three that moved: checked below
+        } catch (error) {
+          // Expected for the dirty checkout and the four that moved: each line fails, saying which it kept.
+          kept.push(String((error as { stderr?: Buffer }).stderr));
         }
-      });
-      assert.equal(failed.length, 4);
-      assert.deepEqual(gitIn(main, "branch", "--format=%(refname:short)").trim().split("\n").sort(), ["agent/dirty", "agent/merged", "agent/moved", "agent/partly", "main"]);
+      }
+      assert.equal(kept.length, 5, kept.join("\n"));
+      for (const moved of [wt.moved, wt.merged, detached, switched]) assert.ok(kept.some((e) => e.includes(`kept ${moved}: its HEAD or branch is no longer at`)), `${moved} said kept`);
+      assert.ok(kept.some((e) => e.includes(wt.dirty) && /modified or untracked/.test(e)), "git says why the dirty one stays");
+      assert.deepEqual(gitIn(main, "branch", "--format=%(refname:short)").trim().split("\n").sort(), ["agent/dirty", "agent/merged", "agent/moved", "agent/partly", "agent/switched", "main"]);
       assert.deepEqual(
         gitIn(main, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)).sort(),
-        [main, wt.dirty, wt.partly, wt.moved, wt.merged, detached].sort(),
-        "only the picked checkout goes: the dirty one is kept, and so are those that moved since the scan, with their branches",
+        [main, wt.dirty, wt.partly, wt.moved, wt.merged, detached, switched].sort(),
+        "the picked, quiet and still checkouts go: the dirty one is kept, and so are those that moved since the scan, with their branches",
       );
       await page.press("Escape");
     } finally {

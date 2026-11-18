@@ -350,7 +350,9 @@ export const TEXT = {
     picked: "landed by cherry-pick",
     notMeasured: "not measured yet",
     copyCleanup: "Copy the commands to remove them and their branches",
-    cleanupNote: "The desk never removes anything: paste them in a terminal if you agree. A checkout with changes, or a branch that moved since, is kept.",
+    cleanupNote: "The desk never removes anything: paste them in a terminal if you agree. A checkout with changes, or one that moved since, is kept, and its line says so.",
+    /** What a copied cleanup line prints when the checkout moved since the scan. @param {string} path @param {string} head */
+    kept: (path, head) => `kept ${path}: its HEAD or branch is no longer at ${head.slice(0, 12)}, which the scan found merged`,
   },
   branches: {
     title: "Branches",

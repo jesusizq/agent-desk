@@ -1,5 +1,7 @@
 // Child process used by the concurrency tests: `worker.ts <home> <task> <count>`.
+import * as fs from "node:fs";
 import * as path from "node:path";
+import type { ResumeNote } from "../../src/core/model.ts";
 import { readJson, withLock, writeJson } from "../../src/store/fsx.ts";
 import { Store } from "../../src/store/store.ts";
 
@@ -56,6 +58,16 @@ if (task === "increment") {
   process.stdout.write(JSON.stringify(runs));
 } else if (task === "forget") {
   for (let i = 0; i < Number(count); i++) store.forgetSession("s1");
+} else if (task === "slow-resumes" || task === "corrupt-resumes") {
+  // Holds a project's resumes lock for `count` ms, saying so in <home>/reading: a refresh whose read of
+  // its source is slow, writing the notes of <home>/resumes.json, or a writer leaving a record that fails validation.
+  const { project, notes } = JSON.parse(fs.readFileSync(path.join(home, "resumes.json"), "utf8")) as { project: { id: string; name: string; dir: string }; notes: ResumeNote[] };
+  const hold = () => {
+    fs.writeFileSync(path.join(home, "reading"), "");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(count));
+  };
+  if (task === "slow-resumes") store.refreshResumes(project, () => (hold(), notes), []);
+  else withLock(store.paths.resumes(project.id), () => (hold(), writeJson(store.paths.resumes(project.id), { ...project, at: "later", notes })));
 } else {
   throw new Error(`unknown task ${task}`);
 }

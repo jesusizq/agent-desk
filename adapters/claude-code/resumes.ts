@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONTROL } from "../../src/core/check.ts";
 import { RESUME_NOTES_MAX, RESUME_TITLE_MAX, type ResumeNote } from "../../src/core/model.ts";
-import { repositoryRoot, type ProjectLocation } from "../../src/project/locate.ts";
+import { gitDirs } from "../../src/project/locate.ts";
 import { projectId } from "../../src/project/scan.ts";
 import { isCode } from "../../src/store/fsx.ts";
 import type { Store } from "../../src/store/store.ts";
@@ -99,20 +99,30 @@ export function pendingHandoffs(root: string, project: string, now: Date, proble
 }
 
 /**
- * The handoff folder's name for a session working in `dir`, as the plugin names it: its repository's
- * main checkout (a linked worktree's too, a subfolder's too), or the folder itself outside git.
+ * The folder a session working in `dir` keeps its handoffs under, named as the plugin names it from
+ * git: the main checkout, when git's common dir is its `.git` folder (from a subfolder or a linked
+ * worktree too), else the checkout itself (a bare repository's worktree, a submodule), symlinks
+ * resolved as git resolves them; outside git, the folder itself as given.
  */
-export function handoffFolder(dir: string): string {
-  return path.basename(repositoryRoot(dir) ?? path.resolve(dir));
+export function handoffHome(dir: string): string {
+  const git = gitDirs(dir);
+  if (git === undefined) return path.resolve(dir);
+  return path.basename(git.common) === ".git" ? path.dirname(git.common) : git.top;
 }
 
+/** The handoff folder's name for a session working in `dir`. */
+export const handoffFolder = (dir: string): string => path.basename(handoffHome(dir));
+
 /**
- * Records the project's pending handoffs as its resume notes, writing only when they changed, so an
- * unchanged list costs the page nothing. The page hides a note once it expires, with no hook running.
+ * Records the pending handoffs a session working in `dir` can load as the resume notes of the folder
+ * they are named after, one record per handoff folder whichever subfolder or worktree the session
+ * works in, so each has one list, numbered as now. Writes only when they changed, so an unchanged list
+ * costs the page nothing. The page hides a note once it expires, with no hook running.
  */
-export function refreshResumes(project: ProjectLocation, store: Store, env: NodeJS.ProcessEnv, problems: string[], now = new Date()): void {
+export function refreshResumes(dir: string, store: Store, env: NodeJS.ProcessEnv, problems: string[], now = new Date()): void {
   const root = handoffRoot(env);
   if (!root) return;
-  const folder = handoffFolder(project.worktree ?? project.dir);
-  store.refreshResumes({ id: projectId(project.dir), name: project.name, dir: project.dir }, () => pendingHandoffs(root, folder, now, problems), problems, now);
+  const home = handoffHome(dir);
+  const folder = path.basename(home);
+  store.refreshResumes({ id: projectId(home), name: folder || home, dir: home }, () => pendingHandoffs(root, folder, now, problems), problems, now);
 }

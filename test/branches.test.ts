@@ -126,7 +126,9 @@ describe("git state of a project's checkouts", () => {
     gitIn(main, "branch", "agent/empty", "main~1");
     gitIn(main, "branch", "agent/mixed", "agent/picked");
     gitIn(main, "branch", "agent/merges", "main~2");
-    const made: [string, string[]][] = [["agent/empty", []], ["agent/mixed", []], ["agent/merges", ["merge", "-q", "--no-ff", "-m", "Merge main~1", "main~1"]]];
+    gitIn(main, "branch", "agent/pickmerge", "agent/picked");
+    // Another agent's branch, itself picked into main, merged in: every commit but the merge landed.
+    const made: [string, string[]][] = [["agent/empty", []], ["agent/mixed", []], ["agent/merges", ["merge", "-q", "--no-ff", "-m", "Merge main~1", "main~1"]], ["agent/pickmerge", ["merge", "-q", "--no-ff", "-m", "Merge agent/dirty", "agent/dirty"]]];
     for (const [branch, args] of made) {
       const at = path.join(main, ".claude", "worktrees", branch.replace("/", "-"));
       gitIn(main, "worktree", "add", "-q", at, branch);
@@ -141,6 +143,7 @@ describe("git state of a project's checkouts", () => {
     assert.deepEqual(state("agent/empty"), [false, undefined, 1], "its empty commit could be anything's");
     assert.deepEqual(state("agent/mixed"), [false, undefined, 1], "picked commits and an empty one: the empty one is still ahead");
     assert.deepEqual(state("agent/merges"), [false, undefined, 1], "only a merge of its own: nothing was cherry-picked");
+    assert.deepEqual(state("agent/pickmerge"), [false, undefined, 1], "picked commits and a merge of its own: the merge may hold a resolution the base lacks");
     assert.deepEqual(state("agent/picked"), [true, true, 0], "picked commits alone still landed");
   });
 

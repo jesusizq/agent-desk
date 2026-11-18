@@ -1501,9 +1501,10 @@ export class Store {
    * questions, results with their images, and sessions that ended or whose process is gone, with
    * their agents, metrics and services; then the images nothing left shows (attached on the desk
    * to what was archived, or never sent), and projects' resume notes that all ended before `cutoff`.
-   * Nothing is deleted; the page and the hooks stop reading it.
+   * Nothing is deleted; the page and the hooks stop reading it. A resume record that cannot be read
+   * is reported in `problems` and left for its adapter to replace.
    */
-  archiveOlderThan(cutoff: Date): { questions: number; results: number; sessions: number; images: number } {
+  archiveOlderThan(cutoff: Date, problems: string[] = []): { questions: number; results: number; sessions: number; images: number } {
     const before = cutoff.toISOString();
     const counts = { questions: 0, results: 0, sessions: 0, images: 0 };
     for (const q of this.readAll(this.paths.questionDir("closed"), readQuestion)) {
@@ -1535,12 +1536,20 @@ export class Store {
     }
     counts.images = this.archiveUnshownImages(cutoff);
     // Resume notes all ended before the cutoff: their project may never run a hook again to drop them.
-    const ended = (r: ProjectResumes | undefined) => r !== undefined && r.notes.every((n) => n.expiresAt < before);
-    for (const r of this.listResumes()) {
+    const ended = (r: ProjectResumes | undefined): r is ProjectResumes => r !== undefined && r.notes.every((n) => n.expiresAt < before);
+    for (const r of this.listResumes(problems)) {
       if (!ended(r)) continue;
       const file = this.paths.resumes(r.id);
       withLock(file, () => {
-        if (ended(this.getResumes(r.id))) this.moveToArchive(file); // not refreshed meanwhile
+        let current: ProjectResumes | undefined;
+        try {
+          current = this.getResumes(r.id);
+        } catch (error) {
+          problems.push(`${(error as Error).message}; not archived`);
+          return;
+        }
+        // Not refreshed meanwhile; a project's ids repeat, so each archived record keeps its own name.
+        if (ended(current)) this.moveToArchive(file, current.at);
       });
     }
     return counts;
@@ -1570,8 +1579,15 @@ export class Store {
     return moved;
   }
 
-  private moveToArchive(file: string): void {
-    const target = this.paths.archived(file);
+  /** Moves a store file to archive/; with `stamp`, under a name of its own that overwrites nothing. */
+  private moveToArchive(file: string, stamp?: string): void {
+    let target = this.paths.archived(file);
+    if (stamp !== undefined) {
+      const ext = path.extname(target);
+      const stem = `${target.slice(0, -ext.length || undefined)}.${stamp.replace(/[^0-9A-Za-z]/g, "")}`;
+      target = `${stem}${ext}`;
+      for (let n = 2; fs.existsSync(target); n++) target = `${stem}-${n}${ext}`;
+    }
     ensureDir(path.dirname(target));
     try {
       fs.renameSync(file, target);

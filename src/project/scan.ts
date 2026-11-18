@@ -152,7 +152,8 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
  * far ahead and behind it is. Merged: an ancestor of the base, or each of its commits landed there by
  * cherry-pick (a patch-equivalent commit), which only `ahead`, counted without those, then tells.
  * An empty commit matches any other empty one and a merge none, so neither is taken as landed: a
- * branch with an empty commit of its own, or with only merges of its own, is ahead by those.
+ * branch with an empty commit or a merge of its own (its resolution may hold changes the base lacks)
+ * is ahead by those.
  */
 async function headState(dir: string, head: string, base: string | undefined, timeoutMs: number | undefined) {
   const last = await lastCommit(dir, head, timeoutMs);
@@ -162,7 +163,8 @@ async function headState(dir: string, head: string, base: string | undefined, ti
   const unlanded = await unlandedAhead(dir, base, head, timeoutMs);
   if (unlanded > 0) return { ...last, merged: false, ahead: unlanded, behind };
   const { commits, empty } = await ownCommits(dir, base, head, timeoutMs);
-  const ahead = commits === 0 ? own : empty;
+  // Merges of its own (`own` counts them, `commits` does not) may hold changes no base commit has.
+  const ahead = empty + own - commits;
   return { ...last, merged: ahead === 0, ...(ahead === 0 ? { cherryPicked: true } : {}), ahead, behind };
 }
 

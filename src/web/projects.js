@@ -107,18 +107,21 @@ export function openResumes(projectId) {
 
 /**
  * Commands that remove merged checkouts, one line each, every step only once the one before
- * succeeded: a check that the branch (a detached checkout: its HEAD) still points at the head the
- * scan found merged, the worktree (git refuses one with changes), then its branch (`branch -D` for
- * one landed by cherry-pick). Paths and names come from git's own listing; quoted for the shell.
+ * succeeded: a check that the checkout's own HEAD, and its branch when it has one, still point at the
+ * head the scan found merged (else the line says on stderr which checkout it kept, and fails), the
+ * worktree (git refuses one with changes), then its branch (`branch -D` for one landed by
+ * cherry-pick). Paths and names come from git's own listing; quoted for the shell.
  * @param {string} dir @param {Worktree[]} merged
  */
 export function cleanupCommands(dir, merged) {
   const q = (/** @type {string} */ s) => `'${s.replace(/'/g, "'\\''")}'`;
   const g = `git -C ${q(dir)}`;
+  const at = (/** @type {string} */ tip, /** @type {string} */ head) => `test "$(${tip})" = ${q(head)}`;
   return merged
     .map((w) => {
-      const tip = w.branch ? `${g} rev-parse ${q(`refs/heads/${w.branch}`)}` : `git -C ${q(w.path)} rev-parse HEAD`;
-      const remove = `test "$(${tip})" = ${q(w.head)} && ${g} worktree remove ${q(w.path)}`;
+      const checks = [at(`git -C ${q(w.path)} rev-parse HEAD`, w.head), ...(w.branch ? [at(`${g} rev-parse ${q(`refs/heads/${w.branch}`)}`, w.head)] : [])];
+      const kept = `{ echo ${q(TEXT.worktrees.kept(w.path, w.head))} >&2; false; }`;
+      const remove = `${checks.join(" && ")} || ${kept} && ${g} worktree remove ${q(w.path)}`;
       return w.branch ? `${remove} && ${g} branch ${w.cherryPicked ? "-D" : "-d"} ${q(w.branch)}` : remove;
     })
     .join("\n");

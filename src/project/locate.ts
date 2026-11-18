@@ -18,15 +18,28 @@ export function locateProject(dir: string): ProjectLocation {
 }
 
 /**
- * The top folder of the checkout holding `dir` (the nearest folder above it with a `.git`), or, in a
- * linked worktree, of its repository's main checkout; undefined outside git.
+ * The checkout holding `dir` as git finds it, read from git's files: its top folder (the nearest
+ * folder above `dir` with a `.git`, after resolving symlinks, since git walks up from the real path)
+ * and its common dir (a `.git` folder, a linked worktree's `commondir`, a submodule's or bare
+ * repository's gitdir), both resolved; undefined outside git or when its git files cannot be read.
  */
-export function repositoryRoot(dir: string): string | undefined {
-  for (let at = path.resolve(dir); ; at = path.dirname(at)) {
+export function gitDirs(dir: string): { top: string; common: string } | undefined {
+  const start = path.resolve(dir);
+  for (let at = real(start) ?? start; ; at = path.dirname(at)) {
     const dotGit = path.join(at, ".git");
     const stat = statOrUndefined(dotGit);
-    if (stat?.isDirectory()) return at;
-    if (stat?.isFile()) return linkedMain(at, dotGit) ?? at;
+    if (stat?.isDirectory()) {
+      const common = real(dotGit);
+      return common === undefined ? undefined : { top: at, common };
+    }
+    if (stat?.isFile()) {
+      const pointer = /^gitdir: (.+)$/m.exec(readSmall(dotGit) ?? "")?.[1]?.trim();
+      if (!pointer) return undefined;
+      const gitdir = path.resolve(at, pointer);
+      const commondir = readSmall(path.join(gitdir, "commondir"))?.trim();
+      const common = real(commondir ? path.resolve(gitdir, commondir) : gitdir);
+      return common === undefined ? undefined : { top: at, common };
+    }
     if (stat || path.dirname(at) === at) return undefined;
   }
 }

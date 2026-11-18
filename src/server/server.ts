@@ -418,7 +418,9 @@ const ARCHIVE_EVERY_MS = 6 * 3600_000;
 
 /** Keeps the live store small: what is older than 60 days moves to archive/. */
 function archiveOld(store: Store): void {
-  const counts = store.archiveOlderThan(new Date(Date.now() - ARCHIVE_AFTER_DAYS * 86_400_000));
+  const problems: string[] = [];
+  const counts = store.archiveOlderThan(new Date(Date.now() - ARCHIVE_AFTER_DAYS * 86_400_000), problems);
+  for (const problem of problems) process.stderr.write(`agent-desk: archiving: ${problem}\n`);
   if (counts.questions + counts.results + counts.sessions + counts.images > 0) {
     process.stdout.write(`agent-desk: archived ${counts.questions} questions, ${counts.results} results, ${counts.sessions} sessions, ${counts.images} images older than ${ARCHIVE_AFTER_DAYS} days\n`);
   }
