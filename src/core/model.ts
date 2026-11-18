@@ -437,13 +437,14 @@ export const RESUME_NOTES_MAX = 20;
 
 export function readProjectResumes(value: unknown, where = "resumes"): ProjectResumes {
   const f = fields(value, where);
-  return {
+  return compact({
     id: id(f.id, `${where}.id`),
     name: label(f.name, `${where}.name`),
     dir: nonEmpty(f.dir, `${where}.dir`, 4096),
+    source: optional(f.source, `${where}.source`, id),
     at: isoTime(f.at, `${where}.at`),
     notes: list(f.notes, `${where}.notes`, readResumeNote, RESUME_NOTES_MAX),
-  };
+  });
 }
 
 function readResumeNote(value: unknown, where: string): ResumeNote {

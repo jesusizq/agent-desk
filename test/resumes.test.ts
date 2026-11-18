@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { handleHook, type HookContext, readHookInput } from "../adapters/claude-code/hooks.ts";
-import { handoffFolder, objective, pendingHandoffs } from "../adapters/claude-code/resumes.ts";
+import { handoffFolder, objective, pendingHandoffs, RESUMES_SOURCE } from "../adapters/claude-code/resumes.ts";
 import { readProjectResumes, type ResumeNote } from "../src/core/model.ts";
 import { projectId } from "../src/project/scan.ts";
 import { StorePaths } from "../src/store/paths.ts";
@@ -155,6 +155,17 @@ describe("pending handoffs", () => {
     assert.equal(hook("Stop", { last_assistant_message: "Done." }).stderr, undefined);
   });
 
+  it("removes a stored record it cannot read when no handoff is pending, saying it removed it", () => {
+    const { store, record, hook } = setup();
+    fs.mkdirSync(path.dirname(record), { recursive: true });
+    fs.writeFileSync(record, JSON.stringify({ id: SHOP, name: "shop", dir: "/work/shop", at: "yesterday", notes: [] }));
+    const out = hook("SessionStart", { source: "startup" });
+    assert.match(out.stderr ?? "", /resumes.*at.*removed, since no notes are read now/s);
+    assert.doesNotMatch(out.stderr ?? "", /replaced/);
+    assert.equal(fs.existsSync(record), false);
+    assert.equal(store.getResumes(SHOP), undefined);
+  });
+
   it("reads the notes and writes them under the record's lock: of two overlapping refreshes, the later read is what stays", async () => {
     const home = tempHome();
     const store = testStore(home);
@@ -224,6 +235,48 @@ describe("pending handoffs", () => {
       "no stale list still offers /ahorro:handoff-load 1, which now loads another handoff",
     );
     assert.deepEqual(store.listSessions().map((x) => [x.project.name, x.resumesId]).sort(), [["link", projectId(repo)], ["web", projectId(repo)]], "each session names the list it files under");
+  });
+
+  it("removes those lists when the folder's own list is refreshed, from a session in another folder, and keeps the lists it did not write or that list another folder", () => {
+    const cache = tempHome();
+    const root = fs.realpathSync(tempHome());
+    const repo = path.join(root, "shop");
+    const sub = path.join(repo, "web");
+    const docs = path.join(repo, "docs");
+    const link = path.join(root, "link");
+    fs.mkdirSync(sub, { recursive: true });
+    fs.mkdirSync(docs);
+    gitIn(repo, "init", "-q");
+    fs.symlinkSync(repo, link);
+    const folder = path.join(cache, "claude-handoffs", "shop");
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, "a.md"), "## Objetivo\nHandoff a\n");
+    const store = testStore();
+    const at = new Date().toISOString();
+    const before = [note("Handoff b", "/ahorro:handoff-load 1"), note("Handoff a", "/ahorro:handoff-load 2")];
+    // Written before records named their source: this adapter's, so removed like one that names it.
+    store.putResumes({ id: projectId(sub), name: "web", dir: sub, at, notes: before });
+    store.putResumes({ id: projectId(link), name: "link", dir: link, source: RESUMES_SOURCE, at, notes: before });
+    // Another adapter's notes kept per project, under the id this cleanup would match: not this adapter's to remove.
+    const theirs = { id: projectId(docs), name: "docs", dir: docs, source: "other-tool-notes", at, notes: [note("Their note", "other-tool resume")] };
+    store.putResumes(theirs);
+    // This adapter's list of another handoff folder.
+    const other = path.join(root, "elsewhere");
+    fs.mkdirSync(other);
+    store.putResumes({ id: projectId(other), name: "elsewhere", dir: other, source: RESUMES_SOURCE, at, notes: before });
+    // No session ever works in the subfolder or through the link: the repository's own session cleans up.
+    const out = handleHook(readHookInput(JSON.stringify({ session_id: "cc-shop", cwd: repo, hook_event_name: "Stop", last_assistant_message: "x" })), { store, env: { CLAUDE_PROJECT_DIR: repo, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined });
+    assert.equal(out.stderr, undefined, out.stderr);
+    assert.deepEqual(
+      store.listResumes().map((r) => [r.name, r.source, r.notes.map((n) => n.command)]).sort(),
+      [
+        ["docs", "other-tool-notes", ["other-tool resume"]],
+        ["elsewhere", RESUMES_SOURCE, ["/ahorro:handoff-load 1", "/ahorro:handoff-load 2"]],
+        ["shop", RESUMES_SOURCE, ["/ahorro:handoff-load"]],
+      ],
+      "neither stale list offers /ahorro:handoff-load 1 in All or the away summary",
+    );
+    assert.deepEqual(store.getResumes(theirs.id), theirs, "another adapter's record untouched");
   });
 
   it("names the handoff folder as the plugin's loader does, from git's common dir, symlinks resolved", () => {
@@ -304,6 +357,27 @@ describe("resume notes in the store", () => {
     bad((r) => ({ ...r, notes: [{ ...r.notes[0], writtenAt: "yesterday" }] }), /writtenAt/);
     bad((r) => ({ ...r, id: "../x" }), /id/);
     bad((r) => ({ ...r, notes: Array.from({ length: 21 }, () => r.notes[0]) }), /more than 20/);
+    assert.deepEqual(readProjectResumes({ ...record, source: "some-adapter" }), { ...record, source: "some-adapter" });
+    bad((r) => ({ ...r, source: "a b" }), /source/);
+  });
+
+  it("removes a record only when it is stale as read under its lock, and reports and leaves one it cannot read", () => {
+    const home = tempHome();
+    const store = testStore(home);
+    const problems: string[] = [];
+    store.putResumes(record);
+    store.removeResumesIf(SHOP, (r) => r.dir !== record.dir, problems);
+    assert.deepEqual(store.getResumes(SHOP), record, "not stale: kept");
+    store.removeResumesIf(SHOP, (r) => r.dir === record.dir, problems);
+    assert.equal(store.getResumes(SHOP), undefined);
+    store.removeResumesIf(SHOP, () => true, problems);
+    assert.deepEqual(problems, [], "an absent record is nothing to report");
+    const file = new StorePaths(home).resumes(SHOP);
+    fs.writeFileSync(file, "{ cut");
+    store.removeResumesIf(SHOP, () => true, problems);
+    assert.equal(fs.readFileSync(file, "utf8"), "{ cut", "left as it is");
+    assert.equal(problems.length, 1);
+    assert.match(problems[0] ?? "", /not removed/);
   });
 
   it("lists them in the snapshot the page reads, and keeps no file for a project left with none", () => {

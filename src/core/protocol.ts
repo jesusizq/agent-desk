@@ -478,8 +478,12 @@ export type Handoff = { sessionId: string; at: string; trigger: "manual" | "auto
  */
 export type ResumeNote = { title?: string; writtenAt: string; expiresAt: string; command: string };
 
-/** A project's resume notes, newest first, as its adapter read them at `at`; `id` as `ProjectScan`'s. */
-export type ProjectResumes = { id: string; name: string; dir: string; at: string; notes: ResumeNote[] };
+/**
+ * A project's resume notes, newest first, as its adapter read them at `at`; `id` as `ProjectScan`'s.
+ * `source` names the adapter's source that wrote it (an id it chooses): a record belongs to the
+ * adapter that wrote it, and only that adapter removes it. Absent on records written before the field.
+ */
+export type ProjectResumes = { id: string; name: string; dir: string; source?: string; at: string; notes: ResumeNote[] };
 
 /** A filesystem holding active projects that is running out of space. */
 export type DiskWarning = { dir: string; projects: string[]; freeBytes: number; totalBytes: number };

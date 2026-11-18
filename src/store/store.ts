@@ -1444,23 +1444,41 @@ export class Store {
   /**
    * Replaces a project's notes with what `read` finds now, read and written under the record's lock,
    * so that of two adapters reading their source at different moments the later read is kept. Writes
-   * only when the notes changed; a stored record that cannot be read is reported and replaced. `read`
-   * gets the stored record; notes left empty remove it.
+   * only when the notes changed; a stored record that cannot be read is reported and replaced, or
+   * removed when no notes are read now. `read` gets the stored record; notes left empty remove it.
    */
   refreshResumes(project: Omit<ProjectResumes, "at" | "notes">, read: (stored: ProjectResumes | undefined) => ResumeNote[], problems: string[], now = new Date()): void {
     const file = this.paths.resumes(project.id);
     withLock(file, () => {
       let before: ProjectResumes | undefined;
-      let unreadable = false;
+      let unreadable: string | undefined;
       try {
         before = this.getResumes(project.id);
       } catch (error) {
-        unreadable = true;
-        problems.push(`${(error as Error).message}; replaced by the notes read now`);
+        unreadable = (error as Error).message;
       }
       const notes = read(before);
-      if (!unreadable && JSON.stringify(before?.notes ?? []) === JSON.stringify(notes)) return;
+      if (unreadable !== undefined) problems.push(`${unreadable}; ${notes.length ? "replaced by the notes read now" : "removed, since no notes are read now"}`);
+      else if (JSON.stringify(before?.notes ?? []) === JSON.stringify(notes)) return;
       this.putResumes({ ...project, at: now.toISOString(), notes });
+    });
+  }
+
+  /**
+   * Removes a project's notes when `stale` holds for the record as read under its lock, so a refresh
+   * that rewrote it meanwhile is judged, not the listing; a record that cannot be read is reported and left.
+   */
+  removeResumesIf(projectId: string, stale: (stored: ProjectResumes) => boolean, problems: string[]): void {
+    const file = this.paths.resumes(projectId);
+    withLock(file, () => {
+      let current: ProjectResumes | undefined;
+      try {
+        current = this.getResumes(projectId);
+      } catch (error) {
+        problems.push(`${(error as Error).message}; not removed`);
+        return;
+      }
+      if (current !== undefined && stale(current)) fs.rmSync(file, { force: true });
     });
   }
 

@@ -3,8 +3,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONTROL } from "../../src/core/check.ts";
-import { RESUME_NOTES_MAX, RESUME_TITLE_MAX, type ResumeNote } from "../../src/core/model.ts";
-import { gitDirs, locateProject } from "../../src/project/locate.ts";
+import { type ProjectResumes, RESUME_NOTES_MAX, RESUME_TITLE_MAX, type ResumeNote } from "../../src/core/model.ts";
+import { gitDirs } from "../../src/project/locate.ts";
 import { projectId } from "../../src/project/scan.ts";
 import { isCode } from "../../src/store/fsx.ts";
 import type { Store } from "../../src/store/store.ts";
@@ -116,6 +116,12 @@ export const handoffFolder = (dir: string): string => path.basename(handoffHome(
 /** The id of the record a session working in `dir` files its pending handoffs under. */
 export const resumesIdOf = (dir: string): string => projectId(handoffHome(dir));
 
+/** Names this adapter's resume records (`ProjectResumes.source`): only those it removes. */
+export const RESUMES_SOURCE = "claude-code-handoffs";
+
+// A record without a source predates the field, when this adapter was the only one writing any.
+const ours = (r: ProjectResumes): boolean => (r.source ?? RESUMES_SOURCE) === RESUMES_SOURCE;
+
 /**
  * Records the pending handoffs a session working in `dir` can load as the resume notes of the folder
  * they are named after, one record per handoff folder whichever subfolder or worktree the session
@@ -128,10 +134,9 @@ export function refreshResumes(dir: string, store: Store, env: NodeJS.ProcessEnv
   const home = handoffHome(dir);
   const folder = path.basename(home);
   const id = projectId(home);
-  store.refreshResumes({ id, name: folder || home, dir: home }, () => pendingHandoffs(root, folder, now, problems), problems, now);
-  // A record under the session's own project (a subfolder, a path through a symlink) listing this
-  // folder keeps its numbering from before a later load, so its "load 1" loads another: emptied, so removed.
-  const own = locateProject(dir);
-  if (projectId(own.dir) === id) return;
-  store.refreshResumes({ id: projectId(own.dir), name: own.name, dir: own.dir }, (stale) => (stale && handoffHome(stale.dir) !== home ? stale.notes : []), problems, now);
+  store.refreshResumes({ id, name: folder || home, dir: home, source: RESUMES_SOURCE }, () => pendingHandoffs(root, folder, now, problems), problems, now);
+  // Another record of ours for this folder (an earlier version kept one per subfolder or symlinked
+  // path) keeps its numbering from before a later load, so its "load 1" loads another: removed.
+  const stale = (r: ProjectResumes) => r.id !== id && ours(r) && handoffHome(r.dir) === home;
+  for (const r of store.listResumes(problems)) if (stale(r)) store.removeResumesIf(r.id, stale, problems);
 }
