@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# What a turn with edits must pass: strict types, then the tests (the Stop hook runs this).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+npm run --silent check
+npm test --silent 2>&1 | tail -40
