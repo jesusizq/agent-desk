@@ -15,11 +15,15 @@ const ATTENTION = ["failed", "blocked", "idle", "working", "waiting", "done"];
 
 /** At work, but its latest call started a job of its own or waits for one: waiting on it. @param {Agent | Session} x */
 const onItsJob = (x) => x.state === "working" && x.waitsForJob === true;
+/** At work, but a process of its checkout waits at the load gate for the machine's load to drop. @param {Agent} a */
+const onTheMachine = (a) => a.state === "working" && a.waitingFor === "machine-load";
+/** Waiting on something other than its agents, so neither working nor quiet. @param {Agent} a */
+const waitingAside = (a) => onItsJob(a) || onTheMachine(a);
 /** One dot per agent says the shape of a session at a glance. `words`: its tooltip holds no tool call. @param {Agent} a @param {boolean} [words] */
 export function agentDot(a, words = false) {
-  const st = onItsJob(a) ? "waiting" : a.state;
+  const st = waitingAside(a) ? "waiting" : a.state;
   const mark = dot(st);
-  mark.title = [a.name, TEXT.state[st], words ? spoken(a) : a.activity].filter(Boolean).join(" · ");
+  mark.title = [a.name, onTheMachine(a) ? TEXT.waitsForMachine : TEXT.state[st], words ? spoken(a) : a.activity].filter(Boolean).join(" · ");
   return st === "working" ? h("span", { class: "live" }, mark) : mark;
 }
 /** The session itself at work, before its agents' dots, or waiting on its own job. @param {Session} s */
@@ -34,9 +38,9 @@ function waitsLine(a) {
   const waits = waitingOn(a);
   return waits.length ? TEXT.waits(waits.map((n) => agentOf(a.sessionId, n)?.goal ?? n).join(", ")) : null;
 }
-/** What an agent does now: who it waits for, its latest tool call, or what kind of agent it is. @param {Agent} a */
+/** What an agent does now: who it waits for, the machine it waits for, its latest tool call, or what kind of agent it is. @param {Agent} a */
 export function agentDoing(a) {
-  return waitsLine(a) ?? a.activity ?? (a.type ? TEXT.agentType(a.type) : "");
+  return waitsLine(a) ?? (onTheMachine(a) ? TEXT.waitsForMachine : null) ?? a.activity ?? (a.type ? TEXT.agentType(a.type) : "");
 }
 /**
  * Why an agent is in trouble, in a few words. `words`: only what the session or the adapter wrote,
@@ -51,6 +55,7 @@ export const spoken = (x) => (x.activityIsCall ? (progressOf(x.activity) ?? unde
 /** What an agent is at, for a card that shows no tool calls: why it is in trouble, or what it was said to do. @param {Agent} a */
 export function agentGist(a) {
   if (a.state === "failed" || a.state === "blocked" || a.state === "idle") return troubleText(a, true);
+  if (onTheMachine(a)) return TEXT.waitsForMachine;
   return spoken(a) ?? (onItsJob(a) ? TEXT.state.waiting : "");
 }
 /** How long it has run, or how long it took. @param {Agent} a */
@@ -67,7 +72,7 @@ const quietMinutes = (at) => {
  * calls can be quiet: an older adapter's agents carry no such stamp, and their last update says nothing.
  * @param {Agent} a
  */
-export const agentQuiet = (a) => (a.state === "working" && a.activityAt && !onItsJob(a) ? quietMinutes(a.activityAt) : 0);
+export const agentQuiet = (a) => (a.state === "working" && a.activityAt && !waitingAside(a) ? quietMinutes(a.activityAt) : 0);
 /** Its tool calls that failed in a row: any successful call ends the streak. @param {Agent | Session} x */
 export const failedInARow = (x) => x.failedAt?.length ?? 0;
 /** At work and its calls keep failing: two in a row is a retry, three is a pattern. @param {Agent | Session} x */
@@ -103,7 +108,7 @@ export const inTrouble = (a) => failedUnseen(a) || a.state === "blocked" || a.st
 export function sessionQuiet(s) {
   if (s.state !== "working" || !s.activityAt || onItsJob(s)) return 0;
   const working = sessionAgents(s.id).filter((a) => a.state === "working");
-  if (working.some((a) => !a.activityAt || onItsJob(a))) return 0; // an agent that cannot be timed may well be busy
+  if (working.some((a) => !a.activityAt || waitingAside(a))) return 0; // an agent that cannot be timed may well be busy
   const last = [s.activityAt, ...working.map((a) => a.activityAt ?? "")].sort().at(-1);
   return last ? quietMinutes(last) : 0;
 }
@@ -173,7 +178,7 @@ function agentBar(a, x) {
   const start = Date.parse(a.startedAt);
   const end = a.endedAt ? Date.parse(a.endedAt) : x.to;
   // Only from the activity shown: a blocked agent shows whom it waits for instead.
-  const progress = a.endedAt || waitsLine(a) ? null : progressOf(a.activity);
+  const progress = a.endedAt || waitsLine(a) || onTheMachine(a) ? null : progressOf(a.activity);
   const bar = h(
     "span",
     { class: `abar st-${a.state}${a.endedAt ? "" : " open"}`, title: TEXT.timeline.bar(hm(a.startedAt), a.endedAt ? hm(a.endedAt) : TEXT.now) },
@@ -219,7 +224,7 @@ export function agentRows(rows, axis) {
           { class: "awhat" },
           h("span", { class: "aname" }, agentDot(a), h("span", { class: "agoal" }, a.goal ?? a.name)),
           a.summary ? h("span", { class: "asummary" }, a.summary) : null,
-          agentDoing(a) ? h("span", { class: "adoing" }, a.state === "working" && a.activity ? TEXT.now_(agentDoing(a)) : agentDoing(a)) : null,
+          agentDoing(a) ? h("span", { class: "adoing" }, a.state === "working" && a.activity && !onTheMachine(a) ? TEXT.now_(agentDoing(a)) : agentDoing(a)) : null,
           stuck(a),
         ),
         axis ? agentBar(a, axis) : null,

@@ -222,6 +222,11 @@ export type Agent = {
    * a monitor, a wait): it is waiting on its own job, not quiet, until its next call.
    */
   waitsForJob?: boolean;
+  /**
+   * Set by the desk in `DeskState`, never stored: what a process of its checkout waits for now
+   * (`machine-load`: it runs the load gate, src/project/busy.ts).
+   */
+  waitingFor?: WaitingFor;
   branch?: string;
   /**
    * Its branch is the one its adapter read checked out in its worktree, not one the session reported
@@ -474,6 +479,17 @@ export type ProjectResumes = { id: string; name: string; dir: string; at: string
 /** A filesystem holding active projects that is running out of space. */
 export type DiskWarning = { dir: string; projects: string[]; freeBytes: number; totalBytes: number };
 
+/** What an agent's work waits for, besides other agents and its own jobs. */
+export const WAITING_FOR = ["machine-load"] as const;
+export type WaitingFor = (typeof WAITING_FOR)[number];
+
+export const MACHINE_READINGS = ["load", "memory", "temperature"] as const;
+/**
+ * A reading of this machine past its limit (src/core/machine.ts): the 1-minute load above the core
+ * count, the bytes of memory available under the floor, or the hottest thermal zone's °C at or above the ceiling.
+ */
+export type MachineWarning = { reading: (typeof MACHINE_READINGS)[number]; value: number; limit: number };
+
 /** Limits of a review: its page after images are inlined, its saved state, a key in it, the text it copies, its counter's text. */
 export const REVIEW_PAGE_MAX = 25 * 1024 * 1024;
 export const REVIEW_STATE_MAX = 2 * 1024 * 1024;
@@ -545,6 +561,8 @@ export type DeskState = {
   /** Sessions with a listener waiting for answers from the desk right now. */
   listening: string[];
   disk: DiskWarning[];
+  /** This machine's readings past their limits; empty while it is healthy. */
+  machine: MachineWarning[];
   projects: ProjectScan[];
   reviews: Review[];
   /** Projects with work left for a new conversation; a note past its `expiresAt` is not shown. */

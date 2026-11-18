@@ -9,7 +9,9 @@ import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
-import { type DeskState, type DiskWarning, imageIds, type ReviewState, reviewNote, type Session } from "../core/model.ts";
+import { type DeskState, type DiskWarning, imageIds, type ProjectScan, type ReviewState, reviewNote, type Session, type SessionBranches } from "../core/model.ts";
+import { MACHINE, type MachineSources, machineWarnings } from "../core/machine.ts";
+import { agentsAtLoadGate } from "../project/busy.ts";
 import { OPTIONS_TEXT_MAX, optionsText } from "../core/options.ts";
 import { liveServices } from "../core/ports.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
@@ -77,11 +79,19 @@ const REFUSED_PAGE = "This device is not allowed on this desk: it accepts only i
 
 const BUILD = new Date().toISOString();
 
-export function deskState(store: Store, now = new Date()): DeskState {
+export function deskState(store: Store, now = new Date(), machine: MachineSources = MACHINE): DeskState {
   const snap = store.snapshot();
   const held = store.heldQuestions(now.getTime());
+  const branches = snap.sessions.flatMap((s) => {
+    if (sessionFinished(s)) return [];
+    const scan = snap.projects.find((p) => path.resolve(p.dir) === path.resolve(s.project.dir));
+    const shown = sessionBranches(s, snap.agents, scan);
+    return shown && scan ? [{ s, scan, shown }] : [];
+  });
+  const gated = new Set(branches.flatMap(({ s, scan, shown }) => atLoadGate(s, shown, scan, snap.problems).map((name) => `${s.id}/${name}`)));
   return {
     ...snap,
+    agents: gated.size === 0 ? snap.agents : snap.agents.map((a) => (gated.has(`${a.sessionId}/${a.name}`) ? { ...a, waitingFor: "machine-load" as const } : a)),
     services: liveServices(snap.services, snap.sessions, snap.problems),
     // The page shows a question's context only while it is open; the history needs no more.
     questions: snap.questions.filter((q) => !held.has(q.id)).map(({ context, ...q }) => (q.status === "open" && context !== undefined ? { ...q, context } : q)),
@@ -89,14 +99,21 @@ export function deskState(store: Store, now = new Date()): DeskState {
     gone: goneSessions(snap.sessions),
     listening: snap.sessions.filter((s) => store.isListening(s.id, snap.problems)).map((s) => s.id),
     disk: diskWarnings(snap.sessions, snap.problems),
+    machine: machineWarnings(snap.problems, machine),
     planForecasts: planForecasts(store.planHistory(snap.problems), now),
-    branches: snap.sessions.flatMap((s) => {
-      if (sessionFinished(s)) return [];
-      const shown = sessionBranches(s, snap.agents, snap.projects.find((p) => path.resolve(p.dir) === path.resolve(s.project.dir)));
-      return shown ? [shown] : [];
-    }),
+    branches: branches.map((b) => b.shown),
     build: BUILD,
   };
+}
+
+/** The session's agents waiting at the load gate, read from its process tree at each state, since a scan is too rare for a wait. */
+function atLoadGate(s: Session, shown: SessionBranches, scan: ProjectScan, problems: string[]): string[] {
+  try {
+    return agentsAtLoadGate(s.process, shown.rows, scan.worktrees.map((w) => w.path));
+  } catch (error) {
+    problems.push(`agents waiting for the machine in ${s.project.dir}: ${(error as Error).message}`);
+    return [];
+  }
 }
 
 /** Sessions still marked running whose process has disappeared (closed terminal, crash). */
@@ -164,13 +181,14 @@ const ACTIONS: Record<string, Action> = {
   "sessions/forget": (store, target) => store.forgetSession(target),
 };
 
-export function createDeskServer(store: Store, port: number, remote: Access["remote"] = remoteFromEnv(process.env), feedOptions: Partial<FeedOptions> = {}): Server {
+export function createDeskServer(store: Store, port: number, remote: Access["remote"] = remoteFromEnv(process.env), feedOptions: Partial<FeedOptions> = {}, machine: MachineSources = MACHINE): Server {
   const secret = store.secret();
   const access: Access = remote ? { port, remote } : { port };
   const unlock = new RemoteUnlock(store.paths.pin, secret);
-  const feed = new StateFeed(() => stateVersion(store).etag, () => store.stateDirs(), feedOptions);
+  const version = () => stateVersion(store, machine);
+  const feed = new StateFeed(() => version().etag, () => store.stateDirs(), feedOptions);
   return createServer((req, res) => {
-    handle(store, access, secret, unlock, feed, req, res).catch((error: unknown) => {
+    handle(store, access, secret, unlock, feed, version, req, res).catch((error: unknown) => {
       process.stderr.write(`agent-desk: ${req.method} ${req.url}: ${(error as Error).stack ?? String(error)}\n`);
       if (!res.headersSent) sendJson(res, 500, { error: (error as Error).message });
       else res.destroy();
@@ -178,7 +196,7 @@ export function createDeskServer(store: Store, port: number, remote: Access["rem
   });
 }
 
-async function handle(store: Store, access: Access, secret: string, unlock: RemoteUnlock, feed: StateFeed, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(store: Store, access: Access, secret: string, unlock: RemoteUnlock, feed: StateFeed, version: () => StateVersion, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const reach = reachOf(req, access);
   if ("refused" in reach) {
     // Opened directly, a sentence for the person; the page's own requests read the status.
@@ -196,7 +214,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     if (route === "/") return page(res, secret);
     const type = STATIC[route];
     if (type) return send(res, 200, fs.readFileSync(path.join(WEB_DIR, route.slice(1))), type);
-    if (route === "/api/state") return state(store, req, res);
+    if (route === "/api/state") return state(version(), req, res);
     // A remote device's stream ends with its unlock, as its next request would.
     if (route === "/api/events") return req.method === "GET" ? feed.stream(res, unlockEnds) : sendJson(res, 405, { error: "method not allowed" });
     if (route === "/api/push/key") return sendJson(res, 200, { key: new Push(store.paths.push).publicKey() });
@@ -336,14 +354,14 @@ function page(res: ServerResponse, secret: string): void {
   send(res, 200, html, "text/html; charset=utf-8");
 }
 
+type StateVersion = { stable: Omit<DeskState, "now">; etag: string };
 /** What the page shows but the clock, and its version: the ETag ignores the clock, so an unchanged store costs the page a 304. */
-function stateVersion(store: Store): { stable: Omit<DeskState, "now">; etag: string } {
-  const { now: _now, ...stable } = deskState(store);
+function stateVersion(store: Store, machine: MachineSources): StateVersion {
+  const { now: _now, ...stable } = deskState(store, new Date(), machine);
   return { stable, etag: `"${createHash("sha256").update(JSON.stringify(stable)).digest("base64url").slice(0, 22)}"` };
 }
 
-function state(store: Store, req: IncomingMessage, res: ServerResponse): void {
-  const { stable, etag } = stateVersion(store);
+function state({ stable, etag }: StateVersion, req: IncomingMessage, res: ServerResponse): void {
   const body = JSON.stringify({ ...stable, now: new Date().toISOString() });
   if (req.headers["if-none-match"] === etag) {
     res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });

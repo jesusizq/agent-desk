@@ -10,8 +10,8 @@ import { renderOptionsPage } from "../src/cli/review-options.ts";
 import { procInfo } from "../src/core/proc.ts";
 import { Store } from "../src/store/store.ts";
 import { Browser, findChrome, type Page } from "./browser.ts";
-import { scanProject } from "../src/project/scan.ts";
-import { gitIn, landedRepo, PNG, serve, tempHome } from "./helpers.ts";
+import { projectId, scanProject } from "../src/project/scan.ts";
+import { gitIn, landedRepo, PNG, runScript, serve, tempHome, waitingScript } from "./helpers.ts";
 
 const chrome = findChrome();
 /** Nothing on the page moving any more, but for the marks of work in progress, which turn for as long as the work goes on. */
@@ -198,6 +198,55 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         store.forgetSession(id);
       }
     }
+  });
+
+  it("warns of the machine's load, memory and heat in the strip, and shows an agent at the load gate waiting for the machine, not stuck", async () => {
+    const sick = tempHome();
+    fs.writeFileSync(path.join(sick, "loadavg"), "21.37 9.00 4.00 9/900 1234\n");
+    fs.writeFileSync(path.join(sick, "meminfo"), "MemTotal:       32000000 kB\nMemAvailable:    1953125 kB\n");
+    fs.mkdirSync(path.join(sick, "class", "thermal", "thermal_zone0"), { recursive: true });
+    fs.writeFileSync(path.join(sick, "class", "thermal", "thermal_zone0", "temp"), "97000\n");
+    const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+    const dir = path.join(tempHome(), "gated-shop");
+    const worktree = path.join(dir, ".claude", "worktrees", "tests");
+    fs.mkdirSync(worktree, { recursive: true });
+    // This test's process stands for the session: the gate it starts through a shell is its agent's.
+    store.upsertSession({ id: "gated", provider: "Test", project: { name: "gated-shop", dir }, title: "agents at the gate", state: "working", activityAt: ago(9), process: { pid: process.pid, start: procInfo(process.pid)?.start ?? "", ancestors: [] } });
+    store.upsertAgent("gated", "tests", { goal: "Test agent", activity: "Bash: npm test", activityIsCall: true, activityAt: ago(12), worktree });
+    store.putProjectScan({ id: projectId(dir), name: "gated-shop", dir, worktrees: [{ path: dir, branch: "main", head: "abc1234", main: true }, { path: worktree, branch: "agent/tests", head: "def5678", main: false }], totalBytes: 0, dayStart: { day: "2026-10-28", bytes: 0 }, measuredAt: ago(1), problems: [] });
+    const own = await serve(store, undefined, undefined, { proc: sick, sys: sick, cores: 12 });
+    const gate = await runScript(waitingScript("load-gate.sh"), worktree);
+    // Closed before its desk stops, so that its event stream is not cut under it.
+    const page = await browser.newPage(1400, 900);
+    try {
+      await page.goto(own.base + "/");
+      await page.waitFor("document.querySelector('#strip')?.textContent.includes('Load: 21.4')");
+      assert.deepEqual(
+        await page.eval<string[]>("[...document.querySelectorAll('#strip .chip.warn')].map((c) => c.textContent).filter((t) => /^(Load|Memory|Temperature):/.test(t))"),
+        ["Load: 21.4, above its 12 cores", "Memory: 2.0 GB free, under 3.3 GB", "Temperature: 97 °C, at or above 95 °C"],
+        "what is high, its reading and its limit, one line each",
+      );
+      const card = cardOf("agents at the gate");
+      await page.waitFor(card);
+      assert.equal(await page.eval<number>(`${card}.querySelectorAll('.s-bad').length`), 0, "an agent waiting for the machine is not quiet");
+      await page.click(".scard", "agents at the gate");
+      await page.click("#session .agents-fold > summary");
+      const row = "[...document.querySelectorAll('#session .arow')].find((r) => r.textContent.includes('Test agent'))";
+      await page.waitFor(row);
+      assert.deepEqual(
+        await page.eval(`({ doing: ${row}.querySelector('.adoing').textContent, waiting: ${row}.querySelector('.dot').classList.contains('st-waiting'), stuck: ${row}.querySelector('.astuck') !== null })`),
+        { doing: "waits for the machine's load to drop", waiting: true, stuck: false },
+      );
+      await gate.end();
+      await page.waitFor(`${row}?.querySelector('.adoing').textContent === 'now: Bash: npm test'`, 10_000);
+      await page.press("Escape");
+    } finally {
+      await page.close();
+      await gate.end();
+      await own.close();
+      store.updateSession("gated", (s) => ({ ...s, state: "ended" }));
+    }
+    assert.deepEqual(page.errors, [], "the page reports no errors");
   });
 
   it("keeps an agent's failure loud only until its session ends a turn after it, then one failed row in its list", async () => {

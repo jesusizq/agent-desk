@@ -194,6 +194,7 @@ export const TEXT = {
   seenAt: (t) => `Opened at ${t}`,
   /** @param {string} names */
   waits: (names) => `waits for ${names}`,
+  waitsForMachine: "waits for the machine's load to drop",
   flow: "Flow",
   /** @param {string} t how long ago its turn ended */
   waitingForYou: (t) => `Waiting for you${t && t !== NOW ? ` · ${t}` : ""}`,
@@ -300,6 +301,14 @@ export const TEXT = {
   markSeen: "Mark all as seen",
   /** @param {string} free @param {string} projects */
   disk: (free, projects) => `Disk: ${free} free (${projects})`,
+  machine: {
+    /** @param {number} load @param {number} cores */
+    load: (load, cores) => `Load: ${load}, above its ${cores} cores`,
+    /** @param {string} free @param {string} floor */
+    memory: (free, floor) => `Memory: ${free} free, under ${floor}`,
+    /** @param {number} c @param {number} limit */
+    temperature: (c, limit) => `Temperature: ${c} °C, at or above ${limit} °C`,
+  },
   /** @param {string} where @param {number} c */
   contextWarn: (where, c) => `${where}: ${contextAt(c)}`,
   limitForecast: {

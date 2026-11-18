@@ -22,7 +22,8 @@ and step away. When you come back, one browser tab shows:
   variants, a checklist) opens whole on the desk, keeps your answers across devices and days, and
   goes back to the session with one click.
 - **What is happening now:** each session, its agents (recorded by hooks as they launch, resume and
-  stop, never by the model), what each one is doing, which are blocked and which failed, the local
+  stop, never by the model), what each one is doing, which are blocked, which wait at a
+  `load-gate.sh` for the machine's load to drop, and which failed, the local
   servers its commands started (found by themselves, with their link), and which sessions wrote
   something you have not read.
 - **Where each branch stands:** under a session's agents, each agent's branch and worktree read from
@@ -35,7 +36,8 @@ and step away. When you come back, one browser tab shows:
   plugin, under 48 h and not loaded yet; the Claude Code adapter reads the `ahorro` plugin's), with
   what each is about, how old it is and the command that loads it, copied with a click, in the
   strip and in the summary of what happened while you were away.
-- **Warnings before something breaks:** a context nearly full, a disk nearly full, worktrees piling
+- **Warnings before something breaks:** a context nearly full, a disk nearly full, the machine
+  loaded past its cores, short of memory or at 95 °C, worktrees piling
   up (how much each takes, which are already merged into the main branch or landed there by
   cherry-pick, and the commands to remove them and their branches, copied, never run).
 - **From your phone,** through your own Tailscale tailnet, behind a PIN.

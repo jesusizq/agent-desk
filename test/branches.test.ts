@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { sessionBranches } from "../src/core/branches.ts";
 import type { Agent, ProjectScan, Session } from "../src/core/model.ts";
 import { branchLine, fitText, statusLines } from "../src/core/status.ts";
-import { deskHelper } from "../src/project/busy.ts";
+import { deskHelper, runsLoadGate } from "../src/project/busy.ts";
 import { branchRef, GitError } from "../src/project/git.ts";
 import { refreshScan } from "../src/project/refresh.ts";
 import { scanProject } from "../src/project/scan.ts";
@@ -210,6 +210,26 @@ describe("git state of a project's checkouts", () => {
     ];
     for (const args of helpers) assert.equal(deskHelper(args), true, args.join(" "));
     for (const args of work) assert.equal(deskHelper(args), false, args.join(" "));
+  });
+
+  it("tells a process running the load gate, by the script's name, from one that only names it", () => {
+    const gate = [
+      ["/bin/bash", "/home/u/.claude/skills/orchestration/scripts/load-gate.sh", "--max", "8"],
+      ["/home/u/bin/load-gate.sh"],
+      ["sh", "load-gate.sh"],
+      ["bash", "-x", "./scripts/load-gate.sh"],
+    ];
+    const other = [
+      ["bash", "-c", "load-gate.sh && npm test"],
+      ["cat", "load-gate.sh"],
+      ["vim", "/home/u/bin/load-gate.sh"],
+      ["sh", "load-gate.sh.bak"],
+      ["node", "load-gate.sh"],
+      ["npm", "test"],
+      [],
+    ];
+    for (const args of gate) assert.equal(runsLoadGate(args), true, args.join(" "));
+    for (const args of other) assert.equal(runsLoadGate(args), false, args.join(" "));
   });
 
   it("stops a git command that does not answer, saying which and where, and goes on with the other checkouts", async () => {

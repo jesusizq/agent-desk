@@ -172,6 +172,33 @@ helpers are left out, with what they start: a process running a
 script of the desk's install (`src/`, `adapters/`, `bin/`), `agent-desk` or `agent-desk-claude`, or a
 shell whose `-c` script runs one of those as a command (a hook's).
 
+An agent waits for the machine (`waitingFor: "machine-load"` on its record in `DeskState.agents`,
+never stored) while a process of its session's own tree runs the load gate: a script whose basename
+is `load-gate.sh`, run directly or as a shell's script argument (`runsLoadGate`,
+`src/project/busy.ts`), whose working folder is in the agent's checkout (its row in the session's
+branches, the deepest checkout of the scan holding the folder). An orchestration's gate blocks,
+sleeping, before a heavy command while the machine is loaded. The server reads it at every state,
+since a scan runs too rarely for a wait; only a `working` agent with a checkout is marked, and the
+page shows it waiting for the machine's load, neither working nor quiet. The rules of `busy` hold but
+for shells, which count here, since a shell runs the script.
+
+## Machine health
+
+`DeskState.machine` holds this machine's readings past their limits, empty while it is healthy
+(`src/core/machine.ts`), read at every state from `/proc/loadavg`, `/proc/meminfo` and the `temp`
+files of `/sys/class/thermal/thermal_zone*/`, nothing else:
+
+| `reading` | `value` | `limit` | Warns when |
+|---|---|---|---|
+| `load` | 1-minute load, to one decimal | core count (`os.availableParallelism()`) | above the limit |
+| `memory` | `MemAvailable` in bytes, rounded down to 0.1 GB | 5 GB, or 10 % of `MemTotal` if lower (`MEMORY_FLOOR`) | under the limit |
+| `temperature` | hottest zone in °C | 95 (`HOT_C`) | at or above the limit |
+
+Values are rounded as the page shows them, so a reading moving within its last digit leaves the
+state's version alone. A missing file (another OS, a VM without thermal zones) and a switched-off sensor
+(its `temp` answering `ENODATA`, `EINVAL`, `EAGAIN` or `EIO`) skip their reading; a file that cannot be read or
+parsed goes to `problems`.
+
 Sizes are walked at most hourly by the background scan; `agent-desk status` and the handoff read git
 only, keeping known sizes. One scan of a project runs at a time (`claimScan`); a status read while
 another runs reads git without storing it.
@@ -548,7 +575,7 @@ Tailscale host and login (`SECURITY.md`).
 | Request | Purpose |
 | --- | --- |
 | `GET /` and `/app.js` with the modules it imports (`src/web/*.js`, each listed in `STATIC`), `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
-| `GET /api/state` | `DeskState`: every record (a closed question without its context; reviews without their saved state), plus `gone`, `listening`, `disk`, `planForecasts` (see Plan limits), `branches` (see Branches), `resumes` and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
+| `GET /api/state` | `DeskState`: every record (a closed question without its context; reviews without their saved state), plus `gone`, `listening`, `disk`, `machine` (see Machine health), `planForecasts` (see Plan limits), `branches` (see Branches), `resumes` and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
 | `GET /api/events` | server-sent events: `changed` with the state's version (the ETag of `/api/state`) on opening and at each change, never the state itself; a `: ping` comment every 20 s; 32 streams at most (503 past them); a remote device's stream ends when its unlock does |
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |

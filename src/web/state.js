@@ -51,7 +51,7 @@ export const secret = document.querySelector('meta[name="agent-desk-secret"]')?.
 /** @typedef {"agents" | "results" | "services" | "more"} PanelPart */
 
 /** @type {DeskState} */
-export let data = { sessions: [], questions: [], agents: [], results: [], services: [], metrics: [], seen: undefined, problems: [], now: new Date().toISOString(), gone: [], listening: [], disk: [], planForecasts: [], projects: [], resumes: [], reviews: [], branches: [], build: "" };
+export let data = { sessions: [], questions: [], agents: [], results: [], services: [], metrics: [], seen: undefined, problems: [], now: new Date().toISOString(), gone: [], listening: [], disk: [], machine: [], planForecasts: [], projects: [], resumes: [], reviews: [], branches: [], build: "" };
 /** @type {Map<string, string>} */
 let projectColors = new Map();
 /** @param {DeskState} next */

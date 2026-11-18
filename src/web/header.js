@@ -153,6 +153,7 @@ export function renderStrip() {
     h("span", { class: "spacer" }),
     data.problems.length ? h("span", { class: "chip warn problems", title: data.problems.join("\n") }, TEXT.problems(data.problems.length)) : null,
     data.disk.map((d) => h("span", { class: "chip warn", title: d.dir }, TEXT.disk(gb(d.freeBytes), d.projects.join(", ")))),
+    data.machine.map((m) => h("span", { class: "chip warn" }, m.reading === "memory" ? TEXT.machine.memory(gb(m.value), gb(m.limit)) : TEXT.machine[m.reading](m.value, m.limit))),
     contexts.map(({ s, c }) => h("button", { class: "chip warn", onclick: () => openSession(s.id) }, TEXT.contextWarn(label(s), c))),
     data.planForecasts.map((f) => {
       const t = TEXT.limitForecast;

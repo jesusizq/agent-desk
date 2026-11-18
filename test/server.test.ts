@@ -10,7 +10,8 @@ import { Push } from "../src/server/push.ts";
 import { createDeskServer, deskState, diskWarnings } from "../src/server/server.ts";
 import type { Session } from "../src/core/model.ts";
 import type { Store } from "../src/store/store.ts";
-import { addSession, PNG, serve, shellListener, tempHome, testStore } from "./helpers.ts";
+import { projectId } from "../src/project/scan.ts";
+import { addSession, PNG, QUIET_MACHINE, runScript, serve, shellListener, tempHome, testStore, waitingScript } from "./helpers.ts";
 
 let store: Store;
 let base: string;
@@ -514,5 +515,64 @@ describe("disk warnings", () => {
     // Every disk counts as short of space at a ratio of 1, so only which sessions are listed is tested.
     assert.deepEqual(diskWarnings(sessions, problems, 1).flatMap((w) => w.projects), ["live"]);
     assert.deepEqual(problems, []);
+  });
+});
+
+describe("machine warnings", () => {
+  it("are read with the state, from the machine the desk was given", () => {
+    const fake = tempHome();
+    fs.writeFileSync(path.join(fake, "loadavg"), "9.20 4.00 2.00 1/100 200\n");
+    const at = (cores: number) => deskState(testStore(), new Date(), { proc: fake, sys: fake, cores }).machine;
+    assert.deepEqual(at(4), [{ reading: "load", value: 9.2, limit: 4 }]);
+    assert.deepEqual(at(16), [], "quiet while healthy");
+  });
+});
+
+describe("agents waiting for the machine", () => {
+  it("shows a working agent waiting for the machine's load while a process of its own checkout runs the load gate, and only then", async () => {
+    const me = procInfo(process.pid);
+    assert.ok(me);
+    const root = tempHome();
+    const main = path.join(root, "shop");
+    const nested = path.join(main, ".claude", "worktrees", "gated");
+    const beside = path.join(root, "shop-plain");
+    const over = path.join(root, "shop-over");
+    for (const d of [path.join(nested, "src"), beside, over]) fs.mkdirSync(d, { recursive: true });
+    const gate = waitingScript("load-gate.sh");
+    const build = waitingScript("build.sh");
+    const own = testStore();
+    // This test's process stands for the session: what it starts through a shell is its work.
+    own.upsertSession({ id: "orch", provider: "Test", project: { name: "shop", dir: main }, process: { pid: process.pid, start: me.start, ancestors: [] } });
+    own.upsertAgent("orch", "gated", { goal: "Gated agent", worktree: nested });
+    own.upsertAgent("orch", "plain", { goal: "Plain agent", worktree: beside });
+    own.upsertAgent("orch", "over", { goal: "Finished agent", worktree: over, state: "done" });
+    const checkout = (p: string, branch: string, isMain = false) => ({ path: p, branch, head: "abc1234", main: isMain });
+    own.putProjectScan({
+      id: projectId(main),
+      name: "shop",
+      dir: main,
+      worktrees: [checkout(main, "main", true), checkout(nested, "agent/gated"), checkout(beside, "agent/plain"), checkout(over, "agent/over")],
+      totalBytes: 0,
+      dayStart: { day: "2026-10-28", bytes: 0 },
+      measuredAt: "2026-10-28T08:00:00.000Z",
+      problems: [],
+    });
+    const waiting = () => {
+      const state = deskState(own, new Date(), QUIET_MACHINE);
+      assert.deepEqual(state.problems, []);
+      return state.agents.filter((a) => a.waitingFor === "machine-load").map((a) => a.name);
+    };
+    assert.deepEqual(waiting(), []);
+    const started = [await runScript(gate, main), await runScript(build, beside), await runScript(gate, over)];
+    try {
+      assert.deepEqual(waiting(), [], "the gate in the main checkout is not the nested worktree's, another script is no gate, and a finished agent waits for nothing");
+      const gated = await runScript(gate, path.join(nested, "src"), true);
+      started.push(gated);
+      assert.deepEqual(waiting(), ["gated"], "run by a shell, in a folder of the agent's checkout");
+      await gated.end();
+      assert.deepEqual(waiting(), [], "the gate open, it works again");
+    } finally {
+      await Promise.all(started.map((s) => s.end()));
+    }
   });
 });

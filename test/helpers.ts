@@ -1,8 +1,10 @@
 import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { MachineSources } from "../src/core/machine.ts";
 import { createDeskServer } from "../src/server/server.ts";
 import { Store } from "../src/store/store.ts";
 
@@ -57,14 +59,44 @@ export function landedRepo() {
 // Smallest valid PNG header; the store only checks the signature.
 export const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 
+/** A shell script, in a folder of its own, that says it is waiting and waits until its input closes. */
+export function waitingScript(name: string): string {
+  const file = path.join(tempHome(), name);
+  fs.writeFileSync(file, "#!/bin/sh\necho waiting\nread line\n", { mode: 0o755 });
+  return file;
+}
+
+/** A shell this process starts, as a session runs a command, running `script` (as `sh <script>` when `throughSh`) in `cwd`, once it waits. */
+export async function runScript(script: string, cwd: string, throughSh = false): Promise<{ end: () => Promise<void> }> {
+  const child = spawn("sh", ["-c", `${throughSh ? "sh " : ""}"${script}"; true`], { cwd, stdio: ["pipe", "pipe", "inherit"] });
+  await new Promise<void>((resolve, reject) => {
+    child.stdout.once("data", () => resolve());
+    child.once("error", reject);
+    child.once("exit", (code) => reject(new Error(`${script} exited (${code}) before it waited`)));
+  });
+  let ended: Promise<void> | undefined;
+  return {
+    // Its input closed, the script ends, then its shell, which has reaped it by then.
+    end: () =>
+      (ended ??= (async () => {
+        const exited = once(child, "exit");
+        child.stdin.end();
+        await exited;
+      })()),
+  };
+}
+
+/** A machine without any of the files its health is read from: the desk warns of nothing, however loaded the one running the tests is. */
+export const QUIET_MACHINE: MachineSources = { proc: tempHome(), sys: tempHome(), cores: 1 };
+
 /** A desk server for the store on a free local port. */
-export async function serve(store: Store, remote?: Parameters<typeof createDeskServer>[2], feed?: Parameters<typeof createDeskServer>[3]): Promise<{ base: string; port: number; close: () => Promise<void> }> {
+export async function serve(store: Store, remote?: Parameters<typeof createDeskServer>[2], feed?: Parameters<typeof createDeskServer>[3], machine = QUIET_MACHINE): Promise<{ base: string; port: number; close: () => Promise<void> }> {
   // Bind first to learn a free port, then build the server for that port (it checks Host against it).
-  const probe = createDeskServer(store, 0, remote, feed);
+  const probe = createDeskServer(store, 0, remote, feed, machine);
   await new Promise<void>((r) => probe.listen(0, "127.0.0.1", r));
   const port = (probe.address() as AddressInfo).port;
   await new Promise<void>((r) => probe.close(() => r()));
-  const real = createDeskServer(store, port, remote, feed);
+  const real = createDeskServer(store, port, remote, feed, machine);
   await new Promise<void>((r) => real.listen(port, "127.0.0.1", r));
   return { base: `http://127.0.0.1:${port}`, port, close: () => new Promise((r) => (real.close(() => r()), real.closeAllConnections())) };
 }

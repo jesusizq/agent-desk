@@ -1,7 +1,9 @@
 // Which checkouts a session's work runs in: the working folder of the commands sessions and their
-// agents started through a shell, read only from fixed /proc files of each session's own process tree.
+// agents started through a shell, and which wait at the load gate, read only from fixed /proc files of
+// each session's own process tree.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { BranchRow } from "../core/protocol.ts";
 import { commandLine, processName, startedThroughShell } from "../core/ports.ts";
 import { procInfo, type ProcInfo, SHELLS } from "../core/proc.ts";
 import { isCode } from "../store/fsx.ts";
@@ -34,26 +36,70 @@ export function deskHelper(args: readonly string[]): boolean {
  * tree, not shells, and not the desk's own helpers (this scan among them). Reads only the trees' own
  * `stat`, `task/<tid>/children`, `cmdline` and `cwd`.
  */
-export function workingIn(dirs: readonly string[], sessions: readonly { pid: number; start?: string }[], max: number): Map<string, string[]> {
+export function workingIn(dirs: readonly string[], sessions: readonly LiveProcess[], max: number): Map<string, string[]> {
   const out = new Map(dirs.map((d) => [d, [] as string[]]));
-  if (dirs.length === 0) return out;
+  for (const { dir, proc } of placed(dirs, sessions, (p) => !SHELLS.has(p.name))) {
+    const names = out.get(dir);
+    if (!names || names.length >= max) continue;
+    const name = processName(proc);
+    if (!names.includes(name)) names.push(name);
+  }
+  return out;
+}
+
+/** The script an orchestration runs before a heavy command: it blocks, sleeping, while the machine is loaded. */
+export const LOAD_GATE = "load-gate.sh";
+
+/** Whether a command line runs the load gate: the script itself, or a shell given it as its script. */
+export function runsLoadGate(args: readonly string[]): boolean {
+  const [program, ...rest] = args;
+  if (program === undefined) return false;
+  if (path.basename(program) === LOAD_GATE) return true;
+  const script = SHELLS.has(path.basename(program)) ? rest.find((a) => !a.startsWith("-")) : undefined;
+  return script !== undefined && path.basename(script) === LOAD_GATE;
+}
+
+/**
+ * The folders of `dirs` where a process of these sessions runs the load gate, each process placed in
+ * the deepest folder holding it, by the rules of workingIn but for shells, since a shell runs the script.
+ */
+export function gatedIn(dirs: readonly string[], sessions: readonly LiveProcess[]): Set<string> {
+  return new Set([...placed(dirs, sessions, (p) => runsLoadGate(commandLine(p.pid) ?? []))].map((x) => x.dir));
+}
+
+/**
+ * The working agents of a session's rows whose checkout holds a process of the session's own tree
+ * running the load gate, by name: they wait for the machine's load. `checkouts`: every checkout of
+ * the project, so that a process is placed in the deepest one, as `busy` places it.
+ */
+export function agentsAtLoadGate(session: LiveProcess | undefined, rows: readonly BranchRow[], checkouts: readonly string[]): string[] {
+  const candidates = rows.filter((r): r is BranchRow & { agent: NonNullable<BranchRow["agent"]>; path: string } => r.agent?.state === "working" && r.path !== undefined && r.status === "found");
+  if (!session || candidates.length === 0) return [];
+  const gated = gatedIn(checkouts, [session]);
+  return candidates.filter((r) => gated.has(r.path)).map((r) => r.agent.name);
+}
+
+type LiveProcess = { pid: number; start?: string };
+
+/**
+ * Each process a live session started through a shell that `want` keeps (never the desk's helpers,
+ * nor what they start), with the folder of `dirs` deepest holding its working folder.
+ */
+function* placed(dirs: readonly string[], sessions: readonly LiveProcess[], want: (proc: ProcInfo) => boolean): Generator<{ dir: string; proc: ProcInfo }> {
+  if (dirs.length === 0) return;
   const roots = dirs.map((d) => ({ dir: d, real: realOr(d) })).sort((a, b) => b.real.length - a.real.length);
   const helper = (p: ProcInfo) => p.pid === process.pid || deskHelper(commandLine(p.pid) ?? []);
   for (const session of sessions) {
     const info = procInfo(session.pid);
     if (!info || (session.start !== undefined && info.start !== session.start)) continue; // gone, or its pid reused
     for (const proc of startedThroughShell(session.pid, helper)) {
-      if (SHELLS.has(proc.name)) continue;
+      if (!want(proc)) continue;
       const cwd = read(() => fs.readlinkSync(`/proc/${proc.pid}/cwd`));
       if (cwd === undefined) continue;
       const root = roots.find((r) => cwd === r.real || cwd.startsWith(`${r.real}/`));
-      const names = root && out.get(root.dir);
-      if (!names || names.length >= max) continue;
-      const name = processName(proc);
-      if (!names.includes(name)) names.push(name);
+      if (root) yield { dir: root.dir, proc };
     }
   }
-  return out;
 }
 
 /** A /proc read of a process that may have exited meanwhile or belong to another user (a sudo child): undefined then. */
