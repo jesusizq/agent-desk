@@ -62,27 +62,42 @@ function contentOf(scroller) {
   return boxes;
 }
 
+/** The dialog or popover over the page that holds `el`, if any. @param {Element} el */
+const layerOf = (el) => el.closest(":modal, :popover-open");
 /**
- * How far each scroll area can scroll once every motion has ended: measured with the motions taken off
- * their elements and the cards on their way out hidden, then all put back, and the scrolls the measure
- * clamped with it, before anything is painted.
+ * Whether a scroll area's scroll carries `el`: inside it, and not in a layer over the page (an open session
+ * panel over a phone's page) unless the area is too.
+ * @param {Element} scroller @param {Element} el
+ */
+const carries = (scroller, el) => (scroller === document.scrollingElement ? document.body : scroller).contains(el) && layerOf(el) === layerOf(scroller);
+
+/**
+ * How far each scroll area can scroll once every motion has ended: measured with the motions of what it
+ * carries taken off and its cards on their way out hidden, then all put back, and the scrolls the measure
+ * clamped with it, before anything is painted. What the areas do not carry is left alone: restoring a
+ * scroll ends any smooth scroll it was in, the developer's own in a panel.
  * @param {Element[]} scrollers
  */
 function finalReaches(scrollers) {
-  const running = document.getAnimations().flatMap((a) => (a.id === MOTION && a.effect instanceof KeyframeEffect && a.effect.target ? [{ effect: a.effect, target: a.effect.target }] : []));
-  const leaving = [...document.querySelectorAll("[data-leaving]")].filter(/** @returns {el is HTMLElement} */ (el) => el instanceof HTMLElement);
+  /** @param {Element} el */
+  const carried = (el) => scrollers.some((s) => carries(s, el));
+  const running = document.getAnimations().flatMap((a) => (a.id === MOTION && a.effect instanceof KeyframeEffect && a.effect.target && carried(a.effect.target) ? [{ effect: a.effect, target: a.effect.target }] : []));
+  const leaving = [...document.querySelectorAll("[data-leaving]")].filter(/** @returns {el is HTMLElement} */ (el) => el instanceof HTMLElement && carried(el));
   /** @type {Set<Element>} */
   const areas = new Set(scrollers);
   for (const el of [...running.map((r) => r.target), ...leaving]) for (let e = /** @type {Element | null} */ (el); e; e = e.parentElement) if (e.scrollTop || e.scrollLeft) areas.add(e);
   const scrolled = [...areas].map((e) => ({ e, top: e.scrollTop, left: e.scrollLeft }));
   const display = leaving.map((el) => ({ el, value: el.style.getPropertyValue("display"), priority: el.style.getPropertyPriority("display") }));
-  for (const { effect } of running) effect.target = null;
-  for (const el of leaving) el.style.setProperty("display", "none", "important");
-  const reaches = new Map(scrollers.map((s) => [s, s.scrollHeight - s.clientHeight]));
-  for (const { el, value, priority } of display) el.style.setProperty("display", value, priority);
-  for (const { effect, target } of running) effect.target = target;
-  for (const { e, top, left } of scrolled) Object.assign(e, { scrollTop: top, scrollLeft: left });
-  return reaches;
+  try {
+    for (const { effect } of running) effect.target = null;
+    for (const el of leaving) el.style.setProperty("display", "none", "important");
+    return new Map(scrollers.map((s) => [s, s.scrollHeight - s.clientHeight]));
+  } finally {
+    // Also when the measure fails: no motion is left off its element, no card hidden, no scroll clamped.
+    for (const { el, value, priority } of display) el.style.setProperty("display", value, priority);
+    for (const { effect, target } of running) effect.target = target;
+    for (const { e, top, left } of scrolled) Object.assign(e, { scrollTop: top, scrollLeft: left });
+  }
 }
 
 /** @param {Element} el */
@@ -142,8 +157,6 @@ export function animateLists(scope, update) {
   /** @type {Map<Element, DOMRect>} */
   const glides = new Map([...scope.querySelectorAll("[data-glide]")].map((el) => [el, el.getBoundingClientRect()]));
   update();
-  // Before any motion of this redraw starts (an earlier list's folds back at their height would count).
-  const reaches = finalReaches([...scrolls.keys()]);
   /** @type {Map<string, Seen & { list: Element }>} cards no longer in their list, by what they show */
   const gone = new Map();
   for (const { list, items } of before) for (const it of items) if (it.el.parentElement !== list) gone.set(flipId(it.el), { ...it, list });
@@ -152,8 +165,9 @@ export function animateLists(scope, update) {
     .map(({ list, scroller, items, leftovers }) => {
       const was = new Map(items.map((it) => [it.el, it.rect]));
       const now = itemsOf(list);
-      return { list, scroller, items, was, now, added: now.filter((el) => !was.has(el)), leftovers: leftovers.filter((it) => it.el.parentElement === list) };
+      return { list, scroller, grid: getComputedStyle(list).display === "grid", items, was, now, added: now.filter((el) => !was.has(el)), leftovers: leftovers.filter((it) => it.el.parentElement === list) };
     });
+  const columns = [...new Set(changes.filter((c) => !c.grid).map((c) => c.scroller))];
   /** @type {Map<HTMLElement, Seen>} a new card, and the gone one it grows out of */
   const outOf = new Map();
   for (const { added } of changes) {
@@ -171,14 +185,18 @@ export function animateLists(scope, update) {
   const slidesOf = [];
   /** @type {Set<Element>} */
   const scrolling = new Set();
+  /** @type {Map<Element, number> | null} measured only for a redraw that moves a column: it forces a layout */
+  let reaches = null;
   for (const change of changes) {
     const leaving = change.items.filter((it) => it.el.parentElement !== change.list && gone.get(flipId(it.el))?.el === it.el);
     const moved = [...change.now.map((el) => ({ el, rect: change.was.get(el) })), ...change.leftovers].some(({ el, rect }) => rect && differ(rect, el.getBoundingClientRect()));
     // A redraw that changed nothing here leaves what is still moving alone.
     if (!change.added.length && !leaving.length && !moved) continue;
     const scroll = /** @type {Scroll} */ (scrolls.get(change.scroller));
-    if (getComputedStyle(change.list).display === "grid") slidesOf.push(animateGrid(change, leaving, scroll, t));
+    if (change.grid) slidesOf.push(animateGrid(change, leaving, scroll, t));
     else {
+      // Before any column's motion starts: an earlier column's folds back at their height would count.
+      reaches ??= finalReaches(columns);
       slidesOf.push(animateColumn(change, leaving, outOf, grows, scroll, t));
       scrolling.add(change.scroller);
     }
@@ -191,7 +209,7 @@ export function animateLists(scope, update) {
   }
   for (const slide of slidesOf) slide();
   glide(scope, glides, t);
-  for (const scroller of scrolling) shift(scope, scroller, reaches.get(scroller) ?? Infinity, t);
+  for (const scroller of scrolling) shift(scope, scroller, reaches?.get(scroller) ?? Infinity, t);
 }
 
 /**

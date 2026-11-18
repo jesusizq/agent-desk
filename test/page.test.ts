@@ -3357,6 +3357,128 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    it("measures how far the board scrolls only for a redraw that changes a column", async () => {
+      const id = "measured-redraw";
+      const done = asking(id, "measured only on a change");
+      try {
+        const page = await open(1400, 900);
+        await page.waitFor(STILL);
+        // Each measure takes the board's motions off their elements: a motion of a row counts the measures.
+        await page.eval(`(() => {
+          const row = document.querySelector('.col-needs .qrow');
+          window.boardMotion = row.animate([{ opacity: 1 }, { opacity: 1 }], { id: 'motion', duration: 60000 });
+          const effect = boardMotion.effect;
+          const target = Object.getOwnPropertyDescriptor(KeyframeEffect.prototype, 'target');
+          window.measures = 0;
+          Object.defineProperty(effect, 'target', { get: () => target.get.call(effect), set: (el) => { if (el === null) measures++; target.set.call(effect, el); } });
+        })()`);
+        await page.eval("import('/state.js').then((m) => m.page.renderView())");
+        assert.equal(await page.eval<number>("measures"), 0, "a redraw that changes no list forces no layout to measure");
+        store.ask({ sessionId: id, kind: "question", text: "Asked to change a column?", options: ["Yes", "No"] });
+        await page.waitFor("[...document.querySelectorAll('.col-needs .qrow')].some((r) => r.textContent.includes('Asked to change a column?'))");
+        assert.equal(await page.eval<number>("measures"), 1, "a row added to Needs you is measured, once");
+        await page.eval("boardMotion.cancel()");
+      } finally {
+        done();
+      }
+    });
+
+    it("puts back the motions and the leaving cards it set aside to measure the board, also when the measure fails", async () => {
+      const id = "measure-fails";
+      const done = asking(id, "measure fails");
+      // A project of its own, shown alone: the cards dismissed are this test's.
+      store.upsertSession({ id, provider: "Test", project: { name: "failing-shop", dir: "/home/demo/Projects/failing-shop" }, title: "measure fails", state: "waiting" });
+      store.ask({ sessionId: id, kind: "question", text: "Dismissed first?", options: ["Yes", "No"] });
+      store.ask({ sessionId: id, kind: "question", text: "Dismissed while the first folds?", options: ["Yes", "No"] });
+      try {
+        const page = await open(1400, 900);
+        await page.click("#projects button", "failing-shop");
+        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Dismissed first?') && ${STILL}`);
+        // The second card goes while the first still folds, held mid-way, and reading how far the board scrolls throws.
+        const seen = await page.eval<{ display: string; motions: number; toast: boolean } | null>(`new Promise((done) => {
+          const first = document.querySelector('.next');
+          const read = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight');
+          let thrown = false;
+          ((card) => { ${DISMISS}; })(first);
+          const end = performance.now() + 5000;
+          let armed = false;
+          // Checked at the frame after the failed redraw, whichever way the page reports it (a toast, or uncaught).
+          const tick = () => {
+            if (thrown || performance.now() > end) {
+              Object.defineProperty(Element.prototype, 'scrollHeight', read);
+              const motions = first.getAnimations().filter((a) => a.id === 'motion');
+              for (const a of motions) a.play();
+              const toast = [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('measure failed'));
+              return done(thrown ? { display: first.style.display, motions: motions.length, toast } : null);
+            }
+            if (!armed && first.hasAttribute('data-leaving')) {
+              armed = true;
+              for (const a of first.getAnimations()) a.pause();
+              const measuring = () => [...document.querySelectorAll('[data-leaving]')].some((el) => el.style.display === 'none');
+              Object.defineProperty(Element.prototype, 'scrollHeight', { configurable: true, get() { if (measuring()) { thrown = true; throw new Error('measure failed'); } return read.get.call(this); } });
+              ((card) => { ${DISMISS}; })(document.querySelector('.next:not([data-leaving])'));
+            }
+            requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        })`);
+        assert.ok(seen, "the second card's redraw measured the board while the first card folded");
+        assert.deepEqual({ display: seen.display, moving: seen.motions > 0 }, { display: "", moving: true }, "the folding card shows and goes on folding");
+        const uncaught = page.errors.filter((e) => e.includes("measure failed"));
+        assert.ok(seen.toast || uncaught.length, `the page reports the failure: ${JSON.stringify(page.errors)}`);
+        page.errors.splice(0, page.errors.length, ...page.errors.filter((e) => !uncaught.includes(e)));
+      } finally {
+        done();
+      }
+    });
+
+    // A motion of the desk in the panel (a question rising into it) is not the desk's behind it: a redraw there
+    // that took it off to measure the board would restore the panel's scroll, which ends a smooth scroll mid-way.
+    for (const [phone, width, height] of [[false, 1400, 900], [true, 390, 844]] as const) {
+      it(`${phone ? "on a phone, " : ""}a redraw of the desk behind the session panel leaves the developer's scroll of the panel going`, async () => {
+        const id = `behind-panel-${width}`;
+        const done = asking(id, "asks behind the panel");
+        const text = `Asked behind the panel at ${width}?`;
+        try {
+          const page = await open(width, height);
+          await page.eval("location.hash = '#s=demo-checkout'");
+          await page.waitFor(`${arrived("session")} && document.querySelector('#session .msg.from-session') && ${STILL}`);
+          const scrolled = page.eval<{ at: number | null; target: number; end: number; turns: number }>(`new Promise((done) => {
+            const body = document.querySelector('#session .session-body');
+            // Taller while it runs, so the measure would also clamp the panel's scroll.
+            const motion = body.firstElementChild.animate([{ marginBottom: '4000px' }, { marginBottom: '4000px' }], { id: 'motion', duration: 60000 });
+            const ends = [0, body.scrollHeight - body.clientHeight];
+            let target = 0, at = null, turns = 0, still = 0, last = -1;
+            // The developer scrolls the panel down and up, smoothly, until the desk behind it redraws, then lets the scroll end.
+            const go = () => { target = ends[++turns % 2]; body.scrollTo({ top: target, behavior: 'smooth' }); };
+            new MutationObserver((_, observer) => {
+              if (![...document.querySelectorAll('#view .qrow')].some((r) => r.textContent.includes(${JSON.stringify(text)}))) return;
+              observer.disconnect();
+              at = body.scrollTop;
+            }).observe(document.getElementById('view'), { childList: true, subtree: true });
+            go();
+            const tick = () => {
+              const top = body.scrollTop;
+              if (at === null && Math.abs(top - target) < 1) go();
+              still = top === last ? still + 1 : 0;
+              last = top;
+              if (at !== null && still >= 10) {
+                motion.cancel();
+                done({ at, target, end: top, turns });
+              } else requestAnimationFrame(tick);
+            };
+            requestAnimationFrame(tick);
+          })`);
+          store.ask({ sessionId: id, kind: "question", text, options: ["Yes", "No"] });
+          const seen = await scrolled;
+          assert.ok(seen.at !== null && Math.abs(seen.at - seen.target) >= 1, `the desk redrew while the panel scrolled: ${JSON.stringify(seen)}`);
+          assert.ok(Math.abs(seen.end - seen.target) < 1, `the panel's scroll went on to its end: ${JSON.stringify(seen)}`);
+        } finally {
+          done();
+        }
+      });
+    }
+
     it("on a phone, dismisses a scrolled large card and the next one while the first still folds, nothing jumping", async () => {
       const id = "scrolled-twice";
       const done = asking(id, "dismissed in a row");
