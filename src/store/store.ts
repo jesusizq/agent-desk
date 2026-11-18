@@ -167,6 +167,12 @@ export type ImageExt = keyof typeof IMAGE_TYPES;
 
 /** How long a question asked during a turn waits for that turn's end before it shows anyway. */
 const WRITING_MAX_MS = 5 * 60_000;
+/**
+ * How long an item an end replaced waits for that end's outcome past the later of its marking and the
+ * session's last tool call: a round of checks (Stop hooks) ends well within it, and a refused end going on
+ * calls tools; a session that does neither (interrupted, which fires no Stop) shows it again.
+ */
+const HELD_MAX_MS = 10 * 60_000;
 
 type ReadRecord = { ino: bigint; size: bigint; mtimeNs: bigint; value: unknown };
 
@@ -361,10 +367,10 @@ export class Store {
   }
 
   /**
-   * Questions not to be shown yet: those still being written (a session that died, or a turn that
-   * never ends, must not hide what it asked: past a few minutes it shows as it is), and those a later
-   * end of the turn replaces once it stands (`replacedAt`), which show again if a check refuses it or
-   * the session dies.
+   * Questions not to be shown yet, and only while their session is live: those still being written (a
+   * turn that never ends must not hide what it asked: past a few minutes it shows as it is), and those a
+   * later end of the turn replaces once it stands (`replacedAt`), which show again if a check refuses it,
+   * or once the session has been quiet for HELD_MAX_MS with that end unsettled.
    */
   heldQuestions(now = this.now().getTime(), problems?: string[]): Set<string> {
     return heldOf(this.listSessions(problems), this.openQuestions(undefined, problems), now);
@@ -384,10 +390,10 @@ export class Store {
   /**
    * Settles the replacement an end of the session's turn left waiting (replaceOnceStands): the end
    * stood, and the items it replaced are dismissed; or a check refused it, and they stay open, shown again.
-   * `marked`: only the items marked in that span (one end's marks), else every one marked.
+   * Every end settles the marks before it at its Stop, so the marks open are all the latest end's.
    */
-  settleReplacement(sessionId: string, stands: boolean, problems?: string[], marked?: { from: string; to?: string }): Question[] {
-    const replaced = (q: Question) => q.replacedAt !== undefined && (marked === undefined || (q.replacedAt >= marked.from && (marked.to === undefined || q.replacedAt <= marked.to)));
+  settleReplacement(sessionId: string, stands: boolean, problems?: string[]): Question[] {
+    const replaced = (q: Question) => q.replacedAt !== undefined;
     if (stands) return this.closeOpen(sessionId, compact({ which: replaced, status: "dismissed" as const, problems }));
     const kept = this.openQuestions(sessionId, problems).filter(replaced);
     return kept.map((q) => this.changeQuestion(q.id, ({ replacedAt: _replaced, ...rest }) => rest));
@@ -474,23 +480,18 @@ export class Store {
    */
   recordTurnCheck(sessionId: string, check: TurnCheck, how: { checkedAt?: string; problems?: string[] } = {}): Question | undefined {
     const { checkedAt, problems } = how;
-    // Under the session's lock: no newer end is recorded between telling this end is the latest and
-    // settling what it replaced, and only its own marks are settled (a newer end marks after its checks).
+    // A newer end records its turnEndedAt under this lock before it marks or asks: every mark and waiting
+    // item from this end on is this end's. The session is written last, so a failed reading can be repeated.
     const session = this.withSession(sessionId, (s, write) => {
       if (checkedAt !== undefined && s.turnEndedAt !== undefined && s.turnEndedAt > checkedAt) return undefined;
+      const goesOn = check.outcome === "reopened" && s.state !== "ended";
+      // What the end asked: a waiting item asked after the turn ended.
+      const ended = s.turnEndedAt ?? this.stamp();
+      const asked = (q: Question) => q.kind === "waiting" && !q.checkFailing && q.setAside === undefined && q.askedAt >= ended;
+      if (goesOn) this.closeOpen(sessionId, compact({ which: asked, status: "dismissed" as const, problems }));
+      this.settleReplacement(sessionId, check.outcome !== "reopened", problems);
       const { checkReopened: _reopened, ...rest } = s;
-      const next = write(check.outcome === "reopened" && s.state !== "ended" ? { ...rest, state: "working", checkReopened: check.reopened } : rest);
-      const ended = next.turnEndedAt ?? next.updatedAt;
-      const own = compact({ from: ended, to: checkedAt });
-      if (check.outcome !== "reopened") {
-        this.settleReplacement(sessionId, true, problems, own);
-        return next;
-      }
-      // What the end asked: after the turn ended and before its checks finished (a newer end asks later).
-      const asked = (q: Question) => q.kind === "waiting" && !q.checkFailing && q.setAside === undefined && q.askedAt >= ended && (checkedAt === undefined || q.askedAt <= checkedAt);
-      if (next.state !== "ended") this.closeOpen(sessionId, compact({ which: asked, status: "dismissed" as const, problems }));
-      this.settleReplacement(sessionId, false, problems, own);
-      return next;
+      return write(goesOn ? { ...rest, state: "working", checkReopened: check.reopened } : rest);
     });
     if (session === undefined || check.outcome === "reopened") return undefined;
     const ended = session.turnEndedAt ?? session.updatedAt;
@@ -1899,7 +1900,7 @@ export function heldOf(sessions: readonly Session[], questions: readonly Questio
     const s = byId.get(q.sessionId);
     const live = s !== undefined && !sessionFinished(s);
     if (q.status !== "open" || !live) return false;
-    if (q.replacedAt !== undefined) return true;
+    if (q.replacedAt !== undefined) return now - Date.parse(s.activityAt !== undefined && s.activityAt > q.replacedAt ? s.activityAt : q.replacedAt) < HELD_MAX_MS;
     return q.writing === true && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
   });
   return new Set(held.map((q) => q.id));

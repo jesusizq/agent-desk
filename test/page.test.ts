@@ -194,6 +194,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       // Its next end waits while the checks run on it again, its waiter reading them: the panel still says the turn goes on.
       store.updateSession("checked", (s) => ({ ...s, state: "waiting", turnEndedAt: new Date().toISOString() }));
       const stop = store.listen("checked", process.pid, { checks: true });
+      let again: (() => void) | undefined;
       try {
         await page.click(".scard", "reopened by its check");
         await page.waitFor("document.querySelector('#session .working-now')?.textContent.includes('Its checks run again')");
@@ -202,9 +203,10 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         store.checksRead("checked");
         await page.waitFor("!document.querySelector('#session .working-now')");
         // A later end's waiter reads them again.
-        store.listen("checked", process.pid, { checks: true });
+        again = store.listen("checked", process.pid, { checks: true });
         await page.waitFor("document.querySelector('#session .working-now')?.textContent.includes('Its checks run again')");
       } finally {
+        again?.();
         stop();
       }
       // No waiter reads them any more (it gave up, or delivered an answer): nothing says they run.

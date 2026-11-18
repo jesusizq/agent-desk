@@ -1130,15 +1130,46 @@ describe("checks at a turn's end", () => {
     assert.equal(store.heldQuestions().has(a.id), false, "no next end or prompt will settle it");
   });
 
-  it("settles only what the end whose checks it read replaced, not what a newer end marked meanwhile", () => {
-    const { store, set, a, b } = askedAtTwoEnds();
-    // The checks of the end at 20 finished at 24. Its waiter found no newer end recorded, and before
-    // it settled, a newer end at 30 marked B to replace (its check may refuse it).
-    set(31);
-    store.replaceOnceStands("s1", (q) => q.id === b.id);
-    store.recordTurnCheck("s1", { outcome: "unrefused" }, { checkedAt: at(24) });
-    assert.equal(store.getQuestion(a.id)?.status, "dismissed");
-    assert.deepEqual([store.getQuestion(b.id)?.status, store.heldQuestions().has(b.id)], ["open", true], "the newer end settles it");
+  it("records nothing of an end's checks when a newer end, holding the session's lock while the reading waits for it, recorded its own end", async () => {
+    const { store, a, b } = askedAtTwoEnds();
+    const file = store.paths.session("s1");
+    const lock = path.join(path.dirname(file), `.${path.basename(file)}.lock`);
+    const newer = run(process.execPath, [WORKER, store.paths.home, "newer-end", "300"]);
+    while (!fs.existsSync(lock)) await new Promise((r) => setTimeout(r, 5));
+    // The checks of the end at 20 finished at 24; the reading reaches the session only once the newer end is recorded.
+    assert.equal(store.recordTurnCheck("s1", { outcome: "unrefused" }, { checkedAt: at(24) }), undefined);
+    await newer;
+    assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(b.id)?.status], ["open", "open"], "A is the newer end's Stop to settle, B its own reading's");
+    assert.deepEqual([...store.heldQuestions()].sort(), [a.id, b.id].sort());
+  });
+
+  it("holds what an end replaced only while that end may still be settled: past ten quiet minutes it shows again", () => {
+    // The session reported no process (taken as live), so only time can end the hold.
+    const { store, a } = askedAtTwoEnds();
+    const held = (s: number) => store.heldQuestions(Date.parse(at(s))).has(a.id);
+    assert.deepEqual([held(21 + 599), held(21 + 601)], [true, false], "a check may run for minutes; an interrupted turn fires no Stop");
+    // A tool call of a turn going on keeps it held: that turn's end settles it.
+    store.updateSession("s1", (s) => ({ ...s, state: "working", activityAt: at(900) }));
+    assert.deepEqual([held(900 + 599), held(900 + 601)], [true, false]);
+    assert.equal(store.getQuestion(a.id)?.status, "open", "shown again, never lost");
+  });
+
+  it("leaves the session as it was when settling what a refused end replaced fails, and records it whole when repeated", { skip: process.getuid?.() === 0 && "root writes into a read-only folder" }, () => {
+    const { store, a, b } = askedAtTwoEnds();
+    const closed = store.paths.questionDir("closed");
+    fs.mkdirSync(closed, { recursive: true, mode: 0o700 });
+    fs.chmodSync(closed, 0o500);
+    const refused = () => store.recordTurnCheck("s1", { outcome: "reopened", reopened: reopened(1) }, { checkedAt: at(24) });
+    try {
+      assert.throws(refused, /EACCES/);
+    } finally {
+      fs.chmodSync(closed, 0o700);
+    }
+    assert.deepEqual([store.getSession("s1")?.state, store.getSession("s1")?.checkReopened], ["waiting", undefined], "not working with A still held");
+    assert.deepEqual([store.getQuestion(a.id)?.replacedAt, store.getQuestion(b.id)?.status], [at(21), "open"]);
+    refused();
+    assert.deepEqual([store.getSession("s1")?.state, store.getSession("s1")?.checkReopened?.times], ["working", 1]);
+    assert.deepEqual([store.getQuestion(a.id)?.status, store.heldQuestions().has(a.id), store.getQuestion(b.id)?.status], ["open", false, "dismissed"]);
   });
 
   it("tells a listener that reads the turn's checks from one that only listens, keeping when it started", () => {

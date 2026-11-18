@@ -301,8 +301,12 @@ waiter reads a refusal, or when the next end comes with `stop_hook_active`, whic
 what the refused end asked. An answer on the desk settles nothing: it reaches the session also while
 a check refuses that end (its waiter delivers it before reading the round, or no waiter can read it),
 and the end that follows tells how it went. So an end whose checks no waiter reads (no transcript,
-one that cannot be read, a waiter not started in time) is settled by the next of those, never left
-with no end, and what it replaced shows again if its session dies without ending. A reading of an
+one that cannot be read, a waiter not started in time) is settled by the next of those, if one comes. What an end replaced is held only while its session is live and for at most 10 minutes
+past the later of its marking and the session's last tool call, so a session interrupted before a
+next end (Escape fires no Stop), or gone without ending, shows it again beside what replaced it: no
+item is lost or hidden for good, at the cost of seeing both for a while. A prompt typed while an end's
+round is unread settles it from the transcript when the round is there (refused: what it replaced
+takes the prompt as its probable answer), else as stood. A reading of an
 end's checks settles only what that end replaced, a reading that a newer end of the turn has
 overtaken records nothing, and a waiter reads none once a newer turn waiter listens (a permission
 prompt's or a dialog's hook listening does not count). When a check that refused the turn lets it end without

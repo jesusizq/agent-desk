@@ -68,6 +68,14 @@ if (task === "increment") {
   };
   if (task === "slow-resumes") store.refreshResumes(project, () => (hold(), notes), []);
   else withLock(store.paths.resumes(project.id), () => (hold(), writeJson(store.paths.resumes(project.id), { ...project, at: "later", notes })));
+} else if (task === "newer-end") {
+  // A newer end of the turn records its end under the session's lock, held <count> ms, then marks what it replaces.
+  const file = store.paths.session("s1");
+  withLock(file, () => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(count));
+    writeJson(file, { ...(readJson(file) as object), state: "waiting", turnEndedAt: new Date().toISOString() });
+  });
+  store.replaceOnceStands("s1", (q) => q.text === "Shall I fix only two?");
 } else {
   throw new Error(`unknown task ${task}`);
 }

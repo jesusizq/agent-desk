@@ -110,8 +110,9 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // An answer given on the page but not yet delivered is overtaken by what was typed; a message
       // sent from the page while the session works still reaches it, at its next step.
       if (!wasWorking) store.withdrawInbox(sid, prompt);
-      // The developer wrote: the end that replaced an item stands, so that item answers nothing.
-      store.settleReplacement(sid, true, problems);
+      // The developer wrote: the end that replaced an item stood, so that item answers nothing, unless
+      // its unread round refused it (the prompt then comes mid-turn), keeping that item for the prompt.
+      settleEarlierEnd(sid, store, refusedUnread(input, store, problems), problems);
       // What was typed next may be about something else: probable, never a certain answer.
       store.closeOpen(sid, { answer: prompt, probable: true, problems });
       syncPermissionMarker(store, problems);
@@ -345,15 +346,33 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
 }
 
 /**
- * At a turn's end, what the session's previous end left unsettled, its checks' reading not recorded
- * (no waiter read them, or a newer end overtook it): an end refused (`stop_hook_active` now) keeps
- * what it replaced and loses what it asked, the turn having gone on; an end followed by a new turn stood.
+ * At a turn's end or a prompt, what the session's previous end left unsettled, its checks' reading not
+ * recorded (no waiter read them, or a newer end overtook it): an end refused (`stop_hook_active` now, or
+ * its round read at the prompt) keeps what it replaced and loses what it asked, the turn having gone on;
+ * an end followed by a new turn or a prompt otherwise stood.
  */
 function settleEarlierEnd(sid: string, store: Store, continued: boolean, problems: string[]): void {
   const ended = store.getSession(sid)?.turnEndedAt;
   store.settleReplacement(sid, !continued, problems);
   if (!continued || ended === undefined) return;
   store.closeOpen(sid, { kinds: ["waiting"], which: (q) => !q.checkFailing && q.setAside === undefined && q.askedAt >= ended, status: "dismissed", problems });
+}
+
+/**
+ * The latest end replaced items its waiter never settled, and its round of Stop hooks, read now from the
+ * transcript, refused it. Undecided (no round to read: the prompt already cut it, or there is no
+ * transcript) reads as the end having stood, the usual case.
+ */
+function refusedUnread(input: Common, store: Store, problems: string[]): boolean {
+  const ended = store.getSession(input.sessionId)?.turnEndedAt;
+  if (ended === undefined || !store.openQuestions(input.sessionId, problems).some((q) => q.replacedAt !== undefined)) return false;
+  const transcript = transcriptOf(input);
+  try {
+    return turnCheck(stopRounds(transcript), ended)?.outcome === "reopened";
+  } catch (error) {
+    problems.push(`could not read how the checks ended the turn from ${transcript}, so what that end replaced is taken as replaced: ${(error as Error).message}`);
+    return false;
+  }
 }
 
 // ── Checks at the end of a turn ─────────────────────────────────────────
@@ -1909,12 +1928,14 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
  * Reads, while the waiter runs, how the Stop hooks of the turn's end it was started by ended the turn
  * (turnCheck), and records it once on the desk; the transcript is read again only when it grew. A
  * transcript that cannot be read ends the reading, never the wait: answers still reach the session.
+ * A reading the store cannot record is recorded again at the next poll.
  * Once the reading ends, the waiter's listener no longer says it reads the checks (`checksRead`).
  */
 function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => TurnCheck["outcome"] | undefined) & { problems: string[] } {
   const problems: string[] = [];
   let size = -1;
   let done = false;
+  let unrecorded = false;
   const finish = () => {
     done = true;
     try {
@@ -1939,20 +1960,22 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
     }
     const round = endRound(rounds, end.since);
     if (round === undefined) return undefined;
-    finish();
     let check: TurnCheck | undefined;
     try {
       // This end's Stop hooks have finished, the desk's own among them: the session holds the
       // turn's earlier refusals it counted. A newer end may have counted this one's too: the store
       // then records nothing (round.finishedAt).
       check = turnCheck(rounds, end.since, store.getSession(sessionId)?.checkReopened);
-      if (!check) return undefined;
-      store.recordTurnCheck(sessionId, check, { checkedAt: round.finishedAt, problems });
+      if (check) store.recordTurnCheck(sessionId, check, { checkedAt: round.finishedAt, problems });
     } catch (error) {
-      problems.push(`could not record how the checks ended the turn${check ? ` (${check.outcome})` : ""}: ${(error as Error).message}`);
+      // recordTurnCheck is safe to repeat: the next poll reads the round again and records it whole.
+      size = -1;
+      if (!unrecorded) problems.push(`could not record how the checks ended the turn${check ? ` (${check.outcome})` : ""}: ${(error as Error).message}; trying again at each poll`);
+      unrecorded = true;
       return undefined;
     }
-    return check.outcome;
+    finish();
+    return check?.outcome;
   };
   return Object.assign(step, { problems });
 }
