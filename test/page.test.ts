@@ -3395,27 +3395,31 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.click("#projects button", "failing-shop");
         await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Dismissed first?') && ${STILL}`);
         // The second card goes while the first still folds, held mid-way, and reading how far the board scrolls throws.
-        const seen = await page.eval<{ display: string; motions: number; toast: boolean } | null>(`new Promise((done) => {
+        const seen = await page.eval<{ display: string; motions: number } | null>(`new Promise((done) => {
           const first = document.querySelector('.next');
           const read = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight');
-          let thrown = false;
+          // Every failure shows a toast, through the action's promise or, uncaught, by the page's own handler.
+          window.measureFailures = { thrown: 0, toasts: [] };
+          new MutationObserver((records) => {
+            for (const r of records) for (const n of r.addedNodes) if (n.textContent.includes('measure failed')) measureFailures.toasts.push(n.textContent);
+          }).observe(document.getElementById('toasts'), { childList: true });
+          const thrown = () => measureFailures.thrown > 0;
           ((card) => { ${DISMISS}; })(first);
           const end = performance.now() + 5000;
           let armed = false;
-          // Checked at the frame after the failed redraw, whichever way the page reports it (a toast, or uncaught).
+          // Checked at the frame after the failed redraw; how the page reports it may come later.
           const tick = () => {
-            if (thrown || performance.now() > end) {
+            if (thrown() || performance.now() > end) {
               Object.defineProperty(Element.prototype, 'scrollHeight', read);
               const motions = first.getAnimations().filter((a) => a.id === 'motion');
               for (const a of motions) a.play();
-              const toast = [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('measure failed'));
-              return done(thrown ? { display: first.style.display, motions: motions.length, toast } : null);
+              return done(thrown() ? { display: first.style.display, motions: motions.length } : null);
             }
             if (!armed && first.hasAttribute('data-leaving')) {
               armed = true;
               for (const a of first.getAnimations()) a.pause();
               const measuring = () => [...document.querySelectorAll('[data-leaving]')].some((el) => el.style.display === 'none');
-              Object.defineProperty(Element.prototype, 'scrollHeight', { configurable: true, get() { if (measuring()) { thrown = true; throw new Error('measure failed'); } return read.get.call(this); } });
+              Object.defineProperty(Element.prototype, 'scrollHeight', { configurable: true, get() { if (measuring()) { measureFailures.thrown++; throw new Error('measure failed'); } return read.get.call(this); } });
               ((card) => { ${DISMISS}; })(document.querySelector('.next:not([data-leaving])'));
             }
             requestAnimationFrame(tick);
@@ -3424,9 +3428,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         })`);
         assert.ok(seen, "the second card's redraw measured the board while the first card folded");
         assert.deepEqual({ display: seen.display, moving: seen.motions > 0 }, { display: "", moving: true }, "the folding card shows and goes on folding");
-        const uncaught = page.errors.filter((e) => e.includes("measure failed"));
-        assert.ok(seen.toast || uncaught.length, `the page reports the failure: ${JSON.stringify(page.errors)}`);
-        page.errors.splice(0, page.errors.length, ...page.errors.filter((e) => !uncaught.includes(e)));
+        // A redraw from the event stream fails as an uncaught rejection, reported in a task after that frame.
+        await page.waitFor("measureFailures.toasts.length === measureFailures.thrown");
+        const toasts = await page.eval<string[]>("measureFailures.toasts");
+        // Uncaught, it is also an error of the page's, which reaches the test once the browser sends it: only then is it set aside.
+        const uncaught = toasts.filter((t) => t.startsWith("Page error:")).length;
+        const reported = () => page.errors.filter((e) => e.includes("measure failed"));
+        for (const end = Date.now() + 5000; reported().length < uncaught && Date.now() < end; ) await page.eval("new Promise((r) => setTimeout(r, 50))");
+        assert.equal(reported().length, uncaught, `each failure the page did not catch is reported, once: ${JSON.stringify({ toasts, errors: page.errors })}`);
+        page.errors.splice(0, page.errors.length, ...page.errors.filter((e) => !e.includes("measure failed")));
       } finally {
         done();
       }
