@@ -425,34 +425,50 @@ export class Store {
   }
 
   /**
-   * Records how the checks ended the session's latest turn (TurnCheck). Reopened, the session works
-   * again with the refusals counted on it, and a waiting item that end asked goes: the turn goes on.
-   * Failing, the turn is over: the count goes, and the developer gets a waiting item saying the check
-   * still fails (replacing one still open), answered like any waiting session. Passed, what a failing
-   * check left is gone: the count, and an item asked before this turn ended. Unrefused, only the count
-   * goes: a turn no check refused may be one where the check never ran, so an item stays until the
-   * developer answers or a newer failure replaces it, with what a check said at this end, if anything,
-   * as its text. Returns the item asked, if any.
+   * Records how the checks ended the session's latest turn (TurnCheck), once they finished
+   * (`checkedAt`, when known): a turn end recorded after that is a newer one, which this reading no
+   * longer concerns, and nothing is recorded. Reopened, the session works again with the refusals
+   * counted on it, and a waiting item that end asked goes: the turn goes on. Any other outcome lets
+   * the end stand: a waiting item it asked replaces those still open from before it. Failing, the turn
+   * is over: the count goes, and the developer gets a waiting item saying the check still fails
+   * (replacing one still open), answered like any waiting session. Passed, what a failing check left
+   * is gone: the count, and an item asked before this turn ended. Unrefused, only the count goes: a
+   * turn no check refused may be one where the check never ran, so an item stays until the developer
+   * answers or a newer failure replaces it; what a check said at this end, which may come from another
+   * check, joins its context. Returns the item asked, if any.
    */
-  recordTurnCheck(sessionId: string, check: TurnCheck, problems?: string[]): Question | undefined {
-    const session = this.updateSession(sessionId, ({ checkReopened: _reopened, ...s }) =>
-      check.outcome === "reopened" && s.state !== "ended" ? { ...s, state: "working", checkReopened: check.reopened } : s,
-    );
+  recordTurnCheck(sessionId: string, check: TurnCheck, how: { checkedAt?: string; problems?: string[] } = {}): Question | undefined {
+    const { checkedAt, problems } = how;
+    let newer = false;
+    const session = this.updateSession(sessionId, (s) => {
+      if (checkedAt !== undefined && s.turnEndedAt !== undefined && s.turnEndedAt > checkedAt) {
+        newer = true;
+        return s;
+      }
+      const { checkReopened: _reopened, ...rest } = s;
+      return check.outcome === "reopened" && s.state !== "ended" ? { ...rest, state: "working", checkReopened: check.reopened } : rest;
+    });
+    if (newer) return undefined;
     const ended = session.turnEndedAt ?? session.updatedAt;
+    // What the end asked: after the turn ended and before its checks finished (a newer end asks later).
+    const asked = (q: Question) => q.kind === "waiting" && !q.checkFailing && q.setAside === undefined && q.askedAt >= ended && (checkedAt === undefined || q.askedAt <= checkedAt);
     if (check.outcome === "reopened") {
-      if (session.state !== "ended") this.closeOpen(sessionId, compact({ kinds: ["waiting"] as const, which: (q: Question) => !q.checkFailing && q.setAside === undefined && q.askedAt >= ended, status: "dismissed" as const, problems }));
+      if (session.state !== "ended") this.closeOpen(sessionId, compact({ which: asked, status: "dismissed" as const, problems }));
       return undefined;
+    }
+    if (this.openQuestions(sessionId, problems).some(asked)) {
+      this.closeOpen(sessionId, compact({ kinds: ["waiting"] as const, which: (q: Question) => !q.checkFailing && q.setAside === undefined && q.askedAt < ended, status: "dismissed" as const, problems }));
     }
     if (check.outcome === "unrefused") {
       const said = check.said?.trim();
-      if (said) for (const q of this.openQuestions(sessionId, problems)) if (q.checkFailing) this.changeQuestion(q.id, (cur) => (cur.status === "open" ? { ...cur, text: said } : cur));
+      if (said) for (const q of this.openQuestions(sessionId, problems)) if (q.checkFailing) this.changeQuestion(q.id, (cur) => (cur.status === "open" ? { ...cur, context: withLater(cur.context, said) } : cur));
       return undefined;
     }
     const stale = (q: Question) => q.checkFailing === true && (check.outcome === "failing" || q.askedAt < ended);
     this.closeOpen(sessionId, compact({ which: stale, status: "dismissed" as const, problems }));
     if (check.outcome === "passed" || session.state === "ended") return undefined;
     const { reason } = check.reopened;
-    return this.ask({ sessionId, kind: "waiting", text: check.said?.trim() || headline(reason), context: reason, checkFailing: true });
+    return this.ask({ sessionId, kind: "waiting", text: bounded(check.said?.trim() || headline(reason)), context: reason, checkFailing: true });
   }
 
   /**
@@ -1857,6 +1873,12 @@ function headline(value: string): string {
 
 function bounded(answer: string): string {
   return answer.length > ANSWER_MAX ? `${answer.slice(0, ANSWER_MAX - 1)}…` : answer;
+}
+
+/** An item's context with what was said at a later end under it, once, within the store's limit. */
+function withLater(context: string | undefined, said: string): string {
+  if (context?.includes(said)) return context;
+  return bounded(context ? `${context}\n\n${said}` : said);
 }
 
 /** The sessions of a project, by id. A folder stands for the deepest recorded project folder holding it. */

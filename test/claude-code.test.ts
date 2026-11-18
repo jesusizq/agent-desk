@@ -233,14 +233,18 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(turnTexts(path.join(tempHome(), "none.jsonl")), [], "a transcript not written yet holds nothing");
   });
 
-  it("keeps a question open when a turn without a typed prompt ends asking nothing", () => {
-    const store = testStore();
+  it("keeps a question open when a turn without a typed prompt ends asking nothing", async () => {
+    // On the real clock: the hook stamps the end of the turn with it, the store the item it asks.
+    const { Store } = await import("../src/store/store.ts");
+    const store = new Store(tempHome());
     handleHook(event("Stop", { last_assistant_message: "Shall I fix the four of them?" }), ctx(store));
     // A background task wakes the session; its turn ends with a reminder, not a question.
     handleHook(event("Stop", { last_assistant_message: "Still waiting for your answer about the four fixes." }), ctx(store));
     assert.deepEqual(store.openQuestions("cc-1").map((q) => q.text), ["Shall I fix the four of them?"]);
     assert.match(store.getSession("cc-1")?.lastMessage?.text ?? "", /Still waiting/);
     handleHook(event("Stop", { last_assistant_message: "Shall I fix only two?" }), ctx(store));
+    assert.deepEqual(store.openQuestions("cc-1").map((q) => q.text), ["Shall I fix the four of them?", "Shall I fix only two?"], "until its Stop hooks let the end stand");
+    store.recordTurnCheck("cc-1", { outcome: "unrefused" });
     assert.deepEqual(store.openQuestions("cc-1").map((q) => q.text), ["Shall I fix only two?"], "a turn that asks again replaces it");
   });
 
@@ -1863,6 +1867,10 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     assert.deepEqual(turnCheck([{ refusals: [REASON], said: [], finishedAt: at(30) }], at(25), counted), { outcome: "reopened", reopened: { times: 4, reason: checkExcerpt(REASON), at: at(30) } });
     assert.deepEqual(turnCheck([{ refusals: [], said: [], finishedAt: at(30) }], at(25), counted), { outcome: "passed" });
     assert.deepEqual(turnCheck([{ refusals: [], said: [], finishedAt: at(30) }], at(25)), { outcome: "unrefused" }, "an end no check refused may be one it skipped, not a pass");
+    // The first round to finish after the waiter started is its end's; a later one is a newer end's.
+    assert.deepEqual(turnCheck([refused, { refusals: [], said: [], finishedAt: at(30) }, { refusals: ["tests failed"], said: [], finishedAt: at(40) }], at(25)), { outcome: "passed" });
+    const told = turnCheck([refused, { refusals: [], said: ["x".repeat(30_000)], finishedAt: at(30) }], at(25));
+    assert.equal(told?.outcome === "failing" && told.said?.length, 2000, "what a Stop hook said is kept as a refusal is, within a question's limits");
     const long = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
     assert.equal(checkExcerpt(long).split("\n").length, 12, "only the refusal's first lines are kept");
   });
@@ -1897,7 +1905,7 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     assert.match(store.getSession("cc-1")?.checkReopened?.reason ?? "", /no longer in the part of the transcript read/);
   });
 
-  it("a waiting item an end asked goes when a check refuses that end, and a later message of a check renames the failing one", async () => {
+  it("a waiting item an end asked goes when a check refuses that end, and a later message of a check joins the failing one's context", async () => {
     // On the real clock: the hook stamps the end of the turn with it, the store the item it asks.
     const { Store } = await import("../src/store/store.ts");
     const store = new Store(tempHome());
@@ -1910,9 +1918,10 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     assert.equal(store.getQuestion(asked.id)?.status, "dismissed", "the turn went on: its end asked nothing yet");
     assert.equal(store.getQuestion(failing?.id ?? "")?.status, "open");
     store.recordTurnCheck("cc-1", { outcome: "unrefused", said: "ahorro: verify failed again; I am not blocking." });
-    assert.equal(store.getQuestion(failing?.id ?? "")?.text, "ahorro: verify failed again; I am not blocking.");
+    const told = store.getQuestion(failing?.id ?? "");
+    assert.deepEqual([told?.text, told?.context], [GAVE_UP, `${REASON}\n\nahorro: verify failed again; I am not blocking.`], "another Stop hook may have said it: it joins the context, the title stays");
     store.recordTurnCheck("cc-1", { outcome: "unrefused" });
-    assert.equal(store.getQuestion(failing?.id ?? "")?.text, "ahorro: verify failed again; I am not blocking.", "a silent end leaves it as it was");
+    assert.deepEqual(store.getQuestion(failing?.id ?? ""), told, "a silent end leaves it as it was");
   });
 
   it("the waiter sees a Stop hook refuse the end and marks the session working again", async () => {
@@ -1928,6 +1937,72 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     const s = store.getSession("cc-1");
     assert.equal(s?.state, "working");
     assert.deepEqual(s?.checkReopened, { times: 1, reason: checkExcerpt(REASON), at: now });
+  });
+
+  it("the waiter adds the refusals the session counted to the one it sees, past the transcript's tail", async () => {
+    const store = testStore();
+    // A long fix loop: the tail read holds none of the earlier refusals, the session counted three.
+    const file = transcript([rows.said("Fixed the type.", at(40))]);
+    handleHook(event("UserPromptSubmit", { prompt: "fix the table" }), ctx(store));
+    store.updateSession("cc-1", (s) => ({ ...s, checkReopened: { times: 3, reason: "tests failed", at: at(30) } }));
+    handleHook(event("Stop", { last_assistant_message: "Fixed the type.", transcript_path: file, stop_hook_active: true }), ctx(store));
+    const since = new Date(Date.now() - 1).toISOString();
+    const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since });
+    await new Promise((r) => setTimeout(r, 50));
+    const now = new Date().toISOString();
+    write(file, [...rows.refusal(REASON, now), rows.summary([REASON], now)]);
+    assert.deepEqual(await waiting, { code: 0 });
+    assert.deepEqual([store.getSession("cc-1")?.state, store.getSession("cc-1")?.checkReopened], ["working", { times: 4, reason: checkExcerpt(REASON), at: now }]);
+  });
+
+  it("a waiter that reads its end's checks after a newer end of the turn was recorded changes nothing", async () => {
+    const { Store } = await import("../src/store/store.ts");
+    const store = new Store(tempHome());
+    // The end's waiter started at `since`; a check refused that end, and the session ended again,
+    // asking, before the waiter read it (a loaded machine).
+    const since = new Date(Date.now() - 2000).toISOString();
+    const refusedAt = new Date(Date.now() - 1000).toISOString();
+    const file = transcript([rows.prompt("fix the table", at(10)), rows.said("Done.", at(11)), ...rows.refusal(REASON, refusedAt), rows.summary([REASON], refusedAt), rows.said("Fixed. Shall I also migrate the old rows?", refusedAt)]);
+    handleHook(event("UserPromptSubmit", { prompt: "fix the table" }), ctx(store));
+    handleHook(event("Stop", { last_assistant_message: "Fixed. Shall I also migrate the old rows?", transcript_path: file, stop_hook_active: true }), ctx(store));
+    const asked = store.openQuestions("cc-1")[0];
+    assert.ok(asked);
+    assert.deepEqual(await waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 300 }, { transcript: file, since }), { code: 0 });
+    const s = store.getSession("cc-1");
+    assert.deepEqual([s?.state, s?.checkReopened?.times], ["waiting", 1], "the newer end counted that refusal: it is not counted twice");
+    assert.equal(store.getQuestion(asked.id)?.status, "open", "what the newer end asked stays");
+  });
+
+  it("an end a check refuses loses no question asked before it; only an end its checks let stand replaces it", async () => {
+    const { Store } = await import("../src/store/store.ts");
+    const store = new Store(tempHome());
+    handleHook(event("Stop", { last_assistant_message: "Shall I fix the four of them?" }), ctx(store));
+    const first = store.openQuestions("cc-1")[0];
+    assert.ok(first);
+    // A background task wakes the session; its end asks again, and a check refuses that end.
+    const file = transcript([rows.prompt("<task-notification>build done</task-notification>", at(30)), rows.said("Build done. Shall I fix only two?", at(31))]);
+    handleHook(event("UserPromptSubmit", { prompt: "<task-notification>build done</task-notification>" }), ctx(store));
+    handleHook(event("Stop", { last_assistant_message: "Build done. Shall I fix only two?", transcript_path: file }), ctx(store));
+    const second = store.openQuestions("cc-1").find((q) => q.id !== first.id);
+    assert.ok(second);
+    const refused = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+    await new Promise((r) => setTimeout(r, 50));
+    const now = new Date().toISOString();
+    write(file, [...rows.refusal(REASON, now), rows.summary([REASON], now)]);
+    assert.deepEqual(await refused, { code: 0 });
+    assert.deepEqual([store.getQuestion(first.id)?.status, store.getQuestion(second.id)?.status], ["open", "dismissed"]);
+    // The turn goes on and ends with a report the checks let stand: the first question still waits.
+    await new Promise((r) => setTimeout(r, 5));
+    write(file, [rows.said("Fixed both; the tests pass.", new Date().toISOString())]);
+    handleHook(event("Stop", { last_assistant_message: "Fixed both; the tests pass.", transcript_path: file, stop_hook_active: true }), ctx(store));
+    const since = new Date(Date.now() - 1).toISOString();
+    const passed = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 300 }, { transcript: file, since });
+    await new Promise((r) => setTimeout(r, 50));
+    const later = new Date().toISOString();
+    write(file, [rows.summary([], later), rows.turnEnd(later)]);
+    assert.deepEqual(await passed, { code: 0 });
+    assert.deepEqual(store.openQuestions("cc-1").map((q) => q.id), [first.id], "no question is lost");
+    assert.equal(store.getSession("cc-1")?.checkReopened, undefined, "the check passed");
   });
 
   it("a check that gave up waits in Needs you, and the developer's answer from the desk reaches the session", async () => {

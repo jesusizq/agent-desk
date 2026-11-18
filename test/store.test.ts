@@ -1063,6 +1063,82 @@ describe("checks at a turn's end", () => {
     assert.deepEqual(store.openQuestions("s1").map((x) => x.id), [late?.id], "asked after the turn ended: not that turn's to take away");
   });
 
+  /** A store whose clock is set by the test, at `at(s)`: seconds after 08:00. */
+  const clocked = () => {
+    let now = 0;
+    const store = new Store(tempHome(), () => new Date(Date.parse("2026-10-28T08:00:00.000Z") + now * 1000));
+    addSession(store);
+    return { store, set: (s: number) => (now = s) };
+  };
+  const at = (s: number) => new Date(Date.parse("2026-10-28T08:00:00.000Z") + s * 1000).toISOString();
+  /** At 10 an earlier turn asked A; at 20 a turn ended, its end asking B at 21. */
+  const askedAtTwoEnds = () => {
+    const { store, set } = clocked();
+    set(10);
+    const a = store.ask({ sessionId: "s1", kind: "waiting", text: "Shall I fix the four of them?" });
+    set(20);
+    store.updateSession("s1", (s) => ({ ...s, state: "waiting", turnEndedAt: at(20) }));
+    set(21);
+    const b = store.ask({ sessionId: "s1", kind: "waiting", text: "Shall I fix only two?" });
+    set(25);
+    return { store, set, a, b };
+  };
+
+  it("a refused end dismisses only the item it asked: one asked before the turn ended stays", () => {
+    const { store, a, b } = askedAtTwoEnds();
+    store.recordTurnCheck("s1", { outcome: "reopened", reopened: reopened(1) }, { checkedAt: at(24) });
+    assert.equal(store.getQuestion(b.id)?.status, "dismissed", "the turn went on: its end asked nothing yet");
+    assert.equal(store.getQuestion(a.id)?.status, "open", "asked before the turn ended: no question is lost");
+    assert.equal(store.getSession("s1")?.state, "working");
+  });
+
+  it("only an end its checks let stand replaces the items asked before it with the one it asked", () => {
+    const { store, a, b } = askedAtTwoEnds();
+    store.recordTurnCheck("s1", { outcome: "unrefused" }, { checkedAt: at(24) });
+    assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(b.id)?.status], ["dismissed", "open"]);
+    // An end that asked nothing replaces nothing.
+    const { store: other, set } = clocked();
+    set(10);
+    const kept = other.ask({ sessionId: "s1", kind: "waiting", text: "Shall I fix the four of them?" });
+    other.updateSession("s1", (s) => ({ ...s, state: "waiting", turnEndedAt: at(20) }));
+    set(25);
+    other.recordTurnCheck("s1", { outcome: "passed" }, { checkedAt: at(24) });
+    assert.equal(other.getQuestion(kept.id)?.status, "open");
+  });
+
+  it("records nothing of an end's checks once a newer end of the turn was recorded", () => {
+    const { store, set, b } = askedAtTwoEnds();
+    // The checks of the end at 20 finished at 24; the session went on and ended again at 30, asking C.
+    set(30);
+    store.updateSession("s1", (s) => ({ ...s, state: "waiting", turnEndedAt: at(30), checkReopened: reopened(1) }));
+    set(31);
+    const c = store.ask({ sessionId: "s1", kind: "waiting", text: "Shall I also migrate the old rows?" });
+    set(40);
+    assert.equal(store.recordTurnCheck("s1", { outcome: "reopened", reopened: reopened(2) }, { checkedAt: at(24) }), undefined);
+    const s = store.getSession("s1");
+    assert.deepEqual([s?.state, s?.checkReopened?.times], ["waiting", 1], "the newer end counted this refusal already");
+    assert.deepEqual([store.getQuestion(b.id)?.status, store.getQuestion(c.id)?.status], ["open", "open"]);
+    // Of the newer end's own checks, a refusal dismisses only what that end asked.
+    store.recordTurnCheck("s1", { outcome: "reopened", reopened: reopened(2) }, { checkedAt: at(35) });
+    assert.deepEqual([store.getQuestion(b.id)?.status, store.getQuestion(c.id)?.status, store.getSession("s1")?.checkReopened?.times], ["open", "dismissed", 2]);
+  });
+
+  it("keeps a failing check's title when a later end's checks say something, adding it to its context once", () => {
+    const store = testStore();
+    addSession(store);
+    store.updateSession("s1", (s) => ({ ...s, state: "waiting", turnEndedAt: "2026-10-28T08:00:00.000Z" }));
+    const q = store.recordTurnCheck("s1", { outcome: "failing", reopened: reopened(3), said: "verify keeps failing after 3 attempts" });
+    for (let i = 0; i < 2; i++) store.recordTurnCheck("s1", { outcome: "unrefused", said: "Formatted 3 files." });
+    const after = store.getQuestion(q?.id ?? "");
+    assert.equal(after?.text, "verify keeps failing after 3 attempts", "a message any Stop hook may have shown names no failure");
+    assert.equal(after?.context, "verify failed.\n\n[shop] typecheck: 1 error\n\nFormatted 3 files.");
+    // Messages longer than a question holds are cut, never refused half-way.
+    store.recordTurnCheck("s1", { outcome: "unrefused", said: "y".repeat(30_000) });
+    assert.equal(store.getQuestion(q?.id ?? "")?.context?.length, 20_000);
+    const long = store.recordTurnCheck("s1", { outcome: "failing", reopened: reopened(1), said: "z".repeat(30_000) });
+    assert.deepEqual([long?.checkFailing, long?.text.length], [true, 20_000]);
+  });
+
   it("an ended session neither works again nor asks", () => {
     const store = testStore();
     addSession(store);

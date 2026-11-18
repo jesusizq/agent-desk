@@ -171,6 +171,20 @@ describe("agent cost", () => {
     assert.equal(only(store).tokens, 24_669 + 24_575);
   });
 
+  it("records a sub-agent's stop when its transcript cannot be read, its cost unknown and the reason told", () => {
+    const { store, own, ctx, event } = subagent();
+    fs.writeFileSync(own, `${reply("m1", "claude-opus-5-5", opus(2, 24_474, 0, 193))}\n`);
+    handleHook(event("PostToolUse", { agent_id: "a1", tool_name: "Bash", tool_input: { command: "npm test" } }), ctx);
+    assert.equal(only(store).tokens, 24_669);
+    // A folder where its transcript should be: opening it works, reading it fails (EISDIR).
+    fs.rmSync(own);
+    fs.mkdirSync(own);
+    const out = handleHook(event("SubagentStop", { agent_id: "a1", agent_type: "general-purpose", agent_transcript_path: own, last_assistant_message: "Fixed." }), ctx);
+    const done = only(store);
+    assert.deepEqual([done.state, done.activity, done.costUsd], ["done", "Fixed.", undefined]);
+    assert.match(out.stderr ?? "", /could not read the transcript .*agent-a1\.jsonl of sub-agent a1 to count its tokens and cost \(EISDIR/);
+  });
+
   it("keeps an adapter's notes inside the session's folder of the store, private", () => {
     const store = testStore();
     store.updateNote("cc-1", "usage-a1", () => ({ offset: 1 }));

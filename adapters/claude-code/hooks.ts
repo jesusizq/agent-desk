@@ -333,9 +333,13 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   // Only a turn that ends asking something needs the developer; a report waits quietly on the session.
   const offered = offeredQuestion(last, before);
   if (offered === undefined && !asksSomething(last)) return;
-  replaced();
   const { question, context, options, several } = offered ?? freeQuestion(last, before);
-  if (reopened.some((r) => sameWords(r.text, question))) return;
+  if (reopened.some((r) => sameWords(r.text, question))) {
+    replaced();
+    return;
+  }
+  // A Stop hook may still refuse this end, and the item with it: the earlier ones are replaced only
+  // once the end stands (recordTurnCheck), so a refused end loses none of them.
   store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: question, context: context || undefined, options: options.length > 0 ? options : undefined, several: several || undefined }));
 }
 
@@ -423,21 +427,26 @@ function latestOf(a: CheckReopened | undefined, b: CheckReopened | undefined): C
 /** The reason kept for a refusal known only from `stop_hook_active`, its rows past the transcript's tail read. */
 const REASON_UNSEEN = "A Stop hook refused an earlier end of this turn; its reason is no longer in the part of the transcript read.";
 
+/** The round of Stop hooks of the turn's end that started after `since`: the first to finish after it; undefined while they still run. */
+export function endRound(rounds: StopRound[], since: string): StopRound | undefined {
+  return rounds.find((r) => r.finishedAt > since);
+}
+
 /**
- * How the Stop hooks of the turn's end that started after `since` ended it; undefined while they
- * still run. `before` is what the session counted of the turn's earlier refusals, which the
- * transcript's tail may have lost. A Stop hook that refused an earlier end of the turn and now lets it
- * end with a message to the developer has given up on it: the check still fails. Letting it end
- * silently reads as passing (a check that gives up without a word cannot be told from one that
+ * How the Stop hooks of the turn's end that started after `since` ended it (endRound); undefined
+ * while they still run. `before` is what the session counted of the turn's earlier refusals, which
+ * the transcript's tail may have lost. A Stop hook that refused an earlier end of the turn and now
+ * lets it end with a message to the developer has given up on it: the check still fails. Letting it
+ * end silently reads as passing (a check that gives up without a word cannot be told from one that
  * passed). A turn no Stop hook refused says nothing either way: a check that skips a turn (nothing
  * edited) ends it the same way. Which Stop hook wrote a message is not recorded, so any one's counts.
  */
 export function turnCheck(rounds: StopRound[], since: string, before?: CheckReopened): TurnCheck | undefined {
-  const last = rounds.at(-1);
-  if (!last || last.finishedAt <= since) return undefined;
-  const earlier = latestOf(reopenedBy(rounds.slice(0, -1)), before);
-  if (last.refusals.length > 0) return { outcome: "reopened", reopened: { times: (earlier?.times ?? 0) + 1, reason: checkExcerpt(last.refusals.join("\n\n")), at: last.finishedAt } };
-  const said = last.said.length > 0 ? last.said.join("\n") : undefined;
+  const round = endRound(rounds, since);
+  if (!round) return undefined;
+  const earlier = latestOf(reopenedBy(rounds.slice(0, rounds.indexOf(round))), before);
+  if (round.refusals.length > 0) return { outcome: "reopened", reopened: { times: (earlier?.times ?? 0) + 1, reason: checkExcerpt(round.refusals.join("\n\n")), at: round.finishedAt } };
+  const said = round.said.length > 0 ? checkExcerpt(round.said.join("\n")) : undefined;
   if (!earlier) return compact({ outcome: "unrefused" as const, said });
   return said ? { outcome: "failing", reopened: earlier, said } : { outcome: "passed" };
 }
@@ -1072,6 +1081,7 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
  * each hook reads only what was written since the last one (usage.ts), from where its note on the
  * session says; empty before its transcript has a line. `record` runs under the note's lock, so
  * two hooks of one agent write their tallies in the order they read them, never an older one last.
+ * A transcript that cannot be read hands it no cost, and the reason goes to `problems`.
  */
 function withAgentUsage(input: Common, ctx: HookContext, agentId: string, transcript: string, problems: string[], record: (usage: AgentFields) => void): void {
   const key = `usage-${agentId}`;
@@ -1087,7 +1097,15 @@ function withAgentUsage(input: Common, ctx: HookContext, agentId: string, transc
     } catch (error) {
       problems.push(`${(error as Error).message}; counting again from the start of ${transcript}`);
     }
-    const tally = tallyTranscript(transcript, before, problems);
+    let tally: Tally | undefined;
+    try {
+      tally = tallyTranscript(transcript, before, problems);
+    } catch (error) {
+      // What the hook records of the agent (its stop, its call) must not wait on its cost.
+      problems.push(`could not read the transcript ${transcript} of sub-agent ${agentId} to count its tokens and cost (${(error as Error).message}); its cost is left unknown until a hook reads it`);
+      record({ costUsd: undefined });
+      return undefined;
+    }
     record(tally ? { tokens: tally.tokens, costUsd: tally.unpriced ? undefined : Math.round(tally.costUsd * 1e6) / 1e6 } : {});
     return tally === before ? undefined : tally;
   });
@@ -1581,7 +1599,13 @@ function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
   // Usually one record; more only where an older adapter recorded a restarted agent twice. The goal
   // comes with the notes when they were not written yet at the agent's start.
   // A workflow's agent hands its result to the script, never to the session: it joins the conversation as the agent's report.
-  const result = transcript === undefined ? undefined : handedBack(readTail(transcript, TRANSCRIPT_TAIL));
+  let result: string | undefined;
+  try {
+    result = transcript === undefined ? undefined : handedBack(readTail(transcript, TRANSCRIPT_TAIL));
+  } catch (error) {
+    // Its stop is recorded all the same: an agent left working would never end on the desk.
+    problems.push(`could not read the transcript ${transcript} of sub-agent ${agentId} for the result it handed back (${(error as Error).message}); its stop is recorded without it`);
+  }
   const ended = result ? { activity: HANDED_BACK, activityIsCall: undefined } : { activity: last || undefined };
   const own = transcript?.endsWith(".jsonl") ? transcript : meta?.replace(/\.meta\.json$/, ".jsonl");
   const record = (usage: AgentFields) =>
@@ -1883,15 +1907,17 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
       problems.push(`could not read how the checks ended the turn from ${end.transcript}: ${(error as Error).message}`);
       return undefined;
     }
-    if (turnCheck(rounds, end.since) === undefined) return undefined;
+    const round = endRound(rounds, end.since);
+    if (round === undefined) return undefined;
     done = true;
     let check: TurnCheck | undefined;
     try {
       // This end's Stop hooks have finished, the desk's own among them: the session holds the
-      // turn's earlier refusals it counted.
+      // turn's earlier refusals it counted. A newer end may have counted this one's too: the store
+      // then records nothing (round.finishedAt).
       check = turnCheck(rounds, end.since, store.getSession(sessionId)?.checkReopened);
       if (!check) return undefined;
-      store.recordTurnCheck(sessionId, check, problems);
+      store.recordTurnCheck(sessionId, check, { checkedAt: round.finishedAt, problems });
     } catch (error) {
       problems.push(`could not record how the checks ended the turn${check ? ` (${check.outcome})` : ""}: ${(error as Error).message}`);
       return undefined;

@@ -288,18 +288,22 @@ one of its messages) and takes at most half the window.
 A check is a hook the provider runs when a turn ends that can refuse the end and send the session
 back to work (the repository's tests, say). While one keeps refusing, the session is working, with
 `checkReopened` on it: its card and panel say "A check sent it back to work 2 times" and the first
-line of the latest refusal, as plain text, also while the session waits on an end the checks are
-running on again. Any prompt that starts a new turn drops the count. A waiting item an end asked
-goes when a check refuses that end: the turn went on. When a check that refused the turn lets it
-end without passing, the turn's end gets a `waiting` item marked `checkFailing` ("Check failing" on
-the desk), titled with what the check said at that end and with the latest refusal as its context;
-it is answered like any waiting session. A newer failing check replaces it, a question the next end
-asks does not, a later end no check refused takes what a check said there as its title, and it goes
-when the developer answers or writes in the terminal, or when a later turn a check refused ends with
-no check refusing it any more (`recordTurnCheck`, `src/store/store.ts`). A check that lets the turn
-end without a word cannot be told from one that passed: only a refusal followed by a message at the
-end reads as failing. Nor can a turn no check refused be told from one the check skipped (nothing
-edited, say), so such a turn leaves the item where it is.
+line of the latest refusal, as plain text, also while the session waits, its waiter running, on an
+end the checks are running on again. Any prompt drops the count, also one typed while the session
+works: the refusals are counted again from it. A waiting item an end asked goes when a check refuses
+that end: the turn went on; only an end no check refused replaces the items still open from before
+it with the one it asked, so a refused end loses none. A reading of an end's checks that a newer end
+of the turn has overtaken records nothing. When a check that refused the turn lets it end without
+passing, the turn's end gets a `waiting` item marked `checkFailing` ("Check failing" on the desk),
+titled with what the check said at that end and with the latest refusal as its context; it is
+answered like any waiting session. A newer failing check replaces it, a question the next end asks
+does not, what a check said at a later end no check refused joins its context (its title stays: that
+message may be another check's), and it goes when the developer answers or writes in the terminal,
+or when a later turn a check refused ends with no check refusing it any more (`recordTurnCheck`,
+`src/store/store.ts`). A check that lets the turn end without a word cannot be told from one that
+passed: only a refusal followed by a message at the end reads as failing. Nor can a turn no check
+refused be told from one the check skipped (nothing edited, say), so such a turn leaves the item
+where it is.
 
 ### How sure an answer is
 

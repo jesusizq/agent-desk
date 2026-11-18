@@ -13,7 +13,7 @@ const NOW = "now";
 const COLS = { needs: "Needs you", sessions: "Sessions", review: "To review" };
 /** @param {number} c */
 const contextAt = (c) => `Context ${Math.round(c)}%`;
-/** In cents; a cost under half a cent is not shown as nothing. @param {number} v */
+/** A cost in US dollars, to the cent; one under half a cent is not shown as nothing. @param {number} v */
 const usd = (v) => (v > 0 && v < 0.005 ? "<$0.01" : `$${v.toFixed(2)}`);
 /** @param {number} n */
 const tokens = (n) => `${n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : n} tokens`;
