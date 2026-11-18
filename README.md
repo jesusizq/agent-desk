@@ -333,7 +333,8 @@ runs `npm run check`, `pre-push` runs `npm run check` and `npm test`. Commits an
 only Markdown or `docs/` skip them.
 
 The server moves what is older than 60 days (closed questions, results with their images, finished
-sessions) to `archive/` in the store, at start and every 6 hours.
+sessions, a project's handoffs to resume whose notes all ended) to `archive/` in the store, at start
+and every 6 hours.
 
 ## Acknowledgements
 

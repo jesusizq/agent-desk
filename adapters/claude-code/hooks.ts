@@ -80,6 +80,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
 
     case "UserPromptSubmit": {
       const prompt = text(f.prompt ?? "", "hook input.prompt", 10_000_000);
+      recordResumes(input, ctx, problems); // a turn interrupted after loading a handoff ran no Stop
       const sent = fromAnother(prompt);
       if (sent || fromClaudeCode(prompt)) {
         // A background task's notification, another session's message or an agent's report wakes the

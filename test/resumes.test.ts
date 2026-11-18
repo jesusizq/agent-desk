@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { handleHook, type HookContext, readHookInput } from "../adapters/claude-code/hooks.ts";
-import { objective, pendingHandoffs } from "../adapters/claude-code/resumes.ts";
+import { handoffFolder, objective, pendingHandoffs } from "../adapters/claude-code/resumes.ts";
 import { readProjectResumes } from "../src/core/model.ts";
 import { projectId } from "../src/project/scan.ts";
 import { StorePaths } from "../src/store/paths.ts";
@@ -97,6 +97,54 @@ describe("pending handoffs", () => {
     assert.equal(store.getResumes(SHOP)?.notes[0]?.title, "Just written");
   });
 
+  it("drops a handoff loaded in a turn that was interrupted, at the next prompt, since no Stop ran", () => {
+    const { dir, store, write, hook } = setup();
+    write("a.md", "## Objetivo\nLoaded then interrupted\n", 1);
+    hook("SessionStart", { source: "startup" });
+    assert.equal(store.getResumes(SHOP)?.notes.length, 1);
+    fs.renameSync(path.join(dir, "a.md"), path.join(dir, "a.md.usado"));
+    hook("UserPromptSubmit", { prompt: "go on" });
+    assert.equal(store.getResumes(SHOP), undefined);
+  });
+
+  it("replaces a stored record it cannot read with what it reads now, saying so", () => {
+    const { store, record, write, hook } = setup();
+    write("a.md", "## Objetivo\nStill pending\n", 1);
+    fs.mkdirSync(path.dirname(record), { recursive: true });
+    fs.writeFileSync(record, JSON.stringify({ id: SHOP, name: "shop", dir: "/work/shop", at: "yesterday", notes: [] }));
+    const out = hook("SessionStart", { source: "startup" });
+    assert.match(out.stderr ?? "", /resumes.*at.*replaced by the notes read now/s);
+    assert.equal(store.getResumes(SHOP)?.notes[0]?.title, "Still pending", "rewritten, so the next hook is quiet");
+    assert.equal(hook("Stop", { last_assistant_message: "Done." }).stderr, undefined);
+  });
+
+  it("reads the notes and writes them under the record's lock, so a stale read cannot win over a later one", () => {
+    const { store, record } = setup();
+    const lock = path.join(path.dirname(record), `.${path.basename(record)}.lock`);
+    let locked = false;
+    store.refreshResumes({ id: SHOP, name: "shop", dir: "/work/shop" }, () => ((locked = fs.existsSync(lock)), []), []);
+    assert.equal(locked, true);
+  });
+
+  it("reads the folder the plugin writes to: the repository main checkout's, also from a subfolder", () => {
+    const cache = tempHome();
+    const repo = path.join(fs.realpathSync(tempHome()), "shop");
+    const sub = path.join(repo, "web");
+    fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+    fs.mkdirSync(sub);
+    const folder = path.join(cache, "claude-handoffs", "shop");
+    fs.mkdirSync(folder, { recursive: true });
+    const file = path.join(folder, "a.md");
+    fs.writeFileSync(file, "## Objetivo\nFrom the repository's folder\n");
+    const store = testStore();
+    const ctx: HookContext = { store, env: { CLAUDE_PROJECT_DIR: sub, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined };
+    handleHook(readHookInput(JSON.stringify({ session_id: "cc-1", cwd: sub, hook_event_name: "PostToolUse", tool_name: "Write", tool_input: { file_path: file, content: "" }, tool_response: {} })), ctx);
+    const got = store.getResumes(projectId(sub));
+    assert.equal(got?.notes[0]?.title, "From the repository's folder");
+    assert.deepEqual([got?.name, got?.dir], ["web", sub], "kept as the session's project, where the command loads it");
+    assert.equal(handoffFolder(path.join(tempHome(), "plain")), "plain", "outside git, the folder itself");
+  });
+
   it("never writes into the handoff folder", () => {
     const { dir, write, hook } = setup();
     write("a.md", "## Objetivo\nX\n", 1);
@@ -149,5 +197,16 @@ describe("resume notes in the store", () => {
     assert.deepEqual(store.snapshot().resumes, [record]);
     store.putResumes({ ...record, notes: [] });
     assert.deepEqual(store.snapshot().resumes, []);
+  });
+
+  it("moves a project's record to the archive once all its notes ended before the cutoff, and keeps one still offered", () => {
+    const store = testStore();
+    const ended = { id: SHOP, name: "shop", dir: "/work/shop", at: "2026-01-01T09:00:00.000Z", notes: [{ writtenAt: "2026-01-01T08:00:00.000Z", expiresAt: "2026-01-03T08:00:00.000Z", command: "/load" }] };
+    const kept = { ...ended, id: projectId("/work/pay"), name: "pay", dir: "/work/pay", notes: [...ended.notes, { writtenAt: "2026-03-10T08:00:00.000Z", expiresAt: "2026-03-12T08:00:00.000Z", command: "/load 1" }] };
+    store.putResumes(ended);
+    store.putResumes(kept);
+    store.archiveOlderThan(new Date("2026-03-01T00:00:00.000Z"));
+    assert.deepEqual(store.listResumes().map((r) => r.name), ["pay"]);
+    assert.ok(fs.existsSync(store.paths.archived(store.paths.resumes(SHOP))), "moved, not deleted");
   });
 });

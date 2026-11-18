@@ -18,6 +18,20 @@ export function locateProject(dir: string): ProjectLocation {
 }
 
 /**
+ * The top folder of the checkout holding `dir` (the nearest folder above it with a `.git`), or, in a
+ * linked worktree, of its repository's main checkout; undefined outside git.
+ */
+export function repositoryRoot(dir: string): string | undefined {
+  for (let at = path.resolve(dir); ; at = path.dirname(at)) {
+    const dotGit = path.join(at, ".git");
+    const stat = statOrUndefined(dotGit);
+    if (stat?.isDirectory()) return at;
+    if (stat?.isFile()) return linkedMain(at, dotGit) ?? at;
+    if (stat || path.dirname(at) === at) return undefined;
+  }
+}
+
+/**
  * The main checkout's counterpart of `dir` when the nearest `.git` above it is a linked worktree's
  * (a file naming `<common>/worktrees/<name>`, which holds `commondir`); undefined for anything else:
  * a main checkout, a submodule (its gitdir has no `commondir`), a worktree of a bare repository (no

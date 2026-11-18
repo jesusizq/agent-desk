@@ -17,6 +17,7 @@ import {
   type ConversationEntry,
   type Handoff,
   type ProjectResumes,
+  type ResumeNote,
   type ProjectScan,
   type Question,
   type QuestionGroup,
@@ -1440,6 +1441,28 @@ export class Store {
     return this.readAll(this.paths.resumesDir, readProjectResumes, problems);
   }
 
+  /**
+   * Replaces a project's notes with what `read` finds now, read and written under the record's lock,
+   * so that of two adapters reading their source at different moments the later read is kept. Writes
+   * only when the notes changed; a stored record that cannot be read is reported and replaced.
+   */
+  refreshResumes(project: Omit<ProjectResumes, "at" | "notes">, read: () => ResumeNote[], problems: string[], now = new Date()): void {
+    const file = this.paths.resumes(project.id);
+    withLock(file, () => {
+      let before: ProjectResumes | undefined;
+      let unreadable = false;
+      try {
+        before = this.getResumes(project.id);
+      } catch (error) {
+        unreadable = true;
+        problems.push(`${(error as Error).message}; replaced by the notes read now`);
+      }
+      const notes = read();
+      if (!unreadable && JSON.stringify(before?.notes ?? []) === JSON.stringify(notes)) return;
+      this.putResumes({ ...project, at: now.toISOString(), notes });
+    });
+  }
+
   // ── Handoffs ──────────────────────────────────────────────────────────
 
   putHandoff(handoff: Handoff): Handoff {
@@ -1477,7 +1500,8 @@ export class Store {
    * Moves what is older than `cutoff` out of the live store into archive/ (same layout): closed
    * questions, results with their images, and sessions that ended or whose process is gone, with
    * their agents, metrics and services; then the images nothing left shows (attached on the desk
-   * to what was archived, or never sent). Nothing is deleted; the page and the hooks stop reading it.
+   * to what was archived, or never sent), and projects' resume notes that all ended before `cutoff`.
+   * Nothing is deleted; the page and the hooks stop reading it.
    */
   archiveOlderThan(cutoff: Date): { questions: number; results: number; sessions: number; images: number } {
     const before = cutoff.toISOString();
@@ -1510,6 +1534,15 @@ export class Store {
       counts.sessions++;
     }
     counts.images = this.archiveUnshownImages(cutoff);
+    // Resume notes all ended before the cutoff: their project may never run a hook again to drop them.
+    const ended = (r: ProjectResumes | undefined) => r !== undefined && r.notes.every((n) => n.expiresAt < before);
+    for (const r of this.listResumes()) {
+      if (!ended(r)) continue;
+      const file = this.paths.resumes(r.id);
+      withLock(file, () => {
+        if (ended(this.getResumes(r.id))) this.moveToArchive(file); // not refreshed meanwhile
+      });
+    }
     return counts;
   }
 

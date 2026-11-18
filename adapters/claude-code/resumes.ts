@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONTROL } from "../../src/core/check.ts";
 import { RESUME_NOTES_MAX, RESUME_TITLE_MAX, type ResumeNote } from "../../src/core/model.ts";
-import type { ProjectLocation } from "../../src/project/locate.ts";
+import { repositoryRoot, type ProjectLocation } from "../../src/project/locate.ts";
 import { projectId } from "../../src/project/scan.ts";
 import { isCode } from "../../src/store/fsx.ts";
 import type { Store } from "../../src/store/store.ts";
@@ -99,15 +99,20 @@ export function pendingHandoffs(root: string, project: string, now: Date, proble
 }
 
 /**
+ * The handoff folder's name for a session working in `dir`, as the plugin names it: its repository's
+ * main checkout (a linked worktree's too, a subfolder's too), or the folder itself outside git.
+ */
+export function handoffFolder(dir: string): string {
+  return path.basename(repositoryRoot(dir) ?? path.resolve(dir));
+}
+
+/**
  * Records the project's pending handoffs as its resume notes, writing only when they changed, so an
  * unchanged list costs the page nothing. The page hides a note once it expires, with no hook running.
  */
 export function refreshResumes(project: ProjectLocation, store: Store, env: NodeJS.ProcessEnv, problems: string[], now = new Date()): void {
   const root = handoffRoot(env);
   if (!root) return;
-  const notes = pendingHandoffs(root, project.name, now, problems);
-  const id = projectId(project.dir);
-  const before = store.getResumes(id);
-  if (JSON.stringify(before?.notes ?? []) === JSON.stringify(notes)) return;
-  store.putResumes({ id, name: project.name, dir: project.dir, at: now.toISOString(), notes });
+  const folder = handoffFolder(project.worktree ?? project.dir);
+  store.refreshResumes({ id: projectId(project.dir), name: project.name, dir: project.dir }, () => pendingHandoffs(root, folder, now, problems), problems, now);
 }
