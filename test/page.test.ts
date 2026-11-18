@@ -3644,13 +3644,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.click("#projects button", "paused-shop");
         await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Folds and is paused?') && document.querySelectorAll('.col-needs .qrow').length === 2 && ${STILL}`);
         // Some way into the growth of the row picked up, every motion of the page is held.
-        const scrolling = await page.eval<{ needs: boolean; sessions: boolean }>(`new Promise((done) => {
+        const scrolling = await page.eval<{ needs: boolean; sessions: boolean }>(`new Promise((done, fail) => {
           const card = document.querySelector('.next');
           window.pausedCard = card;
           [...document.querySelectorAll('.col-needs .qrow')].find((r) => r.textContent.includes('Picked up and paused?')).click();
+          const end = performance.now() + 5000;
           const tick = () => {
             window.grownCard = document.querySelector('.next:not([data-leaving])');
             const growth = grownCard?.getAnimations().find((a) => a.id === 'motion' && 'height' in a.effect.getKeyframes().at(-1));
+            if (performance.now() > end) return fail(new Error('the row picked up never grew 40 ms in: a frame took longer than its whole growth'));
             if (!card.hasAttribute('data-leaving') || !(growth?.currentTime >= 40)) return requestAnimationFrame(tick);
             for (const a of document.getAnimations()) if (a.id === 'motion') a.pause();
             window.slideHold = grownCard.getAnimations().find((a) => a.effect.getKeyframes().some((k) => k.zIndex === '1'));
@@ -3680,7 +3682,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         assert.ok(of(grown, "height")[0]!.left > of(grownBefore, "height")[0]!.left, `the redraw started the card's change of height again: ${log}`);
         assert.equal(of(grown, "zIndex 2")[0]!.left, of(grown, "height")[0]!.left, `its stacking is held as long as its height changes: ${log}`);
         assert.equal(await page.eval("grownCard.getAnimations().includes(slideHold) && slideHold.playState"), "paused", `the slide's stacking is not started again: ${log}`);
-        assert.equal(of(grown, "zIndex 1")[0]?.left, of(grown, "transform")[0]?.left, `the slide's stacking ends with its slide: ${log}`);
+        assert.equal(of(grown, "zIndex 1")[0]!.left, of(grown, "transform")[0]!.left, `the slide's stacking ends with its slide: ${log}`);
         await page.eval("new Promise((done) => { for (const a of document.getAnimations()) if (a.id === 'motion') a.play(); const tick = () => (pausedCard.isConnected ? requestAnimationFrame(tick) : done()); requestAnimationFrame(tick); })");
       } finally {
         if (store.getSession(other)) store.updateSession(other, (s) => ({ ...s, state: "ended" }));
