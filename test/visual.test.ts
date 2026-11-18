@@ -386,6 +386,8 @@ describe("what the page looks like", { skip: skipped() }, () => {
     const press = (label: string, pick: string) => `(${root(label)}.querySelector('button.${pick}').getAttribute('aria-pressed') === 'true' || ${root(label)}.querySelector('button.${pick}').click())`;
     await page.inFrame("/review/", `(${press("B", "choose")}, ${press("C", "iterate")}, true)`);
     await page.inFrame("/review/", `(() => { const t = ${root("C")}.querySelector('textarea'); t.value = 'Keep the link, lose the exclamation mark'; t.dispatchEvent(new Event('input', { bubbles: true, composed: true })); return true; })()`);
+    // The note typed again is saved again, even when the screen before saved the same: Saved only once the desk has its message.
+    await frameHeard(page);
     await page.waitFor("document.querySelector('.rv-count')?.textContent === '1 of 1' && document.querySelector('.rv-saved')?.textContent.startsWith('Saved')");
   }
 
@@ -394,8 +396,23 @@ describe("what the page looks like", { skip: skipped() }, () => {
     await openReview(page, "Pay button variant", touch);
     await page.inFrame("/review/", `new Promise((r) => { const ready = () => (document.querySelectorAll('agent-desk-control').length === 7 && [...document.images].every((i) => i.complete) ? r(true) : setTimeout(ready, 50)); ready(); })`);
     // Its first open saves the progress the shim counts (no counter of its own): drawn once saved.
+    await frameHeard(page);
     await page.waitFor("document.querySelector('.rv-count')?.textContent === '0 of 2' && document.querySelector('.rv-saved')?.textContent.startsWith('Saved')");
   }
+
+  /**
+   * Returns once the desk page has handled every message the review's frame posted so far: a frame's
+   * messages reach the page in the order posted, so a mark posted after them arrives after them. Without
+   * it, Saved can be read before the frame's last change reaches the desk, which then shows Saving….
+   */
+  async function frameHeard(page: Page): Promise<void> {
+    const mark = `heard-${++heard}`;
+    // No agentDesk field: the desk leaves the mark alone.
+    await page.eval(`(addEventListener('message', function heard(e) { if (e.data?.testMark === '${mark}') (window.__heard = '${mark}', removeEventListener('message', heard)); }), true)`);
+    await page.inFrame("/review/", `(parent.postMessage({ testMark: '${mark}' }, '*'), true)`);
+    await page.waitFor(`window.__heard === '${mark}'`);
+  }
+  let heard = 0;
 
   /** A demo review open, its page drawn in its frame. */
   async function openReview(page: Page, title: string, touch = false): Promise<void> {
