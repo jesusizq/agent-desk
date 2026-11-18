@@ -156,10 +156,13 @@ describe("Claude Code hooks", () => {
     handleHook(event("Stop", { last_assistant_message: "Son avisos del linter. ¿Los quito?" }), ctx(store));
     assert.ok((store.getSession("cc-1")?.turnEndedAt ?? "") > turnEnded);
     assert.deepEqual(store.openQuestions("cc-1").map((x) => x.text), ["¿Añado esa línea?", "¿Los quito?"]);
+    const other = store.openQuestions("cc-1").find((x) => x.id !== q?.id);
     handleHook(event("Stop", { last_assistant_message: "Hecho.\n\n¿Añado esa línea?" }), ctx(store));
-    assert.deepEqual(store.openQuestions("cc-1").map((x) => x.id), [q?.id], "asked again, it is the same question, still in its place");
+    const held = store.heldQuestions();
+    assert.deepEqual(store.openQuestions("cc-1").filter((x) => !held.has(x.id)).map((x) => x.id), [q?.id], "asked again, it is the same question, still in its place");
     handleHook(event("UserPromptSubmit", { prompt: "sí, añádela" }), ctx(store));
     assert.deepEqual([store.getQuestion(q?.id ?? "")?.answer?.text, store.getQuestion(q?.id ?? "")?.setAside?.map((a) => a.text)], ["sí, añádela", ["esas frases en rojo, ¿por qué?"]]);
+    assert.deepEqual([store.getQuestion(other?.id ?? "")?.status, store.getQuestion(other?.id ?? "")?.answer], ["dismissed", undefined], "the question it replaced answers nothing");
   });
 
   it("opens a question again exactly once while the developer types the next prompt at the same time", async () => {
@@ -2072,5 +2075,139 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     assert.deepEqual(await waiter, { code: 0, stderr: "" });
     assert.equal(store.getSession("cc-c")?.state, "working");
     assert.equal(store.getSession("cc-c")?.checkReopened?.times, 1);
+  });
+
+  describe("an end that asks again replaces what was open only once it stands", () => {
+    const realStore = async () => {
+      const { Store } = await import("../src/store/store.ts");
+      return new Store(tempHome());
+    };
+    const wake = "<task-notification>build done</task-notification>";
+    /** Turn 1 asked A; a background task woke the session, and its end asked B (the round of its Stop hooks unread). */
+    const askedTwice = async (transcriptPath?: string) => {
+      const store = await realStore();
+      handleHook(event("Stop", { last_assistant_message: "Shall I fix the four of them?" }), ctx(store));
+      const a = store.openQuestions("cc-1")[0];
+      assert.ok(a);
+      handleHook(event("UserPromptSubmit", { prompt: wake }), ctx(store));
+      handleHook(event("Stop", { last_assistant_message: "Build done. Shall I fix only two?", ...(transcriptPath ? { transcript_path: transcriptPath } : {}) }), ctx(store));
+      const b = store.openQuestions("cc-1").find((q) => q.id !== a.id);
+      assert.ok(b);
+      assert.deepEqual([store.heldQuestions().has(a.id), store.heldQuestions().has(b.id)], [true, false], "Needs you shows only what the latest end asked");
+      return { store, a, b };
+    };
+    const refuse = async (store: Store, file: string) => {
+      const refused = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+      await new Promise((r) => setTimeout(r, 50));
+      const now = new Date().toISOString();
+      write(file, [...rows.refusal(REASON, now), rows.summary([REASON], now)]);
+      assert.deepEqual(await refused, { code: 0 });
+    };
+
+    it("keeps the question an end replaced when it asked again one the session had opened again, and a check refuses that end", async () => {
+      const store = await realStore();
+      handleHook(event("Stop", { last_assistant_message: "Shall I fix the four of them?" }), ctx(store));
+      const r = store.openQuestions("cc-1")[0];
+      assert.ok(r);
+      handleHook(event("UserPromptSubmit", { prompt: "why four?" }), ctx(store));
+      store.unanswered("cc-1");
+      handleHook(event("Stop", { last_assistant_message: "They are lint warnings. Shall I remove them?" }), ctx(store));
+      const a = store.openQuestions("cc-1").find((q) => q.id !== r.id);
+      assert.ok(a);
+      // A background task wakes the session; its end asks the question opened again, and a check refuses that end.
+      const file = transcript([rows.prompt(wake, at(30)), rows.said("Done. Shall I fix the four of them?", at(31))]);
+      handleHook(event("UserPromptSubmit", { prompt: wake }), ctx(store));
+      handleHook(event("Stop", { last_assistant_message: "Done.\n\nShall I fix the four of them?", transcript_path: file }), ctx(store));
+      await refuse(store, file);
+      assert.deepEqual(store.openQuestions("cc-1").map((q) => q.id), [r.id, a.id], "no question is lost");
+      assert.equal(store.heldQuestions().has(a.id), false, "it shows again in Needs you");
+    });
+
+    it("keeps what was open when the model asked through the CLI and a check refuses the end", async () => {
+      const store = await realStore();
+      handleHook(event("Stop", { last_assistant_message: "Shall I fix the four of them?" }), ctx(store));
+      const a = store.openQuestions("cc-1")[0];
+      assert.ok(a);
+      const file = transcript([rows.prompt(wake, at(30)), rows.said("Build done.", at(31))]);
+      handleHook(event("UserPromptSubmit", { prompt: wake }), ctx(store));
+      const q = store.ask({ sessionId: "cc-1", kind: "question", text: "Bars or line?", options: ["Bars", "Line"] });
+      handleHook(event("Stop", { last_assistant_message: "Build done.", transcript_path: file }), ctx(store));
+      await refuse(store, file);
+      assert.deepEqual(store.openQuestions("cc-1").map((x) => x.id), [a.id, q.id]);
+    });
+
+    it("dismisses what the end replaced once the developer answers on the desk, the round of its checks still unread", async () => {
+      const file = transcript([rows.prompt(wake, at(30)), rows.said("Build done. Shall I fix only two?", at(31))]);
+      const { store, a, b } = await askedTwice(file);
+      // A slow Stop hook still runs: the waiter delivers the answer before it reads the round.
+      const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+      await new Promise((r) => setTimeout(r, 50));
+      store.answerFromDesk(b.id, "only two");
+      assert.equal((await waiting).code, 2);
+      assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(b.id)?.status], ["dismissed", "answered"]);
+      assert.deepEqual(store.openQuestions("cc-1"), []);
+    });
+
+    it("dismisses what the end replaced, answering nothing, once the developer types in the terminal, also with no transcript to read", async () => {
+      const { store, a, b } = await askedTwice();
+      handleHook(event("UserPromptSubmit", { prompt: "only two" }), ctx(store));
+      assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(a.id)?.answer], ["dismissed", undefined], "an obsolete question takes no probable answer");
+      assert.deepEqual([store.getQuestion(b.id)?.status, store.getQuestion(b.id)?.answer?.text], ["answered", "only two"]);
+    });
+
+    it("settles at the next end what no waiter read: a refused end keeps what it replaced and loses what it asked", async () => {
+      const { store, a, b } = await askedTwice();
+      await new Promise((r) => setTimeout(r, 5));
+      handleHook(event("Stop", { last_assistant_message: "Fixed both; the tests pass.", stop_hook_active: true }), ctx(store));
+      assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(b.id)?.status], ["open", "dismissed"]);
+      assert.equal(store.heldQuestions().has(a.id), false);
+      // An end that stood is followed by a new turn: its next end dismisses what it replaced.
+      const again = await askedTwice();
+      handleHook(event("UserPromptSubmit", { prompt: wake }), ctx(again.store));
+      handleHook(event("Stop", { last_assistant_message: "Still building." }), ctx(again.store));
+      assert.deepEqual([again.store.getQuestion(again.a.id)?.status, again.store.getQuestion(again.b.id)?.status], ["dismissed", "open"]);
+    });
+
+    it("a waiter that a newer one took over reads no round: it may be the newer end's", async () => {
+      const store = await realStore();
+      const file = transcript([rows.prompt("fix the table", at(10)), rows.said("Done.", at(11))]);
+      handleHook(event("UserPromptSubmit", { prompt: "fix the table" }), ctx(store));
+      handleHook(event("Stop", { last_assistant_message: "Done.", transcript_path: file }), ctx(store));
+      // The end's waiter polls late (a loaded machine): meanwhile a check refused that end, the
+      // developer typed mid-turn, and the next end, its own waiter listening, was refused too.
+      const late = waitForAnswer("cc-1", store, { pollMs: 300, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+      await new Promise((r) => setTimeout(r, 50));
+      const first = new Date().toISOString();
+      write(file, [...rows.refusal(REASON, first), rows.summary([REASON], first), rows.prompt("and the title too", first)]);
+      handleHook(event("UserPromptSubmit", { prompt: "and the title too" }), ctx(store));
+      write(file, [rows.said("Done, title too.", new Date().toISOString())]);
+      handleHook(event("Stop", { last_assistant_message: "Done, title too.", transcript_path: file, stop_hook_active: true }), ctx(store));
+      const newer = store.listen("cc-1", process.ppid);
+      try {
+        await new Promise((r) => setTimeout(r, 5));
+        const second = new Date().toISOString();
+        write(file, [...rows.refusal(REASON, second), rows.summary([REASON], second)]);
+        const counted = store.getSession("cc-1")?.checkReopened;
+        assert.deepEqual(await late, { code: 0 });
+        assert.deepEqual([store.getSession("cc-1")?.state, store.getSession("cc-1")?.checkReopened], ["waiting", counted], "the newer end's refusal is its own waiter's to count");
+      } finally {
+        newer();
+      }
+    });
+
+    it("says its checks are read only until the waiter reads them or cannot, while it listens on", async () => {
+      const store = await realStore();
+      const file = path.join(tempHome(), "cc-1.jsonl");
+      handleHook(event("Stop", { last_assistant_message: "Fixed the type.", transcript_path: file, stop_hook_active: true }), ctx(store));
+      const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 400 }, { transcript: file, since: new Date().toISOString() });
+      await new Promise((r) => setTimeout(r, 50));
+      assert.deepEqual(store.listeners("cc-1").map((l) => l.checks), [true], "not written yet: it reads on");
+      fs.mkdirSync(file); // EISDIR: it can never be read
+      await new Promise((r) => setTimeout(r, 50));
+      assert.deepEqual(store.listeners("cc-1").map((l) => l.checks), [undefined], "it listens on, no longer reading the checks");
+      const out = await waiting;
+      assert.equal(out.code, 0);
+      assert.match(out.stderr ?? "", /could not read how the checks ended the turn .*EISDIR/);
+    });
   });
 });

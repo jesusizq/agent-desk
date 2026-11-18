@@ -184,7 +184,7 @@ export async function refresh() {
   if (savedAt) {
     // The computer does not answer and the device shows the desk it saved (sw.js): read only.
     if (next) {
-      setData({ ...next, listening: [] });
+      setData({ ...next, listening: [], checking: [] });
       ui.loaded = true;
     }
     return setOffline(true, true);

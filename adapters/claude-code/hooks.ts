@@ -110,6 +110,8 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // An answer given on the page but not yet delivered is overtaken by what was typed; a message
       // sent from the page while the session works still reaches it, at its next step.
       if (!wasWorking) store.withdrawInbox(sid, prompt);
+      // The developer wrote: the end that replaced an item stands, so that item answers nothing.
+      store.settleReplacement(sid, true, problems);
       // What was typed next may be about something else: probable, never a certain answer.
       store.closeOpen(sid, { answer: prompt, probable: true, problems });
       syncPermissionMarker(store, problems);
@@ -292,6 +294,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   // from the transcript's tail, whichever saw more (a long fix loop pushes the early ones out of it).
   const continued = optional(input.raw.stop_hook_active, "hook input.stop_hook_active", bool) === true;
   const seen = continued ? reopenedBy(stopRounds(transcriptOf(input))) : undefined;
+  settleEarlierEnd(sid, store, continued, problems);
   // The turn is over: what its calls were doing, failing in a row or waiting on, ends with it.
   store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, checkReopened: counted, ...s }) =>
     compact({
@@ -317,7 +320,8 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   // background task finishing). A turn that asks again replaces it; a report that asks nothing
   // ("still waiting for your answer") leaves it open, or the developer would lose the question.
   // One the session opened again (the reply did not answer it) stays until it is answered or asked again.
-  const replaced = () => store.closeOpen(sid, { kinds: ["waiting"], which: (q) => q.setAside === undefined && !q.checkFailing, status: "dismissed", problems });
+  // A Stop hook may still refuse this end: the replaced ones go only once it stands (settleReplacement).
+  const replaced = () => store.replaceOnceStands(sid, (q) => q.kind === "waiting" && q.setAside === undefined && !q.checkFailing, problems);
   const open = store.openQuestions(sid, problems);
   const reopened = open.filter((q) => q.setAside !== undefined);
   const asked = open.filter((q) => q.kind === "question" && q.setAside === undefined);
@@ -325,6 +329,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
     // The model asked through the CLI: the message it ended the turn with explains the question.
     // Its last paragraph is left out only when it repeats the question; anything more it says stays.
     replaced();
+    // A refusal keeps the CLI question that asks it again open, so this one goes at once.
     for (const r of reopened) if (asked.some((q) => sameWords(q.text, r.text))) store.dismiss(r.id);
     const whole = [before, last].filter(Boolean).join("\n\n");
     for (const q of asked) store.addContext(q.id, sameWords(last, q.text) ? before : whole);
@@ -334,13 +339,21 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   const offered = offeredQuestion(last, before);
   if (offered === undefined && !asksSomething(last)) return;
   const { question, context, options, several } = offered ?? freeQuestion(last, before);
-  if (reopened.some((r) => sameWords(r.text, question))) {
-    replaced();
-    return;
-  }
-  // A Stop hook may still refuse this end, and the item with it: the earlier ones are replaced only
-  // once the end stands (recordTurnCheck), so a refused end loses none of them.
+  replaced();
+  if (reopened.some((r) => sameWords(r.text, question))) return;
   store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: question, context: context || undefined, options: options.length > 0 ? options : undefined, several: several || undefined }));
+}
+
+/**
+ * At a turn's end, what the session's previous end left unsettled, its checks' reading not recorded
+ * (no waiter read them, or a newer end overtook it): an end refused (`stop_hook_active` now) keeps
+ * what it replaced and loses what it asked, the turn having gone on; an end followed by a new turn stood.
+ */
+function settleEarlierEnd(sid: string, store: Store, continued: boolean, problems: string[]): void {
+  const ended = store.getSession(sid)?.turnEndedAt;
+  store.settleReplacement(sid, !continued, problems);
+  if (!continued || ended === undefined) return;
+  store.closeOpen(sid, { kinds: ["waiting"], which: (q) => !q.checkFailing && q.setAside === undefined && q.askedAt >= ended, status: "dismissed", problems });
 }
 
 // ── Checks at the end of a turn ─────────────────────────────────────────
@@ -1076,12 +1089,15 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   syncFailingMarker(ctx.store, fails, problems);
 }
 
+const USAGE_KEPT = "its tokens and cost stay as last counted";
+
 /**
  * Hands `record` the tokens and cost of sub-agent `agentId` so far, summed from its transcript:
  * each hook reads only what was written since the last one (usage.ts), from where its note on the
  * session says; empty before its transcript has a line. `record` runs under the note's lock, so
  * two hooks of one agent write their tallies in the order they read them, never an older one last.
- * A transcript that cannot be read hands it no cost, and the reason goes to `problems`.
+ * A transcript that cannot be read hands it nothing: the tokens and cost last counted stay, both up
+ * to the same line, from where a later hook goes on; the reason goes to `problems`.
  */
 function withAgentUsage(input: Common, ctx: HookContext, agentId: string, transcript: string, problems: string[], record: (usage: AgentFields) => void): void {
   const key = `usage-${agentId}`;
@@ -1102,8 +1118,8 @@ function withAgentUsage(input: Common, ctx: HookContext, agentId: string, transc
       tally = tallyTranscript(transcript, before, problems);
     } catch (error) {
       // What the hook records of the agent (its stop, its call) must not wait on its cost.
-      problems.push(`could not read the transcript ${transcript} of sub-agent ${agentId} to count its tokens and cost (${(error as Error).message}); its cost is left unknown until a hook reads it`);
-      record({ costUsd: undefined });
+      problems.push(`could not read the transcript ${transcript} of sub-agent ${agentId} to count its tokens and cost (${(error as Error).message}); ${USAGE_KEPT}`);
+      record({});
       return undefined;
     }
     record(tally ? { tokens: tally.tokens, costUsd: tally.unpriced ? undefined : Math.round(tally.costUsd * 1e6) / 1e6 } : {});
@@ -1600,17 +1616,19 @@ function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
   // comes with the notes when they were not written yet at the agent's start.
   // A workflow's agent hands its result to the script, never to the session: it joins the conversation as the agent's report.
   let result: string | undefined;
+  let unread: Error | undefined;
   try {
     result = transcript === undefined ? undefined : handedBack(readTail(transcript, TRANSCRIPT_TAIL));
   } catch (error) {
-    // Its stop is recorded all the same: an agent left working would never end on the desk.
-    problems.push(`could not read the transcript ${transcript} of sub-agent ${agentId} for the result it handed back (${(error as Error).message}); its stop is recorded without it`);
+    unread = error as Error;
   }
   const ended = result ? { activity: HANDED_BACK, activityIsCall: undefined } : { activity: last || undefined };
   const own = transcript?.endsWith(".jsonl") ? transcript : meta?.replace(/\.meta\.json$/, ".jsonl");
   const record = (usage: AgentFields) =>
     updateByRef(ctx.store, input.sessionId, agentId, (agent) => ({ ...compact({ state: "done" as const, goal: agent.goal ? undefined : label }), ...(ended.activity === undefined ? {} : ended), ...usage }));
-  if (own) withAgentUsage(input, ctx, agentId, own, problems, record);
+  // Its stop is recorded all the same: an agent left working would never end on the desk.
+  if (unread) problems.push(`could not read the transcript ${transcript} of sub-agent ${agentId} (${unread.message}); its stop is recorded without the result it handed back${own === transcript ? `, ${USAGE_KEPT}` : ""}`);
+  if (own && !(unread && own === transcript)) withAgentUsage(input, ctx, agentId, own, problems, record);
   else record({});
   if (result) {
     const sent = { from: "agent" as const, text: result, ref: agentId };
@@ -1865,6 +1883,9 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
     if (session.state === "waiting") armed = true;
     else if (armed || now() > armBy) return { code: 0 };
     if (!armed) return undefined;
+    // A newer waiter takes over before this one reads a round: one read now may be a newer end's (a
+    // prompt typed mid-turn cuts this end's own from the turn), and the answers are the newer one's.
+    if (store.listeners(sessionId).some((l) => l.pid !== process.pid && l.since > (mine ?? ""))) return { code: 0 };
     if (settle?.() === "reopened") return { code: 0 }; // a Stop hook sent it back to work: the turn goes on
     const answers = store.takeInbox(sessionId, forTheTurn(store));
     if (answers.length > 0) {
@@ -1877,8 +1898,8 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
       }
       return { code: 2, stderr: message };
     }
-    return store.listeners(sessionId).some((l) => l.pid !== process.pid && l.since > (mine ?? "")) ? { code: 0 } : undefined;
-  });
+    return undefined;
+  }, { checks: settle !== undefined });
   // What went wrong reading the turn's checks is told only where it cannot reach Claude as the developer's answer.
   const problems = settle?.problems ?? [];
   return out.code === 2 || problems.length === 0 ? out : { ...out, stderr: [out.stderr, ...problems.map((p) => `agent-desk: ${p}`)].filter(Boolean).join("\n") };
@@ -1888,11 +1909,20 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
  * Reads, while the waiter runs, how the Stop hooks of the turn's end it was started by ended the turn
  * (turnCheck), and records it once on the desk; the transcript is read again only when it grew. A
  * transcript that cannot be read ends the reading, never the wait: answers still reach the session.
+ * Once the reading ends, the waiter's listener no longer says it reads the checks (`checksRead`).
  */
 function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => TurnCheck["outcome"] | undefined) & { problems: string[] } {
   const problems: string[] = [];
   let size = -1;
   let done = false;
+  const finish = () => {
+    done = true;
+    try {
+      store.checksRead(sessionId);
+    } catch (error) {
+      problems.push(`could not record that this waiter no longer reads the turn's checks: ${(error as Error).message}`);
+    }
+  };
   const step = () => {
     if (done) return undefined;
     let rounds: StopRound[];
@@ -1903,13 +1933,13 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
       rounds = stopRounds(end.transcript);
     } catch (error) {
       if (isCode(error, "ENOENT")) return undefined; // not written yet
-      done = true;
+      finish();
       problems.push(`could not read how the checks ended the turn from ${end.transcript}: ${(error as Error).message}`);
       return undefined;
     }
     const round = endRound(rounds, end.since);
     if (round === undefined) return undefined;
-    done = true;
+    finish();
     let check: TurnCheck | undefined;
     try {
       // This end's Stop hooks have finished, the desk's own among them: the session holds the
@@ -1929,11 +1959,12 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
 
 /**
  * Listens for the session's answers while `step` finds none: each poll it returns the hook's output,
- * or undefined to wait on. Past the deadline, or aborted, the wait ends deciding nothing.
+ * or undefined to wait on. Past the deadline, or aborted, the wait ends deciding nothing. `checks`:
+ * the listener also reads how the checks of the turn's end ended, until it calls `checksRead`.
  */
-async function whileListening(sessionId: string, store: Store, options: WaitOptions, step: () => HookOutput | undefined): Promise<HookOutput> {
+async function whileListening(sessionId: string, store: Store, options: WaitOptions, step: () => HookOutput | undefined, how: { checks?: boolean } = {}): Promise<HookOutput> {
   const now = options.now ?? Date.now;
-  const release = store.listen(sessionId);
+  const release = store.listen(sessionId, process.pid, how);
   try {
     while (now() < options.deadline && !options.signal?.aborted) {
       const out = step();

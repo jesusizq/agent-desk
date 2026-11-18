@@ -240,6 +240,7 @@ function panelShows(s) {
     data.agents.filter(mine),
     asksOf(s.id),
     data.listening.includes(s.id),
+    data.checking.includes(s.id),
     data.gone.includes(s.id),
     data.services.filter(mine),
     data.results.filter(mine).map((r) => r.id),
@@ -327,8 +328,8 @@ function workingNow(s, list) {
   const agents = sessionAgents(s.id).filter((a) => a.state !== "done");
   const turn = s.state === "working";
   // A turn's end a check refused before waits while its checks run again: the turn is not over. Only
-  // its waiter reads how they end; without one the count stays until the next prompt, and says nothing now.
-  const checking = !turn && !!s.checkReopened && isLive(s) && data.listening.includes(s.id);
+  // its waiter reads how they end; once none does, the count stays until the next prompt, and says nothing now.
+  const checking = !turn && !!s.checkReopened && isLive(s) && data.checking.includes(s.id);
   if (!turn && !checking && !agents.some((a) => a.state === "working" || a.state === "waiting")) return null;
   const since = list.findLast((m) => m.from === "developer")?.at;
   return h(

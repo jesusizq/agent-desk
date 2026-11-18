@@ -86,6 +86,7 @@ export function deskState(store: Store, now = new Date(), machine: MachineSource
   const snap = store.snapshot();
   // From the records the snapshot read: a second read would report each unreadable file twice.
   const held = heldOf(snap.sessions, snap.questions, now.getTime());
+  const heard = snap.sessions.map((s) => [s.id, store.listeners(s.id, snap.problems)] as const);
   const branches = snap.sessions.flatMap((s) => {
     if (sessionFinished(s)) return [];
     const scan = snap.projects.find((p) => path.resolve(p.dir) === path.resolve(s.project.dir));
@@ -101,7 +102,8 @@ export function deskState(store: Store, now = new Date(), machine: MachineSource
     questions: snap.questions.filter((q) => !held.has(q.id)).map(({ context, ...q }) => (q.status === "open" && context !== undefined ? { ...q, context } : q)),
     now: now.toISOString(),
     gone: goneSessions(snap.sessions),
-    listening: snap.sessions.filter((s) => store.isListening(s.id, snap.problems)).map((s) => s.id),
+    listening: heard.filter(([, ls]) => ls.length > 0).map(([id]) => id),
+    checking: heard.filter(([, ls]) => ls.some((l) => l.checks)).map(([id]) => id),
     disk: diskWarnings(snap.sessions, snap.problems),
     machine: machineWarnings(snap.problems, machine),
     planForecasts: planForecasts(store.planHistory(snap.problems), now),

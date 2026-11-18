@@ -1071,7 +1071,7 @@ describe("checks at a turn's end", () => {
     return { store, set: (s: number) => (now = s) };
   };
   const at = (s: number) => new Date(Date.parse("2026-10-28T08:00:00.000Z") + s * 1000).toISOString();
-  /** At 10 an earlier turn asked A; at 20 a turn ended, its end asking B at 21. */
+  /** At 10 an earlier turn asked A; at 20 a turn ended, its end asking B at 21 and replacing A once it stands. */
   const askedAtTwoEnds = () => {
     const { store, set } = clocked();
     set(10);
@@ -1079,6 +1079,7 @@ describe("checks at a turn's end", () => {
     set(20);
     store.updateSession("s1", (s) => ({ ...s, state: "waiting", turnEndedAt: at(20) }));
     set(21);
+    store.replaceOnceStands("s1", (q) => q.id === a.id);
     const b = store.ask({ sessionId: "s1", kind: "waiting", text: "Shall I fix only two?" });
     set(25);
     return { store, set, a, b };
@@ -1089,6 +1090,7 @@ describe("checks at a turn's end", () => {
     store.recordTurnCheck("s1", { outcome: "reopened", reopened: reopened(1) }, { checkedAt: at(24) });
     assert.equal(store.getQuestion(b.id)?.status, "dismissed", "the turn went on: its end asked nothing yet");
     assert.equal(store.getQuestion(a.id)?.status, "open", "asked before the turn ended: no question is lost");
+    assert.deepEqual([store.getQuestion(a.id)?.replacedAt, store.heldQuestions().has(a.id)], [undefined, false], "and it shows again in Needs you");
     assert.equal(store.getSession("s1")?.state, "working");
   });
 
@@ -1104,6 +1106,37 @@ describe("checks at a turn's end", () => {
     set(25);
     other.recordTurnCheck("s1", { outcome: "passed" }, { checkedAt: at(24) });
     assert.equal(other.getQuestion(kept.id)?.status, "open");
+  });
+
+  it("holds what an end replaces from Needs you, and dismisses it once the developer answers on the desk", () => {
+    const { store, a, b } = askedAtTwoEnds();
+    assert.deepEqual([...store.heldQuestions()], [a.id]);
+    const stop = store.listen("s1");
+    try {
+      // A permission prompt comes mid-turn: answering it says nothing of the turn's end.
+      const p = store.ask({ sessionId: "s1", kind: "permission", text: "Bash: rm -rf dist", options: ["Allow", "Deny"] });
+      store.answerFromDesk(p.id, "Allow");
+      assert.equal(store.getQuestion(a.id)?.status, "open");
+      store.answerFromDesk(b.id, "only two");
+    } finally {
+      stop();
+    }
+    assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(a.id)?.answer], ["dismissed", undefined]);
+  });
+
+  it("tells a listener that reads the turn's checks from one that only listens, keeping when it started", () => {
+    const { store } = clocked();
+    const stop = store.listen("s1", process.pid, { checks: true });
+    try {
+      const [before] = store.listeners("s1");
+      assert.equal(before?.checks, true);
+      store.checksRead("s1");
+      assert.deepEqual(store.listeners("s1"), [{ pid: process.pid, since: before?.since }]);
+    } finally {
+      stop();
+    }
+    store.checksRead("s1");
+    assert.deepEqual(store.listeners("s1"), [], "a listener gone stays gone");
   });
 
   it("records nothing of an end's checks once a newer end of the turn was recorded", () => {

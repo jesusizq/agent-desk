@@ -149,6 +149,7 @@ export function readQuestion(value: unknown, where = "question"): Question {
     dialog: optional(f.dialog, `${where}.dialog`, bool),
     several: optional(f.several, `${where}.several`, bool),
     checkFailing: optional(f.checkFailing, `${where}.checkFailing`, bool),
+    replacedAt: optional(f.replacedAt, `${where}.replacedAt`, isoTime),
     group: optional(f.group, `${where}.group`, readGroup),
     review: optional(f.review, `${where}.review`, readReviewRef),
     past: optional(f.past, `${where}.past`, (v, w) => list(v, w, readPastDecision, PAST_SHOWN)),

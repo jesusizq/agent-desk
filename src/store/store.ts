@@ -2,7 +2,7 @@
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { compact, fields, InputError, int, isoTime, list, oneOf, optional, text } from "../core/check.ts";
+import { bool, compact, fields, InputError, int, isoTime, list, oneOf, optional, text } from "../core/check.ts";
 import { id, newId, slug } from "../core/ids.ts";
 import { addSamples, type PlanHistory } from "../core/limits.ts";
 import { type Answered, pastDecisions } from "../core/match.ts";
@@ -351,11 +351,34 @@ export class Store {
   }
 
   /**
-   * Questions still being written, not to be shown yet. A session that died, or a turn that never
-   * ends, must not hide what it asked: past a few minutes it shows as it is.
+   * Questions not to be shown yet: those still being written (a session that died, or a turn that
+   * never ends, must not hide what it asked: past a few minutes it shows as it is), and those a later
+   * end of the turn replaces once it stands (`replacedAt`), which show again if a check refuses it.
    */
   heldQuestions(now = this.now().getTime(), problems?: string[]): Set<string> {
     return heldOf(this.listSessions(problems), this.openQuestions(undefined, problems), now);
+  }
+
+  /**
+   * The end of the session's turn asked again: its open items `which` picks are replaced once that end
+   * stands (settleReplacement), and held from Needs you until then, so an end a check refuses loses none.
+   */
+  replaceOnceStands(sessionId: string, which: (q: Question) => boolean, problems?: string[]): void {
+    const at = this.stamp();
+    for (const q of this.openQuestions(sessionId, problems)) {
+      if (which(q)) this.changeQuestion(q.id, (cur) => (cur.status === "open" ? { ...cur, replacedAt: at } : cur));
+    }
+  }
+
+  /**
+   * Settles the replacement an end of the session's turn left waiting (replaceOnceStands): the end
+   * stood, and the items it replaced are dismissed; or a check refused it, and they stay open, shown again.
+   */
+  settleReplacement(sessionId: string, stands: boolean, problems?: string[]): Question[] {
+    const replaced = (q: Question) => q.replacedAt !== undefined;
+    if (stands) return this.closeOpen(sessionId, compact({ which: replaced, status: "dismissed" as const, problems }));
+    const kept = this.openQuestions(sessionId, problems).filter(replaced);
+    return kept.map((q) => this.changeQuestion(q.id, ({ replacedAt: _replaced, ...rest }) => rest));
   }
 
   openQuestions(sessionId?: string, problems?: string[]): Question[] {
@@ -428,8 +451,8 @@ export class Store {
    * Records how the checks ended the session's latest turn (TurnCheck), once they finished
    * (`checkedAt`, when known): a turn end recorded after that is a newer one, which this reading no
    * longer concerns, and nothing is recorded. Reopened, the session works again with the refusals
-   * counted on it, and a waiting item that end asked goes: the turn goes on. Any other outcome lets
-   * the end stand: a waiting item it asked replaces those still open from before it. Failing, the turn
+   * counted on it, a waiting item that end asked goes and the items it was to replace stay: the turn
+   * goes on. Any other outcome lets the end stand: the items it replaced go (settleReplacement). Failing, the turn
    * is over: the count goes, and the developer gets a waiting item saying the check still fails
    * (replacing one still open), answered like any waiting session. Passed, what a failing check left
    * is gone: the count, and an item asked before this turn ended. Unrefused, only the count goes: a
@@ -454,11 +477,10 @@ export class Store {
     const asked = (q: Question) => q.kind === "waiting" && !q.checkFailing && q.setAside === undefined && q.askedAt >= ended && (checkedAt === undefined || q.askedAt <= checkedAt);
     if (check.outcome === "reopened") {
       if (session.state !== "ended") this.closeOpen(sessionId, compact({ which: asked, status: "dismissed" as const, problems }));
+      this.settleReplacement(sessionId, false, problems);
       return undefined;
     }
-    if (this.openQuestions(sessionId, problems).some(asked)) {
-      this.closeOpen(sessionId, compact({ kinds: ["waiting"] as const, which: (q: Question) => !q.checkFailing && q.setAside === undefined && q.askedAt < ended, status: "dismissed" as const, problems }));
-    }
+    this.settleReplacement(sessionId, true, problems);
     if (check.outcome === "unrefused") {
       const said = check.said?.trim();
       if (said) for (const q of this.openQuestions(sessionId, problems)) if (q.checkFailing) this.changeQuestion(q.id, (cur) => (cur.status === "open" ? { ...cur, context: withLater(cur.context, said) } : cur));
@@ -558,7 +580,7 @@ export class Store {
    * Closes an open question with the developer's answer and puts it in the session's inbox,
    * exactly as typed. Refused unless the session takes it now (`acceptsMessages`), so an answer
    * never waits in an inbox to reach a later, unrelated turn. If the inbox write fails the question
-   * is reopened.
+   * is reopened. An answer to what the session waits on settles its latest end's replacement as standing.
    */
   answerFromDesk(questionId: string, text: string, images: string[] = []): Question {
     if (text.trim() === "" && images.length === 0) throw new InputError("the answer is empty");
@@ -583,6 +605,15 @@ export class Store {
         throw new AggregateError([error, rollback], `could not deliver the answer to session ${answered.sessionId}, nor reopen question ${questionId}`);
       }
       throw new Error(`could not deliver the answer to session ${answered.sessionId}; the question is open again`, { cause: error });
+    }
+    // The developer answered what the session waits on: its end stands, and what that end replaced goes.
+    // A permission prompt or a dialog comes mid-turn, which says nothing about the turn's end.
+    if (answered.kind !== "permission" && !answered.dialog) {
+      try {
+        this.settleReplacement(answered.sessionId, true);
+      } catch (error) {
+        throw new Error(`the answer reached session ${answered.sessionId}, but the questions its latest end replaced could not be dismissed; they go at its next end or prompt`, { cause: error });
+      }
     }
     return answered;
   }
@@ -707,14 +738,27 @@ export class Store {
    * Marks the session as taking answers from the desk while this process waits for them.
    * Returns the function that withdraws the mark.
    */
-  listen(sessionId: string, me = process.pid): () => void {
-    const file = path.join(this.paths.sessionInbox(sessionId), `.listener.${me}.json`);
-    writeJson(file, compact({ pid: me, start: procInfo(me)?.start, since: this.stamp() }));
+  listen(sessionId: string, me = process.pid, how: { checks?: boolean } = {}): () => void {
+    const file = this.listenerFile(sessionId, me);
+    writeJson(file, compact({ pid: me, start: procInfo(me)?.start, since: this.stamp(), checks: how.checks || undefined }));
     return () => fs.rmSync(file, { force: true });
   }
 
-  /** Live processes listening for this session's answers, oldest first. */
-  listeners(sessionId: string, problems?: string[]): { pid: number; since: string }[] {
+  /** The listener `me` has stopped reading how the checks of the turn's end ended (`listen`'s `checks`); it listens on. */
+  checksRead(sessionId: string, me = process.pid): void {
+    const file = this.listenerFile(sessionId, me);
+    const raw = readJson(file);
+    if (raw === undefined) return; // no longer listening
+    const { checks: _checks, ...rest } = fields(raw, file);
+    writeJson(file, rest);
+  }
+
+  private listenerFile(sessionId: string, me: number): string {
+    return path.join(this.paths.sessionInbox(sessionId), `.listener.${me}.json`);
+  }
+
+  /** Live processes listening for this session's answers, oldest first; `checks` while one reads how the checks of the turn's end ended. */
+  listeners(sessionId: string, problems?: string[]): { pid: number; since: string; checks?: true }[] {
     const dir = this.paths.sessionInbox(sessionId);
     let names: string[];
     try {
@@ -725,7 +769,7 @@ export class Store {
       problems.push(`listeners of session ${sessionId} (${dir}): ${(error as Error).message}`);
       return [];
     }
-    const live: { pid: number; since: string }[] = [];
+    const live: { pid: number; since: string; checks?: true }[] = [];
     for (const name of names.filter((n) => /^\.listener\.\d+\.json$/.test(n))) {
       const file = path.join(dir, name);
       try {
@@ -733,7 +777,8 @@ export class Store {
         if (raw === undefined) continue; // withdrawn since the listing
         const f = fields(raw, file);
         const pid = int(f.pid, `${file}.pid`, 1);
-        if (isAlive(pid, f.start === undefined ? undefined : text(f.start, `${file}.start`, 100))) live.push({ pid, since: isoTime(f.since, `${file}.since`) });
+        const checks = optional(f.checks, `${file}.checks`, bool) === true;
+        if (isAlive(pid, f.start === undefined ? undefined : text(f.start, `${file}.start`, 100))) live.push(compact({ pid, since: isoTime(f.since, `${file}.since`), checks: checks || undefined }));
       } catch (error) {
         if (!problems) throw error;
         problems.push((error as Error).message);
@@ -1838,13 +1883,14 @@ export class Store {
 
 const ENDED: ReadonlySet<Agent["state"]> = new Set(["done", "failed"]);
 
-/** Of these questions, those still being written by a live session (Store.heldQuestions), from records already read. */
+/** Of these questions, those a live session still writes or a later end replaces (Store.heldQuestions), from records already read. */
 export function heldOf(sessions: readonly Session[], questions: readonly Question[], now: number): Set<string> {
   const byId = new Map(sessions.map((s) => [s.id, s]));
   const held = questions.filter((q) => {
     const s = byId.get(q.sessionId);
     const live = s !== undefined && !sessionFinished(s);
     if (q.status !== "open" || !live) return false;
+    if (q.replacedAt !== undefined) return true;
     return q.writing === true && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
   });
   return new Set(held.map((q) => q.id));

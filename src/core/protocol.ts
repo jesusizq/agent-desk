@@ -148,6 +148,12 @@ export type Question = {
    * without passing): a waiting item that says so, its context the check's latest refusal.
    */
   checkFailing?: boolean;
+  /**
+   * When a later end of its session's turn asked again while it was open: it is dismissed once that
+   * end stands (no check refuses it, or the developer answers or writes), and stays open if a check
+   * refuses it. Held from Needs you meanwhile.
+   */
+  replacedAt?: string;
   /** Asked together with other questions (one dialog), which waits until every one of them is answered. */
   group?: QuestionGroup;
   /**
@@ -571,6 +577,8 @@ export type DeskState = {
   planForecasts: PlanForecast[];
   /** Sessions with a listener waiting for answers from the desk right now. */
   listening: string[];
+  /** Of those, the sessions whose listener still reads how the checks of their turn's end ended. */
+  checking: string[];
   disk: DiskWarning[];
   /** This machine's readings past their limits; empty while it is healthy. */
   machine: MachineWarning[];

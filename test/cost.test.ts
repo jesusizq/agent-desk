@@ -171,18 +171,25 @@ describe("agent cost", () => {
     assert.equal(only(store).tokens, 24_669 + 24_575);
   });
 
-  it("records a sub-agent's stop when its transcript cannot be read, its cost unknown and the reason told", () => {
+  it("records a sub-agent's stop when its transcript cannot be read, its tokens and cost as last counted and the reason told once", () => {
     const { store, own, ctx, event } = subagent();
     fs.writeFileSync(own, `${reply("m1", "claude-opus-5-5", opus(2, 24_474, 0, 193))}\n`);
     handleHook(event("PostToolUse", { agent_id: "a1", tool_name: "Bash", tool_input: { command: "npm test" } }), ctx);
-    assert.equal(only(store).tokens, 24_669);
+    const counted = only(store);
+    assert.equal(counted.tokens, 24_669);
+    near(counted.costUsd, 0.126238);
     // A folder where its transcript should be: opening it works, reading it fails (EISDIR).
     fs.rmSync(own);
     fs.mkdirSync(own);
+    const call = handleHook(event("PostToolUse", { agent_id: "a1", tool_name: "Bash", tool_input: { command: "npm test" } }), ctx);
+    assert.deepEqual([only(store).tokens, only(store).costUsd], [counted.tokens, counted.costUsd], "both stay as counted up to the same line");
+    assert.match(call.stderr ?? "", /could not read the transcript .*agent-a1\.jsonl of sub-agent a1 to count its tokens and cost \(EISDIR.*\); its tokens and cost stay as last counted/);
     const out = handleHook(event("SubagentStop", { agent_id: "a1", agent_type: "general-purpose", agent_transcript_path: own, last_assistant_message: "Fixed." }), ctx);
     const done = only(store);
-    assert.deepEqual([done.state, done.activity, done.costUsd], ["done", "Fixed.", undefined]);
-    assert.match(out.stderr ?? "", /could not read the transcript .*agent-a1\.jsonl of sub-agent a1 to count its tokens and cost \(EISDIR/);
+    assert.deepEqual([done.state, done.activity, done.tokens, done.costUsd], ["done", "Fixed.", counted.tokens, counted.costUsd]);
+    const told = (out.stderr ?? "").split("\n").filter((l) => l.includes("could not read the transcript"));
+    assert.equal(told.length, 1, "one unreadable transcript, told once");
+    assert.match(told[0] ?? "", /agent-a1\.jsonl of sub-agent a1 \(EISDIR.*\); its stop is recorded without the result it handed back, its tokens and cost stay as last counted$/);
   });
 
   it("keeps an adapter's notes inside the session's folder of the store, private", () => {
