@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { procInfo } from "../src/core/proc.ts";
 import { Push } from "../src/server/push.ts";
-import { createDeskServer, deskState, diskWarnings } from "../src/server/server.ts";
+import { createDeskServer, deskState, diskWarnings, pushNewQuestions, recordPlanUsage } from "../src/server/server.ts";
 import type { Session } from "../src/core/model.ts";
 import type { Store } from "../src/store/store.ts";
 import { projectId } from "../src/project/scan.ts";
@@ -519,6 +519,55 @@ describe("PIN in front of remote access", () => {
   });
 });
 
+describe("unreadable session files", () => {
+  it("answers the state with a malformed and a truncated session file counted as unreadable, and the other sessions' questions shown", async () => {
+    const own = testStore();
+    addSession(own, "s1");
+    addSession(own, "s2");
+    const shown = own.ask({ sessionId: "s1", kind: "question", text: "Which layout?" });
+    const held = own.ask({ sessionId: "s2", kind: "question", text: "Still writing?", writing: true });
+    fs.writeFileSync(own.paths.session("broken"), JSON.stringify({ id: "broken", provider: 7 }));
+    fs.writeFileSync(own.paths.session("cut"), '{"id":"cut","provider":"Test","proj');
+    const desk = await serve(own);
+    try {
+      const res = await fetch(desk.base + "/api/state");
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as { sessions: { id: string }[]; questions: { id: string }[]; problems: string[] };
+      assert.deepEqual(data.sessions.map((s) => s.id).sort(), ["s1", "s2"]);
+      // The test store's clock is long past, so the desk's real clock shows the question being written too.
+      assert.deepEqual(data.questions.map((q) => q.id).sort(), [shown.id, held.id].sort());
+      assert.equal(data.problems.length, 2, `each unreadable file counted once: ${data.problems.join(" | ")}`);
+      assert.ok(data.problems.some((p) => p.includes("broken.json")) && data.problems.some((p) => p.includes("cut.json")));
+      const writing = deskState(own, new Date(Date.parse(held.askedAt) + 1000), QUIET_MACHINE);
+      assert.deepEqual(writing.questions.map((q) => q.id), [shown.id], "a question still being written stays held");
+      assert.equal(writing.problems.length, 2);
+      const problems: string[] = [];
+      assert.deepEqual([...own.heldQuestions(Date.parse(held.askedAt) + 1000, problems)], [held.id]);
+      assert.equal(problems.length, 2);
+    } finally {
+      await desk.close();
+    }
+  });
+
+  it("keeps telling the phones about new questions while a session file is unreadable", async () => {
+    const own = testStore();
+    addSession(own, "s1");
+    const push = new Push(own.paths.push);
+    const check = pushNewQuestions(own, push, () => Promise.reject(new Error("no subscription, no send")));
+    fs.writeFileSync(own.paths.session("cut"), '{"id":"cut"');
+    own.ask({ sessionId: "s1", kind: "question", text: "Ready?" });
+    await check();
+  });
+
+  it("keeps recording the plan's usage while a metrics file is unreadable", () => {
+    const own = testStore();
+    addSession(own, "s1");
+    own.mergeMetrics({ sessionId: "s1", planWindows: [{ label: "5 h", percent: 42 }] });
+    fs.writeFileSync(own.paths.metrics("cut"), '{"sessionId":"cut","planW');
+    recordPlanUsage(own);
+    assert.deepEqual(Object.keys(own.planHistory()), ["5 h"], "the readable report is recorded");
+  });
+});
 
 describe("disk warnings", () => {
   it("name only the projects of sessions still running, not one whose process is gone or one that ended", () => {

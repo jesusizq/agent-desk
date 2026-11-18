@@ -17,7 +17,7 @@ import { liveServices } from "../core/ports.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
-import { IMAGE_MAX_BYTES, IMAGE_TYPES, readReviewChange, StaleReview, type Store, Undeliverable } from "../store/store.ts";
+import { heldOf, IMAGE_MAX_BYTES, IMAGE_TYPES, readReviewChange, StaleReview, type Store, Undeliverable } from "../store/store.ts";
 import { type FeedOptions, StateFeed } from "./feed.ts";
 import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
 import { type Access, deskOrigin, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, reviewHeaders, send, sendJson, writeAllowed } from "./security.ts";
@@ -84,7 +84,8 @@ const BUILD = new Date().toISOString();
 
 export function deskState(store: Store, now = new Date(), machine: MachineSources = MACHINE): DeskState {
   const snap = store.snapshot();
-  const held = store.heldQuestions(now.getTime());
+  // From the records the snapshot read: a second read would report each unreadable file twice.
+  const held = heldOf(snap.sessions, snap.questions, now.getTime());
   const branches = snap.sessions.flatMap((s) => {
     if (sessionFinished(s)) return [];
     const scan = snap.projects.find((p) => path.resolve(p.dir) === path.resolve(s.project.dir));
@@ -445,8 +446,10 @@ const PUSH_EVERY_MS = 5_000;
  */
 export function pushNewQuestions(store: Store, push: Push, post: typeof fetch = fetch): () => Promise<void> {
   const shown = () => {
-    const held = store.heldQuestions();
-    return store.openQuestions().filter((q) => !held.has(q.id));
+    // Unreadable files are named on the page (deskState); the phones need only the count of the rest.
+    const problems: string[] = [];
+    const held = store.heldQuestions(undefined, problems);
+    return store.openQuestions(undefined, problems).filter((q) => !held.has(q.id));
   };
   const known = new Set(shown().map((q) => q.id));
   return async () => {
@@ -460,7 +463,8 @@ export function pushNewQuestions(store: Store, push: Push, post: typeof fetch = 
 
 /** Keeps how the plan windows fill, from the freshest report of any session. */
 export function recordPlanUsage(store: Store): void {
-  const latest = store.listMetrics().filter((m) => m.planWindows).sort((a, b) => a.at.localeCompare(b.at)).at(-1);
+  // An unreadable metrics file is named on the page (deskState); the freshest readable report is kept.
+  const latest = store.listMetrics([]).filter((m) => m.planWindows).sort((a, b) => a.at.localeCompare(b.at)).at(-1);
   if (latest?.planWindows) store.recordPlan(latest.planWindows, latest.at);
 }
 

@@ -345,14 +345,8 @@ export class Store {
    * Questions still being written, not to be shown yet. A session that died, or a turn that never
    * ends, must not hide what it asked: past a few minutes it shows as it is.
    */
-  heldQuestions(now = this.now().getTime()): Set<string> {
-    const sessions = new Map(this.listSessions().map((s) => [s.id, s]));
-    const held = this.openQuestions().filter((q) => {
-      const s = sessions.get(q.sessionId);
-      const live = s !== undefined && !sessionFinished(s);
-      return q.writing === true && live && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
-    });
-    return new Set(held.map((q) => q.id));
+  heldQuestions(now = this.now().getTime(), problems?: string[]): Set<string> {
+    return heldOf(this.listSessions(problems), this.openQuestions(undefined, problems), now);
   }
 
   openQuestions(sessionId?: string, problems?: string[]): Question[] {
@@ -693,7 +687,9 @@ export class Store {
       names = fs.readdirSync(dir);
     } catch (error) {
       if (isCode(error, "ENOENT")) return [];
-      throw error;
+      if (!problems) throw error;
+      problems.push(`listeners of session ${sessionId} (${dir}): ${(error as Error).message}`);
+      return [];
     }
     const live: { pid: number; since: string }[] = [];
     for (const name of names.filter((n) => /^\.listener\.\d+\.json$/.test(n))) {
@@ -1792,6 +1788,18 @@ export class Store {
 }
 
 const ENDED: ReadonlySet<Agent["state"]> = new Set(["done", "failed"]);
+
+/** Of these questions, those still being written by a live session (Store.heldQuestions), from records already read. */
+export function heldOf(sessions: readonly Session[], questions: readonly Question[], now: number): Set<string> {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const held = questions.filter((q) => {
+    const s = byId.get(q.sessionId);
+    const live = s !== undefined && !sessionFinished(s);
+    return q.status === "open" && q.writing === true && live && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
+  });
+  return new Set(held.map((q) => q.id));
+}
+
 /** Sub-agents named in an error, so a long session's list stays readable. */
 const KNOWN_SHOWN = 10;
 /** When the agent was last launched or resumed. */
