@@ -2069,26 +2069,30 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     });
 
     it("swaps the large card for a picked question: the old card folds away, never a row painted over the new one", async () => {
-      const page = await open();
-      await page.waitFor(STILL);
-      // Frozen mid-way: the old question's row opens at a row's height below the new card, which nothing covers.
-      const midway = (pick: string) =>
-        page.eval<Record<string, boolean>>(`(() => {
-          const old = document.querySelector('.next').dataset.flip;
-          const ends = (a) => a.effect?.getComputedTiming().iterations !== Infinity;
-          ${pick};
-          for (const a of document.getAnimations().filter(ends)) (a.pause(), (a.currentTime = 140));
-          const next = document.querySelector('.next:not([data-leaving])').getBoundingClientRect();
-          const back = document.querySelector('.qrow[data-flip="' + old + '"]');
-          const row = back.getBoundingClientRect();
-          const hit = document.elementFromPoint(next.left + next.width / 2, next.top + 12);
-          for (const a of document.getAnimations().filter(ends)) a.finish();
-          return { rowSized: row.height <= back.getBoundingClientRect().height + 0.5, below: row.top >= next.bottom - 1, newOnTop: !!hit?.closest('.next:not([data-leaving])') };
-        })()`);
-      const clean = { rowSized: true, below: true, newOnTop: true };
-      assert.deepEqual(await midway("document.querySelector('.qrow[data-flip]').click()"), clean, "picked with a click");
-      assert.deepEqual(await midway("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }))"), clean, "picked with a key");
-      assert.deepEqual(await midway("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))"), clean, "and back");
+      // A desk of its own with a third question: on the demo's two, the key has nothing past the picked one to go
+      // to, and what earlier tests leave open on the shared desk would decide whether it does.
+      const third = (own: Store) => own.ask({ sessionId: "demo-pagos", kind: "question", text: "Retry failed webhooks for a day or a week?", options: ["A day", "A week"] });
+      await ownDesk(async (page) => {
+        await page.waitFor(STILL);
+        // Frozen mid-way: the old question's row opens at a row's height below the new card, which nothing covers.
+        const midway = (pick: string) =>
+          page.eval<Record<string, boolean>>(`(() => {
+            const old = document.querySelector('.next').dataset.flip;
+            const ends = (a) => a.effect?.getComputedTiming().iterations !== Infinity;
+            ${pick};
+            for (const a of document.getAnimations().filter(ends)) (a.pause(), (a.currentTime = 140));
+            const next = document.querySelector('.next:not([data-leaving])').getBoundingClientRect();
+            const back = document.querySelector('.qrow[data-flip="' + old + '"]');
+            const row = back.getBoundingClientRect();
+            const hit = document.elementFromPoint(next.left + next.width / 2, next.top + 12);
+            for (const a of document.getAnimations().filter(ends)) a.finish();
+            return { rowSized: row.height <= back.getBoundingClientRect().height + 0.5, below: row.top >= next.bottom - 1, newOnTop: !!hit?.closest('.next:not([data-leaving])') };
+          })()`);
+        const clean = { rowSized: true, below: true, newOnTop: true };
+        assert.deepEqual(await midway("document.querySelector('.qrow[data-flip]').click()"), clean, "picked with a click");
+        assert.deepEqual(await midway("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }))"), clean, "picked with a key");
+        assert.deepEqual(await midway("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))"), clean, "and back");
+      }, third);
     });
 
     it("answered with Ctrl+Enter, the next question's box takes the next key once its card is up", async () => {
@@ -2288,18 +2292,19 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     page.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
 
   /**
-   * A phone with a touch screen on a demo desk of its own, for a test that changes what every other
-   * test reads (results marked seen) or needs a machine of its own; the page closes before its desk.
+   * A page on a demo desk of its own, for a test that changes what every other test reads (results
+   * marked seen), needs a machine of its own, or must not see what earlier tests left on the shared
+   * desk; the page closes before its desk. A phone is 390 × 844 with a touch screen, else a 1400 × 900 window.
    */
-  async function ownPhone(test: (page: Page, own: Store) => Promise<void>, prepare: (own: Store) => void = () => {}, machine?: Parameters<typeof serve>[3]): Promise<void> {
+  async function ownDesk(test: (page: Page, own: Store) => Promise<void>, prepare: (own: Store) => void = () => {}, { machine, phone = false }: { machine?: Parameters<typeof serve>[3]; phone?: boolean } = {}): Promise<void> {
     const home = path.join(tempHome(), "store");
     execFileSync(process.execPath, [path.join(import.meta.dirname, "../scripts/demo.ts"), home]);
     const own = new Store(home);
     prepare(own);
     const desk = await serve(own, undefined, undefined, machine);
-    const page = await browser.newPage(390, 844);
+    const page = phone ? await browser.newPage(390, 844) : await browser.newPage(1400, 900);
     try {
-      await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+      if (phone) await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
       await page.goto(desk.base + "/");
       await page.waitFor("document.querySelector('.next') && document.querySelectorAll('.scard').length");
       await test(page, own);
@@ -2309,6 +2314,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     }
     assert.deepEqual(page.errors, [], "the page reports no errors");
   }
+  const ownPhone = (test: (page: Page, own: Store) => Promise<void>, prepare?: (own: Store) => void, machine?: Parameters<typeof serve>[3]) => ownDesk(test, prepare, { machine, phone: true });
   /** Whether a finger lands on the element at its centre, or at the height `y` gives from its box `r`: in the viewport, and nothing else on top. */
   const underFinger = (el: string, y = "r.y + r.height / 2") =>
     `(() => { const el = ${el}; const r = el.getBoundingClientRect(); const x = r.x + r.width / 2, y = ${y}; const top = x >= 0 && x < innerWidth && y >= 0 && y < innerHeight ? document.elementFromPoint(x, y) : null; return !!top && el.contains(top); })()`;
