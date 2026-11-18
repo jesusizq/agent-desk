@@ -18,6 +18,7 @@ import {
   type Handoff,
   type ProjectResumes,
   type ResumeNote,
+  type WrittenResumes,
   type ProjectScan,
   type Question,
   type QuestionGroup,
@@ -1423,7 +1424,7 @@ export class Store {
   // ── Resume notes ──────────────────────────────────────────────────────
 
   /** A project's notes as its adapter read them; a project left with none has no file. */
-  putResumes(resumes: ProjectResumes): ProjectResumes {
+  putResumes(resumes: WrittenResumes): ProjectResumes {
     const next = readProjectResumes(resumes);
     const file = this.paths.resumes(next.id);
     if (next.notes.length) writeJson(file, next);
@@ -1445,9 +1446,10 @@ export class Store {
    * Replaces a project's notes with what `read` finds now, read and written under the record's lock,
    * so that of two adapters reading their source at different moments the later read is kept. Writes
    * only when the notes changed; a stored record that cannot be read is reported and replaced, or
-   * removed when no notes are read now. `read` gets the stored record; notes left empty remove it.
+   * removed when no notes are read now. `read` gets the stored record; notes left empty remove it. A
+   * record another source wrote (same id) belongs to its adapter: it is reported and left, unread.
    */
-  refreshResumes(project: Omit<ProjectResumes, "at" | "notes">, read: (stored: ProjectResumes | undefined) => ResumeNote[], problems: string[], now = new Date()): void {
+  refreshResumes(project: Omit<WrittenResumes, "at" | "notes">, read: (stored: ProjectResumes | undefined) => ResumeNote[], problems: string[], now = new Date()): void {
     const file = this.paths.resumes(project.id);
     withLock(file, () => {
       let before: ProjectResumes | undefined;
@@ -1456,6 +1458,10 @@ export class Store {
         before = this.getResumes(project.id);
       } catch (error) {
         unreadable = (error as Error).message;
+      }
+      if (before?.source !== undefined && before.source !== project.source) {
+        problems.push(`${file}: written by ${before.source}, not ${project.source}; left as it is, so ${project.source}'s notes for ${project.dir} are not recorded`);
+        return;
       }
       const notes = read(before);
       if (unreadable !== undefined) problems.push(`${unreadable}; ${notes.length ? "replaced by the notes read now" : "removed, since no notes are read now"}`);

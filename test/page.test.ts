@@ -604,7 +604,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
   it("offers a project's pending handoffs from the strip, each with its age and its command copied with a click, and hides one past its end", async () => {
     const hour = 3600_000;
     const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
-    const resumes = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", at: iso(0), notes: [
+    const resumes = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", source: "test-notes", at: iso(0), notes: [
       { title: "Finish the pay page <b>now</b>", writtenAt: iso(-3 * hour), expiresAt: iso(45 * hour), command: "/load 1" },
       { writtenAt: iso(-5 * hour), expiresAt: iso(43 * hour), command: "/load 2" },
       { title: "Expired since", writtenAt: iso(-49 * hour), expiresAt: iso(-hour), command: "/load 3" },
@@ -632,7 +632,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
   it("shows under a project's filter the handoffs its sessions file under, named after another folder", async () => {
     const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
     // A session in the repository's subfolder: its filter says "shop-ui", its handoffs are the repository's.
-    const resumes = { id: "shop-0badc0de", name: "shop", dir: "/home/demo/Projects/shop", at: iso(0), notes: [{ title: "Wire the cart", writtenAt: iso(-3600_000), expiresAt: iso(40 * 3600_000), command: "/load" }] };
+    const resumes = { id: "shop-0badc0de", name: "shop", dir: "/home/demo/Projects/shop", source: "test-notes", at: iso(0), notes: [{ title: "Wire the cart", writtenAt: iso(-3600_000), expiresAt: iso(40 * 3600_000), command: "/load" }] };
     store.putResumes(resumes);
     store.upsertSession({ id: "in-subfolder", provider: "Test", project: { name: "shop-ui", dir: "/home/demo/Projects/shop/shop-ui" }, resumesId: resumes.id, title: "subfolder work", state: "waiting" });
     try {
@@ -3079,7 +3079,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
     it("reminds of the handoffs waiting to be resumed, a line opening its project's list", async () => {
       const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
-      const resumes = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", at: iso(0), notes: [{ title: "Pick up the pay page", writtenAt: iso(-10 * 3600_000), expiresAt: iso(38 * 3600_000), command: "/load" }] };
+      const resumes = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", source: "test-notes", at: iso(0), notes: [{ title: "Pick up the pay page", writtenAt: iso(-10 * 3600_000), expiresAt: iso(38 * 3600_000), command: "/load" }] };
       store.putResumes(resumes);
       try {
         const page = await openAway(600);
@@ -3096,8 +3096,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     it("opens every project's handoffs from the resumes group's \"more\" when those hidden span several", async () => {
       const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
       const note = (title: string, hoursAgo: number, command: string) => ({ title, writtenAt: iso(-hoursAgo * 3600_000), expiresAt: iso((48 - hoursAgo) * 3600_000), command });
-      const shop = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", at: iso(0), notes: [note("Shop newest", 1, "/load 1"), note("Shop older", 5, "/load 2")] };
-      const billing = { id: "billing-0badc0de", name: "billing", dir: "/home/demo/Projects/billing", at: iso(0), notes: [note("Billing new", 2, "/load 1"), note("Billing oldest", 9, "/load 2")] };
+      const shop = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", source: "test-notes", at: iso(0), notes: [note("Shop newest", 1, "/load 1"), note("Shop older", 5, "/load 2")] };
+      const billing = { id: "billing-0badc0de", name: "billing", dir: "/home/demo/Projects/billing", source: "test-notes", at: iso(0), notes: [note("Billing new", 2, "/load 1"), note("Billing oldest", 9, "/load 2")] };
       store.putResumes(shop);
       store.putResumes(billing);
       try {

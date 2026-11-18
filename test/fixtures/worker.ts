@@ -61,7 +61,7 @@ if (task === "increment") {
 } else if (task === "slow-resumes" || task === "corrupt-resumes") {
   // Holds a project's resumes lock for `count` ms, saying so in <home>/reading: a refresh whose read of
   // its source is slow, writing the notes of <home>/resumes.json, or a writer leaving a record that fails validation.
-  const { project, notes } = JSON.parse(fs.readFileSync(path.join(home, "resumes.json"), "utf8")) as { project: { id: string; name: string; dir: string }; notes: ResumeNote[] };
+  const { project, notes } = JSON.parse(fs.readFileSync(path.join(home, "resumes.json"), "utf8")) as { project: { id: string; name: string; dir: string; source: string }; notes: ResumeNote[] };
   const hold = () => {
     fs.writeFileSync(path.join(home, "reading"), "");
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(count));

@@ -8,9 +8,10 @@ import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { handleHook, type HookContext, readHookInput } from "../adapters/claude-code/hooks.ts";
 import { handoffFolder, objective, pendingHandoffs, RESUMES_SOURCE } from "../adapters/claude-code/resumes.ts";
-import { readProjectResumes, type ResumeNote } from "../src/core/model.ts";
+import { type ProjectResumes, readProjectResumes, type ResumeNote } from "../src/core/model.ts";
 import { projectId } from "../src/project/scan.ts";
 import { StorePaths } from "../src/store/paths.ts";
+import type { Store } from "../src/store/store.ts";
 import { gitIn, tempHome, testStore } from "./helpers.ts";
 
 const run = promisify(execFile);
@@ -26,7 +27,7 @@ const note = (title: string, command: string): ResumeNote => ({ title, writtenAt
  * Another process holding the project's resumes lock for a second (fixtures/worker.ts): `reading`
  * once it holds it, `done` once it wrote and let go.
  */
-function holding(home: string, task: "slow-resumes" | "corrupt-resumes", project: { id: string; name: string; dir: string }, notes: ResumeNote[]) {
+function holding(home: string, task: "slow-resumes" | "corrupt-resumes", project: { id: string; name: string; dir: string; source: string }, notes: ResumeNote[]) {
   fs.writeFileSync(path.join(home, "resumes.json"), JSON.stringify({ project, notes }));
   const done = run(process.execPath, [WORKER, home, task, "1000"]);
   const reading = (async () => {
@@ -36,6 +37,13 @@ function holding(home: string, task: "slow-resumes" | "corrupt-resumes", project
     }
   })();
   return { reading, done };
+}
+
+/** A record as written before records named their source: straight into its file, as no writer can now. */
+function putUnsourced(store: Store, record: Omit<ProjectResumes, "source">): void {
+  const file = store.paths.resumes(record.id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(record));
 }
 
 /** The folder name the plugin's loader (`project_name`) gives `cwd`, asking git as it does. */
@@ -169,7 +177,7 @@ describe("pending handoffs", () => {
   it("reads the notes and writes them under the record's lock: of two overlapping refreshes, the later read is what stays", async () => {
     const home = tempHome();
     const store = testStore(home);
-    const project = { id: SHOP, name: "shop", dir: "/work/shop" };
+    const project = { id: SHOP, name: "shop", dir: "/work/shop", source: RESUMES_SOURCE };
     const stale = [note("Loaded meanwhile", "/ahorro:handoff-load 1"), note("Still pending", "/ahorro:handoff-load 2")];
     const fresh = [note("Still pending", "/ahorro:handoff-load")];
     // Another hook reads the folder before the handoff is loaded, and is slow to write what it read.
@@ -207,7 +215,7 @@ describe("pending handoffs", () => {
     assert.deepEqual(store.listResumes().map((r) => r.notes.map((n) => [n.title, n.command])), [[["Handoff a.md", "/ahorro:handoff-load"]]], "the one list the subfolder's session shows too");
   });
 
-  it("removes the list an earlier version kept for the session's own folder, a subfolder or a path through a symlink, and names the one it files under", () => {
+  it("removes, as a session starts, the list an earlier version kept for the session's own folder, a subfolder or a path through a symlink, and names the one it files under", () => {
     const cache = tempHome();
     const root = fs.realpathSync(tempHome());
     const repo = path.join(root, "shop");
@@ -222,11 +230,11 @@ describe("pending handoffs", () => {
     const store = testStore();
     // As the version before one record per handoff folder left them: numbered before b.md was loaded.
     const before = [note("Handoff b", "/ahorro:handoff-load 1"), note("Handoff a", "/ahorro:handoff-load 2")];
-    for (const dir of [sub, link]) store.putResumes({ id: projectId(dir), name: path.basename(dir), dir, at: new Date().toISOString(), notes: before });
+    for (const dir of [sub, link]) putUnsourced(store, { id: projectId(dir), name: path.basename(dir), dir, at: new Date().toISOString(), notes: before });
     // Another handoff folder's list stays.
     const other = path.join(root, "elsewhere");
-    store.putResumes({ id: projectId(other), name: "elsewhere", dir: other, at: new Date().toISOString(), notes: before });
-    const hookIn = (dir: string) => handleHook(readHookInput(JSON.stringify({ session_id: `cc-${path.basename(dir)}`, cwd: dir, hook_event_name: "Stop", last_assistant_message: "x" })), { store, env: { CLAUDE_PROJECT_DIR: dir, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined });
+    putUnsourced(store, { id: projectId(other), name: "elsewhere", dir: other, at: new Date().toISOString(), notes: before });
+    const hookIn = (dir: string) => handleHook(readHookInput(JSON.stringify({ session_id: `cc-${path.basename(dir)}`, cwd: dir, hook_event_name: "SessionStart", source: "startup" })), { store, env: { CLAUDE_PROJECT_DIR: dir, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined });
     hookIn(sub);
     hookIn(link);
     assert.deepEqual(
@@ -237,7 +245,7 @@ describe("pending handoffs", () => {
     assert.deepEqual(store.listSessions().map((x) => [x.project.name, x.resumesId]).sort(), [["link", projectId(repo)], ["web", projectId(repo)]], "each session names the list it files under");
   });
 
-  it("removes those lists when the folder's own list is refreshed, from a session in another folder, and keeps the lists it did not write or that list another folder", () => {
+  it("removes those lists when a session of the repository starts in another folder, not at every hook, and keeps the lists it did not write or that list another folder", () => {
     const cache = tempHome();
     const root = fs.realpathSync(tempHome());
     const repo = path.join(root, "shop");
@@ -255,7 +263,7 @@ describe("pending handoffs", () => {
     const at = new Date().toISOString();
     const before = [note("Handoff b", "/ahorro:handoff-load 1"), note("Handoff a", "/ahorro:handoff-load 2")];
     // Written before records named their source: this adapter's, so removed like one that names it.
-    store.putResumes({ id: projectId(sub), name: "web", dir: sub, at, notes: before });
+    putUnsourced(store, { id: projectId(sub), name: "web", dir: sub, at, notes: before });
     store.putResumes({ id: projectId(link), name: "link", dir: link, source: RESUMES_SOURCE, at, notes: before });
     // Another adapter's notes kept per project, under the id this cleanup would match: not this adapter's to remove.
     const theirs = { id: projectId(docs), name: "docs", dir: docs, source: "other-tool-notes", at, notes: [note("Their note", "other-tool resume")] };
@@ -265,7 +273,11 @@ describe("pending handoffs", () => {
     fs.mkdirSync(other);
     store.putResumes({ id: projectId(other), name: "elsewhere", dir: other, source: RESUMES_SOURCE, at, notes: before });
     // No session ever works in the subfolder or through the link: the repository's own session cleans up.
-    const out = handleHook(readHookInput(JSON.stringify({ session_id: "cc-shop", cwd: repo, hook_event_name: "Stop", last_assistant_message: "x" })), { store, env: { CLAUDE_PROJECT_DIR: repo, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined });
+    const hookIn = (event: Record<string, unknown>) => handleHook(readHookInput(JSON.stringify({ session_id: "cc-shop", cwd: repo, ...event })), { store, env: { CLAUDE_PROJECT_DIR: repo, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined });
+    // The walk reads every record and its git files: a turn's end, a prompt or a handoff written leave them.
+    for (const event of [{ hook_event_name: "Stop", last_assistant_message: "x" }, { hook_event_name: "UserPromptSubmit", prompt: "go on" }]) assert.equal(hookIn(event).stderr, undefined);
+    assert.equal(store.listResumes().length, 5, "only a session's start looks for stale lists");
+    const out = hookIn({ hook_event_name: "SessionStart", source: "startup" });
     assert.equal(out.stderr, undefined, out.stderr);
     assert.deepEqual(
       store.listResumes().map((r) => [r.name, r.source, r.notes.map((n) => n.command)]).sort(),
@@ -277,6 +289,57 @@ describe("pending handoffs", () => {
       "neither stale list offers /ahorro:handoff-load 1 in All or the away summary",
     );
     assert.deepEqual(store.getResumes(theirs.id), theirs, "another adapter's record untouched");
+  });
+
+  it("leaves another adapter's record filed under the same id, neither removed nor overwritten, saying so in one line", () => {
+    const { store, write, hook } = setup();
+    // Another adapter keys its notes by the project, as this one keys a handoff folder's: same id.
+    const theirs = { id: SHOP, name: "shop", dir: "/work/shop", source: "other-tool-notes", at: new Date().toISOString(), notes: [note("Their note", "other-tool resume")] };
+    store.putResumes(theirs);
+    const quiet = hook("Stop", { last_assistant_message: "Done." });
+    assert.deepEqual(store.getResumes(SHOP), theirs, "no handoff pending does not remove their notes");
+    assert.equal(quiet.stderr?.split("\n").length, 1, quiet.stderr);
+    assert.match(quiet.stderr ?? "", /written by other-tool-notes, not claude-code-handoffs; left as it is/);
+    write("a.md", "## Objetivo\nMine\n", 1);
+    hook("SessionStart", { source: "startup" });
+    assert.deepEqual(store.getResumes(SHOP), theirs, "a pending handoff does not overwrite them");
+  });
+
+  it("keeps a stale list whose folder cannot be named for certain, saying which, and removes the others", () => {
+    const cache = tempHome();
+    const root = fs.realpathSync(tempHome());
+    const repo = path.join(root, "shop");
+    const sub = path.join(repo, "web");
+    // A nested repository whose .git cannot be read now (a symlink loop here; a permission or I/O
+    // error alike): read as absent, it would pass for a subfolder of shop and its list be removed.
+    const nested = path.join(repo, "vendor");
+    fs.mkdirSync(sub, { recursive: true });
+    fs.mkdirSync(nested);
+    gitIn(repo, "init", "-q");
+    fs.symlinkSync(path.join(nested, ".git"), path.join(nested, ".git"));
+    fs.mkdirSync(path.join(cache, "claude-handoffs", "shop"), { recursive: true });
+    const store = testStore();
+    const at = new Date().toISOString();
+    const before = [note("Handoff b", "/ahorro:handoff-load 1"), note("Handoff a", "/ahorro:handoff-load 2")];
+    // Listed by id, so by name: link before vendor, web after it, which only a sweep going on past it removes.
+    const lists = [nested, sub, path.join(root, "link")];
+    fs.symlinkSync(repo, path.join(root, "link"));
+    for (const dir of lists) store.putResumes({ id: projectId(dir), name: path.basename(dir), dir, source: RESUMES_SOURCE, at, notes: before });
+    const out = handleHook(readHookInput(JSON.stringify({ session_id: "cc-shop", cwd: repo, hook_event_name: "SessionStart", source: "startup" })), { store, env: { CLAUDE_PROJECT_DIR: repo, XDG_CACHE_HOME: cache }, sessionProcess: () => undefined });
+    assert.deepEqual(store.listResumes().map((r) => r.dir), [nested], "kept, the others removed");
+    const lines = (out.stderr ?? "").split("\n");
+    assert.equal(lines.length, 1, out.stderr);
+    assert.ok(lines[0]?.startsWith(`agent-desk: stale list ${projectId(nested)} not removed: could not read ${path.join(nested, ".git")}: `), lines[0]);
+    assert.doesNotMatch(out.stderr ?? "", /not recorded|not looked for/, "the folder's own list was recorded, and the others looked for");
+  });
+
+  it("does not repeat at a session's start the records it cannot read, which the page reports", () => {
+    const { store, hook } = setup();
+    const far = store.paths.resumes(projectId("/work/far"));
+    fs.mkdirSync(path.dirname(far), { recursive: true });
+    fs.writeFileSync(far, "{ cut");
+    assert.equal(hook("SessionStart", { source: "startup" }).stderr, undefined);
+    assert.ok(store.snapshot().problems.some((p) => p.includes(far)), "the page still tells of it");
   });
 
   it("names the handoff folder as the plugin's loader does, from git's common dir, symlinks resolved", () => {
@@ -347,7 +410,7 @@ describe("pending handoffs", () => {
 });
 
 describe("resume notes in the store", () => {
-  const record = { id: SHOP, name: "shop", dir: "/work/shop", at: "2026-11-18T09:00:00.000Z", notes: [{ title: "Pay page", writtenAt: "2026-11-18T08:00:00.000Z", expiresAt: "2026-11-20T08:00:00.000Z", command: "/load 1" }] };
+  const record = { id: SHOP, name: "shop", dir: "/work/shop", source: "test-notes", at: "2026-11-18T09:00:00.000Z", notes: [{ title: "Pay page", writtenAt: "2026-11-18T08:00:00.000Z", expiresAt: "2026-11-20T08:00:00.000Z", command: "/load 1" }] };
 
   it("checks every field: one-line title and command, times, a valid project id", () => {
     assert.deepEqual(readProjectResumes(record), record);
@@ -357,14 +420,45 @@ describe("resume notes in the store", () => {
     bad((r) => ({ ...r, notes: [{ ...r.notes[0], writtenAt: "yesterday" }] }), /writtenAt/);
     bad((r) => ({ ...r, id: "../x" }), /id/);
     bad((r) => ({ ...r, notes: Array.from({ length: 21 }, () => r.notes[0]) }), /more than 20/);
-    assert.deepEqual(readProjectResumes({ ...record, source: "some-adapter" }), { ...record, source: "some-adapter" });
+    const { source: _source, ...unsourced } = record;
+    assert.deepEqual(readProjectResumes(unsourced), unsourced, "a record written before the field is still read");
     bad((r) => ({ ...r, source: "a b" }), /source/);
   });
 
-  it("removes a record only when it is stale as read under its lock, and reports and leaves one it cannot read", () => {
+  it("leaves a record another source wrote under the id it refreshes, unread and untouched, reporting it once", () => {
+    const store = testStore();
+    store.putResumes(record);
+    const problems: string[] = [];
+    let read = 0;
+    for (const notes of [[], record.notes.map((n) => ({ ...n, title: "Mine" }))]) store.refreshResumes({ id: SHOP, name: "shop", dir: "/work/shop", source: "another-adapter" }, () => (read++, notes), problems);
+    assert.deepEqual(store.getResumes(SHOP), record, "neither removed by no notes nor replaced by others");
+    assert.equal(read, 0, "its source is not even read");
+    assert.equal(problems.length, 2, problems.join("\n"));
+    assert.match(problems[0] ?? "", /written by test-notes, not another-adapter; left as it is, so another-adapter's notes for \/work\/shop are not recorded/);
+    // A record written before the field names none: its writer, the one adapter then, replaces it.
+    const { source: _source, ...unsourced } = record;
+    putUnsourced(store, unsourced);
+    store.refreshResumes({ id: SHOP, name: "shop", dir: "/work/shop", source: "test-notes" }, () => [], problems);
+    assert.equal(store.getResumes(SHOP), undefined);
+    assert.equal(problems.length, 2);
+  });
+
+  it("removes a record only when it is stale as read under its lock, and reports and leaves one it cannot read", async () => {
     const home = tempHome();
     const store = testStore(home);
     const problems: string[] = [];
+    // Listed stale, rewritten by another process before the lock is free: judged as rewritten.
+    store.putResumes(record);
+    const offered = [note("Written meanwhile", "/load")];
+    const refresh = holding(home, "slow-resumes", record, offered);
+    await refresh.reading;
+    const listed = store.getResumes(SHOP);
+    const old = (r: ProjectResumes) => r.notes[0]?.title === record.notes[0]?.title;
+    assert.ok(listed && old(listed), "stale as listed");
+    store.removeResumesIf(SHOP, old, problems); // waits for the refresh's lock
+    await refresh.done;
+    assert.deepEqual(store.getResumes(SHOP)?.notes, offered, "what the refresh wrote stays");
+    fs.rmSync(path.join(home, "reading"));
     store.putResumes(record);
     store.removeResumesIf(SHOP, (r) => r.dir !== record.dir, problems);
     assert.deepEqual(store.getResumes(SHOP), record, "not stale: kept");
@@ -388,7 +482,7 @@ describe("resume notes in the store", () => {
     assert.deepEqual(store.snapshot().resumes, []);
   });
 
-  const ended = { id: SHOP, name: "shop", dir: "/work/shop", at: "2026-01-01T09:00:00.000Z", notes: [{ writtenAt: "2026-01-01T08:00:00.000Z", expiresAt: "2026-01-03T08:00:00.000Z", command: "/load" }] };
+  const ended = { id: SHOP, name: "shop", dir: "/work/shop", source: "test-notes", at: "2026-01-01T09:00:00.000Z", notes: [{ writtenAt: "2026-01-01T08:00:00.000Z", expiresAt: "2026-01-03T08:00:00.000Z", command: "/load" }] };
   const cutoff = new Date("2026-03-01T00:00:00.000Z");
 
   it("archives a project's record each time its notes all ended, overwriting none archived before", () => {
@@ -406,7 +500,7 @@ describe("resume notes in the store", () => {
   it("leaves a record that was refreshed after it was listed, and reports one that turned unreadable, archiving the rest", async () => {
     const home = tempHome();
     const store = testStore(home);
-    const project = { id: SHOP, name: "shop", dir: "/work/shop" };
+    const project = { id: SHOP, name: "shop", dir: "/work/shop", source: "test-notes" };
     const offered = [note("Written meanwhile", "/ahorro:handoff-load")];
     store.putResumes(ended);
     const refresh = holding(home, "slow-resumes", project, offered);

@@ -102,10 +102,11 @@ export function pendingHandoffs(root: string, project: string, now: Date, proble
  * The folder a session working in `dir` keeps its handoffs under, named as the plugin names it from
  * git: the main checkout, when git's common dir is its `.git` folder (from a subfolder or a linked
  * worktree too), else the checkout itself (a bare repository's worktree, a submodule), symlinks
- * resolved as git resolves them; outside git, the folder itself as given.
+ * resolved as git resolves them; outside git, the folder itself as given. With `certain`, a git file
+ * that cannot be read but is not absent throws instead (see gitDirs).
  */
-export function handoffHome(dir: string): string {
-  const git = gitDirs(dir);
+export function handoffHome(dir: string, certain = false): string {
+  const git = gitDirs(dir, certain);
   if (git === undefined) return path.resolve(dir);
   return path.basename(git.common) === ".git" ? path.dirname(git.common) : git.top;
 }
@@ -135,8 +136,25 @@ export function refreshResumes(dir: string, store: Store, env: NodeJS.ProcessEnv
   const folder = path.basename(home);
   const id = projectId(home);
   store.refreshResumes({ id, name: folder || home, dir: home, source: RESUMES_SOURCE }, () => pendingHandoffs(root, folder, now, problems), problems, now);
-  // Another record of ours for this folder (an earlier version kept one per subfolder or symlinked
-  // path) keeps its numbering from before a later load, so its "load 1" loads another: removed.
-  const stale = (r: ProjectResumes) => r.id !== id && ours(r) && handoffHome(r.dir) === home;
-  for (const r of store.listResumes(problems)) if (stale(r)) store.removeResumesIf(r.id, stale, problems);
+}
+
+/**
+ * Removes every other record of this adapter whose `dir` is named after the same handoff folder as
+ * `dir`: an earlier version kept one per subfolder or symlinked path, numbered as before a later load,
+ * so its "load 1" loads another handoff. These are migration leftovers and the walk reads every
+ * record and each one's git files, so it runs only when a session starts. A record whose folder cannot
+ * be named for certain (its git files unreadable, not absent) is reported and kept.
+ */
+export function sweepStaleResumes(dir: string, store: Store, problems: string[]): void {
+  const home = handoffHome(dir);
+  const id = projectId(home);
+  const stale = (r: ProjectResumes) => r.id !== id && ours(r) && handoffHome(r.dir, true) === home;
+  // An unreadable record is skipped unsaid here: the page's snapshot already reports it.
+  for (const r of store.listResumes([])) {
+    try {
+      if (stale(r)) store.removeResumesIf(r.id, stale, problems);
+    } catch (error) {
+      problems.push(`stale list ${r.id} not removed: ${(error as Error).message}`);
+    }
+  }
 }

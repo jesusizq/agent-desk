@@ -11,7 +11,7 @@ import { sessionStatus } from "../../src/project/refresh.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { AgentFields, Store, TurnCheck } from "../../src/store/store.ts";
 import { publishOpenedPages } from "./pages.ts";
-import { inHandoffs, refreshResumes, resumesIdOf } from "./resumes.ts";
+import { inHandoffs, refreshResumes, resumesIdOf, sweepStaleResumes } from "./resumes.ts";
 import { readTally, type Tally, tallyTranscript } from "./usage.ts";
 
 export const PROVIDER = "Claude Code";
@@ -76,6 +76,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, ...s }) => ({ ...s, state: "waiting" }));
       retireContinued(input, ctx, problems);
       recordResumes(input, ctx, problems);
+      sweepResumes(input, ctx, problems);
       return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: [instructions(), unreadReviews(input, ctx, problems), handoffText(input, ctx)].filter(Boolean).join("\n\n") } }) };
 
     case "UserPromptSubmit": {
@@ -231,6 +232,15 @@ function recordResumes(input: Common, ctx: HookContext, problems: string[]): voi
     refreshResumes(workDir(input, ctx), ctx.store, ctx.env, problems);
   } catch (error) {
     problems.push(`pending handoffs not recorded: ${(error as Error).message}`);
+  }
+}
+
+/** This adapter's stale handoff lists, removed when a session starts (see resumes.ts). */
+function sweepResumes(input: Common, ctx: HookContext, problems: string[]): void {
+  try {
+    sweepStaleResumes(workDir(input, ctx), ctx.store, problems);
+  } catch (error) {
+    problems.push(`stale handoff lists not looked for: ${(error as Error).message}`);
   }
 }
 
