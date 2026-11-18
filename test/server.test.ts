@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { procInfo } from "../src/core/proc.ts";
 import { Push } from "../src/server/push.ts";
-import { createDeskServer, deskState, diskWarnings, recordPlanUsage } from "../src/server/server.ts";
+import { createDeskServer, deskState, diskWarnings, recordPlanUsage, SEEN_BODY_LIMIT, SEEN_IDS_MAX } from "../src/server/server.ts";
 import type { Session } from "../src/core/model.ts";
 import type { Store } from "../src/store/store.ts";
 import { projectId } from "../src/project/scan.ts";
@@ -179,11 +179,24 @@ describe("server", () => {
     }
     assert.ok(listed.every((x) => !store.listResults().find((y) => y.id === x.id)?.seenAt), "a refused request marks nothing");
 
-    const res = await post("/api/results/seen", { ids: [...ids, "r-gone"] });
+    const unreadable = store.addResult({ sessionId: "s1", title: "Unreadable" });
+    fs.writeFileSync(store.paths.result(unreadable.id), "{ half");
+    const logged: string[] = [];
+    const write = process.stderr.write;
+    process.stderr.write = (chunk: string | Uint8Array) => (logged.push(String(chunk)), true);
+    let res: Response;
+    try {
+      res = await post("/api/results/seen", { ids: [...ids, "r-gone", unreadable.id] });
+    } finally {
+      process.stderr.write = write;
+    }
     assert.equal(res.status, 200);
-    const reply = (await res.json()) as { seen: number; failed: { id: string; error: string }[] };
+    const reply = (await res.json()) as { seen: number; missing: string[]; failed: { id: string; error: string }[] };
     assert.equal(reply.seen, 2);
-    assert.deepEqual(reply.failed.map((f) => f.id), ["r-gone"], "what could not be marked is said");
+    assert.deepEqual(reply.missing, ["r-gone"], "one gone is said apart: the page has nothing left to mark there");
+    assert.deepEqual(reply.failed.map((f) => f.id), [unreadable.id], "what could not be marked is said");
+    assert.ok(logged.some((l) => l.includes(`marking ${unreadable.id} seen`) && l.includes("not valid JSON")), `the unexpected error goes to the desk's stderr (${logged.join("")})`);
+    fs.rmSync(store.paths.result(unreadable.id));
     const now = store.listResults();
     assert.ok(ids.every((id) => now.find((x) => x.id === id)?.seenAt), "the listed ones are marked, the failure too");
     assert.equal(now.find((x) => x.id === left.id)?.seenAt, undefined, "a result not listed stays new");
@@ -192,6 +205,23 @@ describe("server", () => {
     assert.equal(gone.status, 404, "a result no longer in the store: nothing left to mark, said as such");
     assert.match(((await gone.json()) as { error: string }).error, /no result r-gone in the store/);
     assert.equal((await post("/api/seen", {})).status, 404, "no endpoint marks everything any more");
+  });
+
+  it("takes the most ids one request may mark seen, each of the longest an id may be, and refuses a larger body", async () => {
+    const ids = Array.from({ length: SEEN_IDS_MAX }, (_, i) => `r${String(i).padStart(127, "0")}`);
+    const body = JSON.stringify({ ids });
+    assert.ok(body.length <= SEEN_BODY_LIMIT);
+    const res = await post("/api/results/seen", { ids });
+    assert.equal(res.status, 200);
+    const reply = (await res.json()) as { seen: number; missing: string[]; failed: unknown[] };
+    assert.deepEqual([reply.seen, reply.missing.length, reply.failed.length], [0, SEEN_IDS_MAX, 0], "every id read, none held by the store");
+    const larger = await fetch(base + "/api/results/seen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: base, "X-Agent-Desk-Secret": secret },
+      body: body + " ".repeat(SEEN_BODY_LIMIT - body.length + 1),
+    });
+    assert.equal(larger.status, 400);
+    assert.match(((await larger.json()) as { error: string }).error, new RegExp(`larger than ${SEEN_BODY_LIMIT} bytes`));
   });
 
   it("has no way left to take a result off the desk but marking it seen", async () => {

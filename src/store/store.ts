@@ -101,6 +101,9 @@ export class MissingError extends InputError {
   override name = "MissingError";
 }
 
+/** What marking results seen did: how many were marked, those the store no longer holds, those it could not mark and why. */
+export type MarkedSeen = { seen: number; missing: string[]; failed: { id: string; error: string }[] };
+
 /** A review's line could not reach the session that published it; the message says why. */
 export class Undeliverable extends InputError {
   override name = "Undeliverable";
@@ -961,21 +964,26 @@ export class Store {
   }
 
   /**
-   * Marks these results seen, each under its own lock: one that cannot be marked (gone, unreadable)
-   * is returned with its reason and the others are still marked; running it again is safe.
+   * Marks these results seen, each under its own lock: one the store no longer holds is named in `missing`,
+   * one that cannot be marked (unreadable) in `failed` with its reason, and the others are still marked;
+   * `unexpected` is told every error that is not a refusal of the input; running it again is safe.
    */
-  markResultsSeen(resultIds: readonly string[]): { seen: number; failed: { id: string; error: string }[] } {
-    const failed: { id: string; error: string }[] = [];
-    let seen = 0;
+  markResultsSeen(resultIds: readonly string[], unexpected: (resultId: string, error: unknown) => void): MarkedSeen {
+    const marked: MarkedSeen = { seen: 0, missing: [], failed: [] };
     for (const resultId of new Set(resultIds)) {
       try {
         this.markResultSeen(resultId);
-        seen++;
+        marked.seen++;
       } catch (error) {
-        failed.push({ id: resultId, error: (error as Error).message });
+        if (error instanceof MissingError) {
+          marked.missing.push(resultId);
+          continue;
+        }
+        if (!(error instanceof InputError)) unexpected(resultId, error);
+        marked.failed.push({ id: resultId, error: error instanceof Error ? error.message : String(error) });
       }
     }
-    return { seen, failed };
+    return marked;
   }
 
   /** Changes a result under its lock; one `change` returns unchanged is not written. */

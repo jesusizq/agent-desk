@@ -176,7 +176,7 @@ export function renderStrip() {
   const summary = fresh.length
     ? TEXT.unseenSummary(fresh.length - failed, failed)
     : data.results.some((r) => inProject(r.sessionId))
-      ? TEXT.nothingNew
+      ? TEXT.emptyResults
       : TEXT.nothingYet;
   // A phone keeps in sight only what wants a look now, the rest behind one chip; its To review tab counts what is new.
   const phone = ONE_COLUMN.matches;

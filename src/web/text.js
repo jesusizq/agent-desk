@@ -274,7 +274,6 @@ export const TEXT = {
   context: contextAt,
   /** @param {number} done @param {number} failed */
   unseenSummary: (done, failed) => `Not reviewed: ${counts(done, failed)}.`,
-  nothingNew: "Nothing new to review.",
   nothingYet: "Nothing has finished yet.",
   away: {
     title: "While you were away",
@@ -298,8 +297,8 @@ export const TEXT = {
   markSeen: "Mark all as seen",
   /** @param {number} failed @param {number} total @param {string} why */
   notSeen: (failed, total, why) => `${failed} of ${plural(total, "result", "results")} could not be marked seen: ${why}`,
-  /** @param {number} n @param {number} of @param {string} why */
-  notMarked: (n, of, why) => `${n} of ${of} not marked as seen: ${why}`,
+  /** @param {number} total */
+  seenUnknown: (total) => `The desk did not say which of ${plural(total, "result", "results")} it marked seen; what is still new stays listed.`,
   /** @param {string} free @param {string} projects */
   disk: (free, projects) => `Disk: ${free} free (${projects})`,
   machine: {

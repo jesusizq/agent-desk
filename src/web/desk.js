@@ -8,9 +8,9 @@ import { forgetButton } from "./control.js";
 import { ago, firstLine, headline, heat, hm, stamp } from "./format.js";
 import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
 import { badge, bar, beacon, dot, emptyState, goLink, kindOf, LOCAL_URL, localLink, planGauge, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
-import { openResult } from "./result.js";
+import { markResultsSeen, openResult } from "./result.js";
 import { reviewLine, reviewTile } from "./review.js";
-import { DeskError, imageUrl, post, postJson, refresh, run } from "./server.js";
+import { imageUrl, post, run } from "./server.js";
 import { baseBranchOf } from "./projects.js";
 import { openSession } from "./session.js";
 import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, openReviews, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
@@ -202,23 +202,6 @@ function dismissButton(r) {
 }
 
 /**
- * Marks these results seen, each by its own id, then fetches the desk once. Every mark is tried; how many
- * were refused is reported after, and marking again only marks what is left. A result the desk no longer
- * holds (gone since it was drawn) has nothing left to mark.
- * @param {Result[]} results
- */
-async function markSeen(results) {
-  const marked = await Promise.allSettled(results.map((r) => postJson(`/api/results/${r.id}/seen`)));
-  await refresh();
-  const refused = marked.flatMap((m) => (m.status === "rejected" && !gone(m.reason) ? [m.reason] : []));
-  if (!refused.length) return;
-  const [first] = refused;
-  throw new Error(TEXT.notMarked(refused.length, results.length, first instanceof Error ? first.message : String(first)));
-}
-/** The desk holds no such result any more. @param {unknown} reason */
-const gone = (reason) => reason instanceof DeskError && reason.status === 404;
-
-/**
  * The reviews sessions published, at the developer's pace, then finished work not looked at yet;
  * failures wait in the inbox instead, and what was seen is in History.
  */
@@ -229,7 +212,7 @@ function reviewColumn() {
   if (!list.length && !reviews.length) return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: earlier }), { quiet: true });
   const results = list.length ? h("div", { class: "rtiles", "data-list": true, "data-key": "results" }, list.map(resultTile)) : null;
   // On a phone the strip leaves what is new to this tab, which marks seen what it lists: not failures, not other projects.
-  const aside = list.length && ONE_COLUMN.matches ? h("button", { class: "linkish", onclick: () => run(markSeen(list)) }, TEXT.markSeen) : null;
+  const aside = list.length && ONE_COLUMN.matches ? h("button", { class: "linkish", onclick: () => run(markResultsSeen(list)) }, TEXT.markSeen) : null;
   if (!reviews.length) return column("review", list.length, results, { quiet: true, aside });
   return column(
     "review",

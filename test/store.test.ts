@@ -849,7 +849,7 @@ describe("agents and results", () => {
     assert.throws(() => store.addResult({ sessionId: "s1", title: "x", url: "javascript:alert(1)" }), /only local URLs/);
   });
 
-  it("marks one result seen, or just the results listed, reporting each it could not mark", () => {
+  it("marks one result seen, or just the results listed, naming those gone apart from those it could not mark", () => {
     const store = testStore();
     addSession(store);
     const r = store.addResult({ sessionId: "s1", title: "Done" });
@@ -859,11 +859,16 @@ describe("agents and results", () => {
     const broke = store.addResult({ sessionId: "s1", title: "Broke", status: "failed" });
     const other = store.addResult({ sessionId: "s1", title: "Not listed" });
     const unreadable = store.addResult({ sessionId: "s1", title: "Unreadable" });
+    const invalid = store.addResult({ sessionId: "s1", title: "Invalid" });
     fs.writeFileSync(store.paths.result(unreadable.id), "{ half");
-    const reply = store.markResultsSeen([done.id, broke.id, done.id, "r-gone", unreadable.id]);
+    fs.writeFileSync(store.paths.result(invalid.id), "{}");
+    const unexpected: string[] = [];
+    const reply = store.markResultsSeen([done.id, broke.id, done.id, "r-gone", unreadable.id, invalid.id], (id) => unexpected.push(id));
     assert.equal(reply.seen, 2, "each listed result once, the duplicate too");
-    assert.deepEqual(reply.failed.map((f) => f.id), ["r-gone", unreadable.id], "the others are marked, and each that could not be is named");
-    assert.match(reply.failed[0]?.error ?? "", /no result r-gone/);
+    assert.deepEqual(reply.missing, ["r-gone"], "one the store no longer holds has nothing left to mark");
+    assert.deepEqual(reply.failed.map((f) => f.id), [unreadable.id, invalid.id], "the others are marked, and each that could not be is named");
+    assert.match(reply.failed[0]?.error ?? "", /not valid JSON/);
+    assert.deepEqual(unexpected, [unreadable.id], "what is not a refusal of the input is told to the caller, a malformed record is not");
     const byId = new Map(store.listResults([]).map((x) => [x.id, x]));
     assert.ok(byId.get(done.id)?.seenAt && byId.get(broke.id)?.seenAt, "a failure is marked too");
     assert.equal(byId.get(other.id)?.seenAt, undefined, "a result not listed stays new");

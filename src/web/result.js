@@ -11,16 +11,46 @@ import { zoom } from "./zoom.js";
 /** @typedef {import("../core/protocol.ts").Result} Result */
 /** @typedef {import("./zoom.js").Picture} Picture */
 
+/** Ids marked seen in one request at most: the desk refuses more (SEEN_IDS_MAX in server.ts). */
+export const SEEN_BATCH = 5000;
+
 /**
- * Marks these results seen in one request, and nothing else; those the desk could not mark are said,
- * with the first reason, once the others are marked. @param {readonly Result[]} results
+ * Marks these results seen and nothing else, in one request per SEEN_BATCH, then fetches the desk once.
+ * A result the desk no longer holds has nothing left to mark; those it could not mark are counted, with
+ * the first reason, once the others are marked, and marking again only marks what is left.
+ * @param {readonly Result[]} results
  */
 export async function markResultsSeen(results) {
-  const reply = await postJson("/api/results/seen", { ids: results.map((r) => r.id) });
-  await refresh();
-  const failed = typeof reply === "object" && reply !== null && "failed" in reply && Array.isArray(reply.failed) ? reply.failed : null;
-  if (failed === null) throw new Error(TEXT.notSeen(results.length, results.length, "the desk's answer did not say which were marked"));
-  if (failed.length) throw new Error(TEXT.notSeen(failed.length, results.length, String(failed[0]?.error)));
+  const ids = results.map((r) => r.id);
+  let failed = 0;
+  let why = "";
+  let unknown = false;
+  try {
+    for (let i = 0; i < ids.length; i += SEEN_BATCH) {
+      const reply = markedOf(await postJson("/api/results/seen", { ids: ids.slice(i, i + SEEN_BATCH) }));
+      if (reply === null) unknown = true;
+      else if (reply.length) {
+        failed += reply.length;
+        why ||= reply[0]?.error ?? "";
+      }
+    }
+  } finally {
+    await refresh();
+  }
+  if (unknown) throw new Error(TEXT.seenUnknown(ids.length));
+  if (failed) throw new Error(TEXT.notSeen(failed, ids.length, why));
+}
+
+/** The results the desk's answer says it could not mark, or null when it does not say. @param {unknown} reply */
+function markedOf(reply) {
+  if (typeof reply !== "object" || reply === null || !("failed" in reply) || !Array.isArray(reply.failed)) return null;
+  /** @type {{ id: string, error: string }[]} */
+  const failed = [];
+  for (const f of reply.failed) {
+    if (typeof f !== "object" || f === null || typeof f.id !== "string" || typeof f.error !== "string") return null;
+    failed.push({ id: f.id, error: f.error });
+  }
+  return failed;
 }
 
 /** @param {Result} r @param {{ markSeen?: boolean }} [opts] */

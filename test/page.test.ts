@@ -1069,6 +1069,33 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     for (const id of ["hue-a", "hue-b"]) store.updateSession(id, (s) => ({ ...s, state: "ended", endedAt: new Date().toISOString() }));
   });
 
+  it("still honours the seen.json cut-off an earlier page wrote: results before it are seen, after it new, and marking leaves the earlier ones alone", async () => {
+    const own = new Store(path.join(tempHome(), "store"));
+    own.upsertSession({ id: "legacy", provider: "Test", project: { name: "alpha", dir: "/home/demo/Projects/alpha" }, title: "work in alpha", state: "working" });
+    const before = own.addResult({ sessionId: "legacy", title: "finished before the cut-off" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    own.addResult({ sessionId: "legacy", title: "finished after it" });
+    fs.writeFileSync(own.paths.seen, JSON.stringify({ since: before.at }), { mode: 0o600 });
+    const served = await serve(own);
+    const page = await browser.newPage(1400, 900);
+    try {
+      await page.goto(served.base + "/");
+      const strip = "document.querySelector('#strip').textContent";
+      await page.waitFor(`${strip}.includes('Not reviewed: 1 finished.')`);
+      assert.equal(await page.eval<string>("[...document.querySelectorAll('.col-review .rtile-wrap .rt')].map((t) => t.textContent).join()"), "finished after it", "To review lists only what came after the cut-off");
+      await page.click("#strip button", "Mark all as seen");
+      await page.waitFor(`${strip}.includes('Nothing new to review.')`);
+      const seen = Object.fromEntries(own.listResults().map((r) => [r.title, r.seenAt !== undefined]));
+      assert.deepEqual(seen, { "finished before the cut-off": false, "finished after it": true }, "only what the line counted is marked; the cut-off keeps the earlier one seen");
+      assert.equal(own.getSeen()?.since, before.at, "the cut-off is read, never rewritten");
+    } finally {
+      // The page first: a desk closed under it breaks its event stream, which the page reports as an error.
+      await page.close();
+      await served.close();
+    }
+    assert.deepEqual(page.errors, [], "the page reports no errors");
+  });
+
   it("marks seen from the strip only what its line counts: the project shown, its failures too, no other project's results", async () => {
     // A desk of its own: the shared one has results other tests count on staying new.
     const own = new Store(path.join(tempHome(), "store"));
@@ -1078,9 +1105,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       own.addResult({ sessionId: `seen-${name}`, title: `${name} broke`, status: "failed" });
     }
     const served = await serve(own);
+    const page = await browser.newPage(1400, 900);
     try {
-      const page = await browser.newPage(1400, 900);
-      pages.push(page);
       await page.goto(served.base + "/");
       const strip = "document.querySelector('#strip').textContent";
       await page.waitFor(`${strip}.includes('Not reviewed: 2 finished, 2 failures.')`);
@@ -1094,8 +1120,10 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.click("#projects button", "All");
       await page.waitFor(`${strip}.includes('Not reviewed: 1 finished, 1 failure.')`);
     } finally {
+      await page.close();
       await served.close();
     }
+    assert.deepEqual(page.errors, [], "the page reports no errors");
   });
 
   it("marks a session unread back to the list, and opening it reads it again", async () => {
@@ -2457,42 +2485,73 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.deepEqual(page.errors, [], "the page reports no errors");
   });
 
-  it("on a phone, Mark all as seen on To review says how many it could not mark, and takes a result gone meanwhile as done", async () => {
+  it("on a phone, Mark all as seen on To review marks in one request, says how many it could not mark, and takes a result gone meanwhile as done", async () => {
     await ownPhone(async (page, own) => {
       await page.tap(".tabbar button", "To review");
       await page.waitFor(`document.querySelectorAll('.col-review .rtile-wrap').length === 3 && ${STILL}`);
       const id = (title: string) => own.listResults().find((r) => r.title === title)?.id ?? assert.fail(`no result ${title}`);
       const refused = id("Three pay button variants");
       const gone = id("Migration 0041 applied locally");
-      // The desk's state waits, so the page still lists the result removed below when it is tapped; one mark is refused.
+      // The desk's state waits, so the page still lists the result removed below when it is tapped; the desk refuses one mark.
       await page.eval(`(() => {
         const real = window.fetch;
         const held = [];
-        window.marks = 0;
+        window.marks = [];
         window.releaseState = () => { window.fetch = real; held.splice(0).forEach((go) => go()); };
         window.fetch = (url, init) => {
           const route = String(url);
           if (route === "/api/state") return new Promise((r) => held.push(() => r(real(url, init))));
           if (!route.endsWith("/seen")) return real(url, init);
-          const answer = route === "/api/results/${refused}/seen" ? Promise.resolve(new Response(JSON.stringify({ error: "disk full" }), { status: 500, headers: { "Content-Type": "application/json" } })) : real(url, init);
-          return answer.finally(() => window.marks++);
+          const ids = JSON.parse(init.body).ids;
+          window.marks.push({ route, ids: ids.length });
+          return real(url, { ...init, body: JSON.stringify({ ids: ids.filter((i) => i !== "${refused}") }) }).then(async (res) => {
+            const reply = await res.json();
+            reply.failed.push({ id: "${refused}", error: "disk full" });
+            return new Response(JSON.stringify(reply), { status: res.status, headers: { "Content-Type": "application/json" } });
+          });
         };
       })()`);
       fs.rmSync(own.paths.result(gone));
       await page.tap(".col-review .col-head button", "Mark all as seen");
-      await page.waitFor("window.marks === 3");
+      await page.waitFor("window.marks.length === 1");
       await page.eval("releaseState()");
       await page.waitFor("document.querySelector('.toast')");
-      assert.equal(await page.eval<string>("document.querySelector('.toast').textContent"), "1 of 3 not marked as seen: disk full", "the one refused, counted; the one gone has nothing left to mark");
+      assert.deepEqual(await page.eval("window.marks"), [{ route: "/api/results/seen", ids: 3 }], "one request for what the tab lists");
+      assert.equal(await page.eval<string>("document.querySelector('.toast').textContent"), "1 of 3 results could not be marked seen: disk full", "the one refused, counted; the one gone has nothing left to mark");
       await page.waitFor("[...document.querySelectorAll('.col-review .rtile-wrap .rt')].map((t) => t.textContent).join() === 'Three pay button variants'"); // only the refused one left to mark
       assert.deepEqual(
         own.listResults().filter((r) => !r.seenAt && r.status !== "failed").map((r) => r.title),
         ["Three pay button variants"],
       );
-      const missing = page.errors.findIndex((e) => e.includes("404 (Not Found)") && e.endsWith(`/api/results/${gone}/seen`));
-      assert.ok(missing >= 0, `the desk said the result is gone (${page.errors.join("; ")})`);
-      page.errors.splice(missing, 1);
     });
+  });
+
+  it("marks seen in requests of at most 5000 ids, takes ids gone as done, and says it cannot tell what was marked when the desk does not say", async () => {
+    const page = await open();
+    // Every write answered here: what the page sends and makes of each answer, not the desk's own marking.
+    const tried = (answer: string) =>
+      page.eval<{ sizes: number[]; error: string | null }>(`(async () => {
+        const real = window.fetch;
+        const sizes = [];
+        window.fetch = (url, init) => {
+          if (String(url) !== "/api/results/seen") return real(url, init);
+          const ids = JSON.parse(init.body).ids;
+          sizes.push(ids.length);
+          return Promise.resolve(new Response(JSON.stringify(${answer}), { status: 200, headers: { "Content-Type": "application/json" } }));
+        };
+        try {
+          const { markResultsSeen } = await import("/result.js");
+          await markResultsSeen(Array.from({ length: 10001 }, (_, i) => ({ id: "r-" + i })));
+          return { sizes, error: null };
+        } catch (error) {
+          return { sizes, error: error.message };
+        } finally {
+          window.fetch = real;
+        }
+      })()`);
+    assert.deepEqual(await tried(`{ seen: ids.length - 1, missing: [ids[0]], failed: [] }`), { sizes: [5000, 5000, 1], error: null }, "the desk takes 5000 at most; one gone in each is nothing left to mark");
+    assert.deepEqual(await tried(`{ seen: ids.length - 1, missing: [], failed: [{ id: ids[0], error: "disk full" }] }`), { sizes: [5000, 5000, 1], error: "3 of 10001 results could not be marked seen: disk full" });
+    assert.deepEqual(await tried(`{ seen: ids.length }`), { sizes: [5000, 5000, 1], error: "The desk did not say which of 10001 results it marked seen; what is still new stays listed." }, "not a claim that all failed");
   });
 
   it("opens and closes a header menu from its button or Escape, keeping the focus on each choice", async () => {

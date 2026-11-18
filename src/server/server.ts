@@ -68,8 +68,8 @@ const BODY_LIMIT = 64 * 1024;
 /** A review's saved state (2 MB) with the text its page copies (200 KB), as JSON; the store checks the real limits. */
 const REVIEW_BODY_LIMIT = 5 * 1024 * 1024;
 /** Results marked seen in one request: every result the desk lists, in one go; each id up to 128 characters, as JSON. */
-const SEEN_IDS_MAX = 5000;
-const SEEN_BODY_LIMIT = SEEN_IDS_MAX * 132 + 64;
+export const SEEN_IDS_MAX = 5000;
+export const SEEN_BODY_LIMIT = SEEN_IDS_MAX * 132 + 64;
 /** What the PIN page may load before the device is unlocked. */
 const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/favicon.svg", "/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"]);
 /** Marks what a locked device gets: the device never keeps the PIN page as the desk, and drops the desk it kept (sw.js). */
@@ -252,7 +252,8 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   if (route === "/api/results/seen") {
     try {
       const ids = list(fields(await readBody(req, SEEN_BODY_LIMIT), "body").ids, "ids", id, SEEN_IDS_MAX);
-      return sendJson(res, 200, store.markResultsSeen(ids));
+      const unexpected = (resultId: string, error: unknown) => process.stderr.write(`agent-desk: ${req.method} ${req.url}: marking ${resultId} seen: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+      return sendJson(res, 200, store.markResultsSeen(ids, unexpected));
     } catch (error) {
       if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
       throw error;
