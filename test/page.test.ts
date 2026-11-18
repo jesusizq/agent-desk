@@ -1047,9 +1047,9 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const own = await serve(store);
     const { createDeskServer } = await import("../src/server/server.ts");
     let back: http.Server | undefined;
+    // Closed by the test before the desk it streams from: cutting its stream first logs one more unanswered request.
+    const page = await browser.newPage(1400, 900);
     try {
-      const page = await browser.newPage(1400, 900);
-      pages.push(page);
       await page.goto(own.base + "/");
       await page.waitFor("document.querySelector('.scard') && document.documentElement.dataset.live === 'stream'");
       await page.click(".scard", "desk stopping");
@@ -1074,13 +1074,14 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.waitFor(`!document.querySelector('#strip .offline') && !${box}.readOnly && document.documentElement.dataset.live === 'stream'`, 10_000);
       assert.equal(await page.eval<string>(`${box}.value`), "half a thought");
       await page.press("Escape");
-      // The browser logs each request the stopped desk could not answer; nothing else may have gone wrong.
-      const unanswered = (e: string) => /^Failed to load resource: net::ERR_\w+ /.test(e) && e.includes(`${own.base}/api/`);
-      page.errors.splice(0, page.errors.length, ...page.errors.filter((e) => !unanswered(e)));
     } finally {
+      await page.close();
       back?.closeAllConnections();
       await new Promise((r) => (back ? back.close(r) : r(undefined)));
     }
+    // The browser logs each request the stopped desk could not answer; nothing else may have gone wrong.
+    const unanswered = (e: string) => /^Failed to load resource: net::ERR_\w+ /.test(e) && e.includes(`${own.base}/api/`);
+    assert.deepEqual(page.errors.filter((e) => !unanswered(e)), [], "the page reports no other errors");
   });
 
   it("shows a question asked during a turn only when the turn has finished writing it", async () => {
