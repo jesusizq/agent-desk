@@ -1766,6 +1766,21 @@ describe("status line", () => {
     const { Store } = await import("../src/store/store.ts");
     assert.equal(new Store(home).listMetrics()[0]?.contextPercent, 12);
   });
+
+  it("still records the metrics when Claude Code's settings cannot be read, suggesting /compact over a cold cache and saying why", async () => {
+    const home = tempHome();
+    const config = tempHome();
+    fs.writeFileSync(path.join(config, "settings.json"), '{"enabledPlugins": {"ahorro@mods": tr');
+    const child = spawn(process.execPath, [MAIN, "statusline"], { env: { ...process.env, AGENT_DESK_HOME: home, CLAUDE_CONFIG_DIR: config } });
+    let stderr = "";
+    child.stderr.on("data", (d: Buffer) => (stderr += d));
+    child.stdin.end(JSON.stringify({ session_id: "cc-9", context_window: { used_percentage: 12 } }));
+    await new Promise((r) => child.on("exit", r));
+    const { Store } = await import("../src/store/store.ts");
+    const metrics = new Store(home).listMetrics()[0];
+    assert.deepEqual([metrics?.contextPercent, metrics?.coldResume?.command], [12, "/compact"]);
+    assert.match(stderr, /settings\.json: not valid JSON/);
+  });
 });
 
 describe("checks at a turn's end (Stop hooks that refuse it)", () => {

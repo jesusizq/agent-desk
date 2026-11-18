@@ -1040,26 +1040,29 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
   const label = launchNotes(meta, problems).description;
   settleLabel(input, ctx, agentId, label);
   const worktree = agentWorktree(input, ctx);
-  const usage = meta ? agentUsage(input, ctx, agentId, meta.replace(/\.meta\.json$/, ".jsonl"), problems) : {};
   // A workflow's agent whose notes were not written when it started gets its label now.
-  updateByRef(ctx.store, input.sessionId, agentId, (agent) =>
-    agent.state === "working" ? { ...compact({ goal: agent.goal ? undefined : label, worktree }), ...worktreeBranch(agent, worktree), ...call, failedAt: streak(agent.failedAt), ...usage } : undefined,
-  );
+  const record = (usage: AgentFields) =>
+    updateByRef(ctx.store, input.sessionId, agentId, (agent) =>
+      agent.state === "working" ? { ...compact({ goal: agent.goal ? undefined : label, worktree }), ...worktreeBranch(agent, worktree), ...call, failedAt: streak(agent.failedAt), ...usage } : undefined,
+    );
+  if (meta) withAgentUsage(input, ctx, agentId, meta.replace(/\.meta\.json$/, ".jsonl"), problems, record);
+  else record({});
   syncFailingMarker(ctx.store, fails, problems);
 }
 
 /**
- * The tokens and cost of sub-agent `agentId` so far, summed from its transcript, for its record:
+ * Hands `record` the tokens and cost of sub-agent `agentId` so far, summed from its transcript:
  * each hook reads only what was written since the last one (usage.ts), from where its note on the
- * session says. Empty before its transcript has a line.
+ * session says; empty before its transcript has a line. `record` runs under the note's lock, so
+ * two hooks of one agent write their tallies in the order they read them, never an older one last.
  */
-function agentUsage(input: Common, ctx: HookContext, agentId: string, transcript: string, problems: string[]): AgentFields {
+function withAgentUsage(input: Common, ctx: HookContext, agentId: string, transcript: string, problems: string[], record: (usage: AgentFields) => void): void {
   const key = `usage-${agentId}`;
   if (!ID_PATTERN.test(key)) {
     problems.push(`sub-agent ${agentId}: an id too long to note how far its transcript was read, so its tokens and cost are not recorded`);
-    return {};
+    record({});
+    return;
   }
-  let tally: Tally | undefined;
   ctx.store.updateNote(input.sessionId, key, (noted) => {
     let before: Tally | undefined;
     try {
@@ -1067,11 +1070,10 @@ function agentUsage(input: Common, ctx: HookContext, agentId: string, transcript
     } catch (error) {
       problems.push(`${(error as Error).message}; counting again from the start of ${transcript}`);
     }
-    tally = tallyTranscript(transcript, before, problems);
+    const tally = tallyTranscript(transcript, before, problems);
+    record(tally ? { tokens: tally.tokens, costUsd: tally.unpriced ? undefined : Math.round(tally.costUsd * 1e6) / 1e6 } : {});
     return tally === before ? undefined : tally;
   });
-  if (!tally) return {};
-  return { tokens: tally.tokens, costUsd: tally.unpriced ? undefined : Math.round(tally.costUsd * 1e6) / 1e6 };
 }
 
 /**
@@ -1565,8 +1567,10 @@ function stopAgent(input: Common, ctx: HookContext, problems: string[]): void {
   const result = transcript === undefined ? undefined : handedBack(readTail(transcript, TRANSCRIPT_TAIL));
   const ended = result ? { activity: HANDED_BACK, activityIsCall: undefined } : { activity: last || undefined };
   const own = transcript?.endsWith(".jsonl") ? transcript : meta?.replace(/\.meta\.json$/, ".jsonl");
-  const usage = own ? agentUsage(input, ctx, agentId, own, problems) : {};
-  updateByRef(ctx.store, input.sessionId, agentId, (agent) => ({ ...compact({ state: "done" as const, goal: agent.goal ? undefined : label }), ...(ended.activity === undefined ? {} : ended), ...usage }));
+  const record = (usage: AgentFields) =>
+    updateByRef(ctx.store, input.sessionId, agentId, (agent) => ({ ...compact({ state: "done" as const, goal: agent.goal ? undefined : label }), ...(ended.activity === undefined ? {} : ended), ...usage }));
+  if (own) withAgentUsage(input, ctx, agentId, own, problems, record);
+  else record({});
   if (result) {
     const sent = { from: "agent" as const, text: result, ref: agentId };
     ctx.store.addMessage(compact({ sessionId: input.sessionId, from: sent.from, sender: senderOf(ctx.store, input.sessionId, sent), text: sent.text }));

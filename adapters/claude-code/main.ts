@@ -82,7 +82,10 @@ async function main(argv: string[]): Promise<void> {
     const original = separator < 0 ? [] : rest.slice(separator + 1);
     try {
       const status = JSON.parse(input) as unknown;
-      const metrics = store.mergeMetrics(metricsFromStatusLine(status, freshCommand(settingsFile(process.env, os.homedir()))));
+      const problems: string[] = [];
+      const fresh = freshCommand(settingsFile(process.env, os.homedir()), problems);
+      for (const p of problems) process.stderr.write(`agent-desk: ${p}\n`);
+      const metrics = store.mergeMetrics(metricsFromStatusLine(status, fresh));
       const name = sessionNameFromStatusLine(status);
       const session = name ? store.getSession(metrics.sessionId) : undefined;
       if (name && session && session.title !== name) store.updateSession(session.id, (s) => ({ ...s, title: name }));

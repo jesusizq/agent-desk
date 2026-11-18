@@ -100,7 +100,26 @@ describe("agent cost", () => {
     assert.throws(() => readTally({ file, ino: 1, offset: -1, tokens: 0, costUsd: 0, unpriced: false }, "note"), /note\.offset/);
   });
 
-  it("records on a sub-agent's calls and at its stop its tokens and cost so far, from its own transcript", () => {
+  it("leaves the cost unknown when a complete line that may hold a reply's usage is not JSON", () => {
+    const file = path.join(tempHome(), "agent-a1.jsonl");
+    fs.writeFileSync(file, `${reply("m1", "claude-opus-5-5", opus(2, 100, 0, 10))}\n{"type":"assistant","message":{"usage": {"input_tokens": 9\n`);
+    const problems: string[] = [];
+    const t = tallyTranscript(file, undefined, problems);
+    assert.deepEqual([t?.tokens, t?.unpriced], [112, true]);
+    assert.match(problems[0] ?? "", /not JSON.*cost is left unknown/);
+  });
+
+  it("prices the web searches a reply ran, beside its tokens", () => {
+    const file = path.join(tempHome(), "agent-a1.jsonl");
+    fs.writeFileSync(file, `${reply("m1", "claude-opus-5-5", { ...opus(2, 100, 0, 10), server_tool_use: { web_search_requests: 3, web_fetch_requests: 1 } })}\n`);
+    const t = tallyTranscript(file, undefined, []);
+    assert.equal(t?.tokens, 112);
+    near(t?.costUsd, (2 * 4 + 100 * 5 + 10 * 20) / 1e6 + 3 * 0.01);
+    near(costOf("claude-opus-5-5", { input: 0, write5m: 0, write1h: 0, read: 0, output: 0, webSearches: 1000 }), 10);
+  });
+
+  /** A session with sub-agent a1 started, whose own transcript is `own`. */
+  function subagent() {
     const store = testStore();
     const projects = tempHome();
     const transcript = path.join(projects, "cc-1.jsonl");
@@ -111,6 +130,11 @@ describe("agent cost", () => {
     const ctx: HookContext = { store, env: { CLAUDE_PROJECT_DIR: "/work/shop" }, sessionProcess: () => undefined };
     const event = (hook_event_name: string, extra: Record<string, unknown>) => readHookInput(JSON.stringify({ session_id: "cc-1", cwd: "/work/shop", hook_event_name, transcript_path: transcript, ...extra }));
     handleHook(event("SubagentStart", { agent_id: "a1", agent_type: "general-purpose" }), ctx);
+    return { store, own, ctx, event };
+  }
+
+  it("records on a sub-agent's calls and at its stop its tokens and cost so far, from its own transcript", () => {
+    const { store, own, ctx, event } = subagent();
     fs.writeFileSync(own, `${reply("m1", "claude-opus-5-5", opus(2, 24_474, 0, 193))}\n`);
     handleHook(event("PostToolUse", { agent_id: "a1", tool_name: "Bash", tool_input: { command: "npm test" } }), ctx);
     const working = only(store);
@@ -126,6 +150,25 @@ describe("agent cost", () => {
     fs.appendFileSync(own, `${reply("m3", "claude-nonexistent-model-1", opus(1, 0, 0, 1))}\n`);
     handleHook(event("SubagentStop", { agent_id: "a1", agent_type: "general-purpose", agent_transcript_path: own, last_assistant_message: "Fixed." }), ctx);
     assert.deepEqual([only(store).tokens, only(store).costUsd], [24_669 + 24_575 + 2, undefined]);
+  });
+
+  it("never lets an older tally of a sub-agent be written over a newer one when two of its hooks overlap", () => {
+    const { store, own, ctx, event } = subagent();
+    fs.writeFileSync(own, `${reply("m1", "claude-opus-5-5", opus(2, 24_474, 0, 193))}\n`);
+    // A failed call's hook runs while the first is between reading the transcript and recording it.
+    const updateNote = store.updateNote.bind(store);
+    let overlapped = false;
+    store.updateNote = ((sessionId: string, key: string, change: (before: unknown) => unknown) => {
+      const out = updateNote(sessionId, key, change);
+      if (!overlapped) {
+        overlapped = true;
+        fs.appendFileSync(own, `${reply("m2", "claude-opus-5-5", opus(1, 0, 24_474, 100))}\n`);
+        handleHook(event("PostToolUseFailure", { agent_id: "a1", tool_name: "Bash", tool_input: { command: "npm test" } }), ctx);
+      }
+      return out;
+    }) as Store["updateNote"];
+    handleHook(event("PostToolUse", { agent_id: "a1", tool_name: "Bash", tool_input: { command: "npm test" } }), ctx);
+    assert.equal(only(store).tokens, 24_669 + 24_575);
   });
 
   it("keeps an adapter's notes inside the session's folder of the store, private", () => {
@@ -158,13 +201,25 @@ describe("cold resume", () => {
   it("starts afresh with a handoff when the plugin that writes one is enabled, else compacts", () => {
     const dir = tempHome();
     const settings = path.join(dir, "settings.json");
-    assert.equal(freshCommand(settings), "/compact", "no settings file");
+    const problems: string[] = [];
+    assert.equal(freshCommand(settings, problems), "/compact", "no settings file");
     fs.writeFileSync(settings, JSON.stringify({ enabledPlugins: { "ahorro@ahorro": true, "other@x": true } }));
-    assert.equal(freshCommand(settings), "/ahorro:handoff");
+    assert.equal(freshCommand(settings, problems), "/ahorro:handoff");
     fs.writeFileSync(settings, JSON.stringify({ enabledPlugins: { "ahorro@ahorro": false, "ahorro-extra@x": true } }));
-    assert.equal(freshCommand(settings), "/compact", "disabled, or another plugin's name");
-    fs.writeFileSync(settings, "{ not json");
-    assert.throws(() => freshCommand(settings), /settings\.json: not valid JSON/);
+    assert.equal(freshCommand(settings, problems), "/compact", "disabled, or another plugin's name");
+    assert.deepEqual(problems, []);
+  });
+
+  it("compacts when the settings cannot be read, also caught mid-write, and says why", () => {
+    const dir = tempHome();
+    const settings = path.join(dir, "settings.json");
+    fs.writeFileSync(settings, '{"enabledPlugins": {"ahorro@ahorro": tr');
+    const problems: string[] = [];
+    assert.equal(freshCommand(settings, problems), "/compact");
+    assert.equal(freshCommand(dir, problems), "/compact", "a folder in its place");
+    assert.equal(problems.length, 2);
+    assert.match(problems[0] ?? "", /settings\.json: not valid JSON/);
+    assert.match(problems[1] ?? "", /could not be read/);
   });
 
   it("suggests starting afresh once the cache has expired on a context of 150k tokens or half its window, as time passes, only to a live session", async () => {

@@ -2106,6 +2106,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       store.upsertSession({ id: "cold", provider: "Test", project, title: "cold cache session", state: "waiting" });
       store.upsertAgent("cold", "pay", { goal: "Fix pay", state: "done", tokens: 1_200_000, costUsd: 1.5 });
       store.upsertAgent("cold", "cart", { goal: "Fix cart", state: "done", tokens: 40_000, costUsd: 0.25 });
+      store.upsertAgent("cold", "copy", { goal: "Fix copy", state: "done", tokens: 900, costUsd: 0.002 });
       store.mergeMetrics({ sessionId: "cold", contextTokens: 180_000, contextPercent: 18, cacheExpiresAt: new Date(Date.now() - 60_000).toISOString(), coldResume: { command: "/ahorro:handoff", costUsd: 1.44 } });
       try {
         const page = await open();
@@ -2118,10 +2119,10 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.waitFor("document.querySelector('#session .pchips .chip.warn')");
         assert.equal(await page.eval<string>("document.querySelector('#session .pchips .chip.warn').textContent"), "/ahorro:handoff");
         const agents = await page.eval<string>("[...document.querySelectorAll('#session .pchips > .chip')].find((c) => c.textContent.includes('agents')).textContent");
-        assert.equal(agents.replace("▾", ""), "2 agents · $1.75");
+        assert.equal(agents.replace("▾", ""), "3 agents · $1.75");
         await page.click("#session .pchips button.chip", "agents");
-        await page.waitFor("document.querySelectorAll('#session .ppart .arow[data-key^=agent-]').length === 2");
-        assert.deepEqual((await page.eval<string[]>("[...document.querySelectorAll('#session .ppart .arow[data-key^=agent-]')].map((r) => r.title)")).sort(), ["1.2M tokens · $1.50", "40k tokens · $0.25"]);
+        await page.waitFor("document.querySelectorAll('#session .ppart .arow[data-key^=agent-]').length === 3");
+        assert.deepEqual((await page.eval<string[]>("[...document.querySelectorAll('#session .ppart .arow[data-key^=agent-]')].map((r) => r.title)")).sort(), ["1.2M tokens · $1.50", "40k tokens · $0.25", "900 tokens · <$0.01"], "a cheap agent never reads as free");
         await page.click("#session .pchips .chip", "More");
         await page.waitFor("[...document.querySelectorAll('#session .faint')].some((d) => d.textContent.includes('cache expired'))");
         assert.match(await page.eval<string>("[...document.querySelectorAll('#session .faint')].find((d) => d.textContent.includes('cache expired')).textContent"), /cache expired, resuming ≈ \$1\.44/);
@@ -2134,6 +2135,11 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.waitFor(`${card}?.querySelector('.chip.warn')`);
         store.updateSession("cold", (s) => ({ ...s, state: "ended", endedAsking: true, lastMessage: { text: "Shall I go on?", at: new Date().toISOString() } }));
         await page.waitFor(`${card}?.querySelector('.s-actions') && !${card}.querySelector('.chip.warn')`);
+        // Nor does its panel.
+        await page.click(".scard", "cold cache session");
+        await page.waitFor("document.getElementById('session').open && document.querySelector('#session .pchips')?.textContent.includes('agents')");
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .pchips .chip.warn').length"), 0);
+        await page.press("Escape");
       } finally {
         store.updateSession("cold", (s) => ({ ...s, state: "ended" }));
         store.forgetSession("cold");

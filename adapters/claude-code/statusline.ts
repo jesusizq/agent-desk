@@ -63,20 +63,22 @@ const FRESH_COMMANDS = [{ plugin: "ahorro", command: "/ahorro:handoff" }] as con
 /**
  * The command that starts a session's work afresh: a handoff to a new conversation when a plugin
  * that writes one is enabled in the developer's Claude Code settings (read only), else `/compact`.
+ * Settings that cannot be read (also caught mid-write) give `/compact`, with the reason in `problems`.
  */
-export function freshCommand(settingsFile: string): string {
+export function freshCommand(settingsFile: string, problems: string[]): string {
   let raw: string;
   try {
     raw = fs.readFileSync(settingsFile, "utf8");
   } catch (error) {
-    if (isCode(error, "ENOENT")) return COMPACT; // no user settings: no plugin enabled
-    throw error;
+    if (!isCode(error, "ENOENT")) problems.push(`${settingsFile}: could not be read, so ${COMPACT} is suggested over a cold cache (${(error as Error).message})`);
+    return COMPACT;
   }
   let enabled: Fields;
   try {
     enabled = obj(obj(JSON.parse(raw) as unknown).enabledPlugins);
   } catch (error) {
-    throw new Error(`${settingsFile}: not valid JSON, so its enabled plugins cannot be read (${(error as Error).message})`, { cause: error });
+    problems.push(`${settingsFile}: not valid JSON, so its enabled plugins cannot be read and ${COMPACT} is suggested over a cold cache (${(error as Error).message})`);
+    return COMPACT;
   }
   const on = (plugin: string) => Object.entries(enabled).some(([key, value]) => value === true && key.split("@")[0] === plugin);
   return FRESH_COMMANDS.find((f) => on(f.plugin))?.command ?? COMPACT;

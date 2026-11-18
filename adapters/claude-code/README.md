@@ -67,15 +67,19 @@ button in the session panel. They also carry what resuming costs once the prompt
 (`coldResume`): the context's tokens at the model's cache-write price for the cache's lifetime
 (`prompt_cache.ttl`), and the command that starts afresh: `/ahorro:handoff` when the `ahorro` plugin
 is on in `enabledPlugins` of Claude Code's user settings (`settings.json` in `CLAUDE_CONFIG_DIR`,
-else in the home folder's `.claude`, read only), else `/compact`. The page suggests it once the
-cache has expired on a large context.
+else in the home folder's `.claude`, read only), else `/compact`, also when that file cannot be read
+or is not valid JSON (caught mid-write, say), which the status line reports on stderr while it still
+records the rest of the metrics. The page suggests it once the cache has expired on a large context.
 
 ## Cost
 
 Prices live in one table, `prices.ts`: the Claude API's first-party list prices per million tokens
-(input, 5-minute and 1-hour cache writes, cache reads, output), with the date they were read and
-their source. A model not in the table, fast mode, a service tier other than `standard` or a region
-other than global or US (1.1x, Claude 4.6 and later) gets no cost, only tokens. Each sub-agent's
+(input, 5-minute and 1-hour cache writes, cache reads, output) and per web search
+(`server_tool_use.web_search_requests`, $10 per 1,000), with the date they were read and their
+source. A model not in the table, fast mode, a service tier other than `standard` or a region
+other than global or US (1.1x, Claude 4.6 and later) gets no cost, only tokens, and so does an agent
+whose transcript has a reply line that cannot be read (not JSON, or a usage that is not a count of
+tokens). Each sub-agent's
 tokens and cost are summed from the usage of its own transcript's replies (one request per message
 id), at its tool calls and its `SubagentStop`; each hook reads only the lines written since the
 last one, from where the adapter's note on the session (`notes/<session>/usage-<agent>.json`) says.

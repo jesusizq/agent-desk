@@ -76,8 +76,8 @@ function usageRow(line: string, file: string, problems: string[]): { id: string;
   try {
     entry = JSON.parse(line);
   } catch (error) {
-    problems.push(`${file}: a line that is not JSON was left out of the agent's cost (${(error as Error).message})`);
-    return undefined;
+    problems.push(`${file}: a line that is not JSON was left out of the agent's tokens, and its cost is left unknown (${(error as Error).message})`);
+    return "unreadable";
   }
   const e = obj(entry);
   const message = obj(e.message);
@@ -95,7 +95,14 @@ function usageRow(line: string, file: string, problems: string[]): { id: string;
     return {
       id: message.id,
       model: message.model,
-      usage: { input: count(u.input_tokens, "input_tokens"), write5m: Math.max(0, write5m), write1h, read: count(u.cache_read_input_tokens, "cache_read_input_tokens"), output: count(u.output_tokens, "output_tokens") },
+      usage: {
+        input: count(u.input_tokens, "input_tokens"),
+        write5m: Math.max(0, write5m),
+        write1h,
+        read: count(u.cache_read_input_tokens, "cache_read_input_tokens"),
+        output: count(u.output_tokens, "output_tokens"),
+        webSearches: count(obj(u.server_tool_use).web_search_requests, "server_tool_use.web_search_requests"),
+      },
       served: compact({ geo: label(u.inference_geo, "inference_geo"), speed: label(u.speed, "speed"), tier: label(u.service_tier, "service_tier") }),
     };
   } catch (error) {

@@ -42,8 +42,11 @@ const PRICES: Record<string, Price> = {
   "claude-haiku-4-5": rates(1, 1.25, 2, 0.1, 5),
 };
 
-/** The tokens of one request, by how they are billed. */
-export type Usage = { input: number; write5m: number; write1h: number; read: number; output: number };
+/** USD per web search a request ran (its server tool's `web_search_requests`), from the same source. */
+export const WEB_SEARCH_USD = 10 / 1000;
+
+/** The tokens of one request, by how they are billed, and the web searches it ran. */
+export type Usage = { input: number; write5m: number; write1h: number; read: number; output: number; webSearches?: number };
 
 /** Where and how a request ran, as its usage row says; absent means the default (global, standard). */
 export type Served = { geo?: string; speed?: string; tier?: string };
@@ -69,5 +72,5 @@ export function ratesOf(model: string, promptTokens: number, served: Served = {}
 export function costOf(model: string, usage: Usage, served: Served = {}): number | undefined {
   const r = ratesOf(model, usage.input + usage.write5m + usage.write1h + usage.read, served);
   if (!r) return undefined;
-  return (usage.input * r.input + usage.write5m * r.write5m + usage.write1h * r.write1h + usage.read * r.read + usage.output * r.output) / 1_000_000;
+  return (usage.input * r.input + usage.write5m * r.write5m + usage.write1h * r.write1h + usage.read * r.read + usage.output * r.output) / 1_000_000 + (usage.webSearches ?? 0) * WEB_SEARCH_USD;
 }
