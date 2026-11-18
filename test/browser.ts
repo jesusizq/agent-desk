@@ -23,6 +23,8 @@ export class Browser {
   private next = 0;
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; method: string }>();
   private readonly listeners = new Map<string, (m: Message) => void>();
+  /** Waiting for a page's session to end with its tab (Page.close), by session. */
+  private readonly detaching = new Map<string, () => void>();
 
   private readonly proc: ChildProcess;
   private readonly ws: WebSocket;
@@ -40,6 +42,11 @@ export class Browser {
         if (m.error) p?.reject(new Error(`${p.method}: ${m.error.message}`));
         else p?.resolve(m.result);
       } else if (m.sessionId) this.listeners.get(m.sessionId)?.(m);
+      else if (m.method === "Target.detachedFromTarget") {
+        const sessionId = String(m.params?.sessionId);
+        this.detaching.get(sessionId)?.();
+        this.listeners.delete(sessionId);
+      }
     });
   }
 
@@ -79,6 +86,25 @@ export class Browser {
     const id = ++this.next;
     this.ws.send(JSON.stringify({ id, method, params, sessionId }));
     return new Promise((resolve, reject) => this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, method }));
+  }
+
+  /**
+   * Closes a tab and returns once its session has ended, which Chrome does only after the page's
+   * pagehide and unload handlers ran: Target.closeTarget answers before them.
+   */
+  async closeTab(targetId: string, sessionId: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const detached = new Promise<void>((resolve, reject) => {
+      this.detaching.set(sessionId, resolve);
+      timer = setTimeout(() => reject(new Error(`the tab ${targetId} was still open ${WAIT_MS} ms after it was closed`)), WAIT_MS);
+    });
+    try {
+      await this.send("Target.closeTarget", { targetId });
+      await detached;
+    } finally {
+      clearTimeout(timer);
+      this.detaching.delete(sessionId);
+    }
   }
 
   async newPage(width: number, height: number): Promise<Page> {
@@ -121,9 +147,12 @@ export class Page {
     this.targetId = targetId;
   }
 
-  /** Closes the tab, so it no longer reacts to the store (a chime of its own, a stream of the browser's). */
-  async close(): Promise<void> {
-    await this.browser.send("Target.closeTarget", { targetId: this.targetId });
+  /**
+   * Closes the tab, so it no longer reacts to the store (a chime of its own, a stream of the browser's),
+   * once what it writes as it goes (the desk's last look, in the localStorage the next page shares) is written.
+   */
+  close(): Promise<void> {
+    return this.browser.closeTab(this.targetId, this.sessionId);
   }
 
   send<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
