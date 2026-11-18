@@ -1163,23 +1163,40 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.deepEqual(page.errors, [], "the page reports no errors");
   });
 
-  it("takes the × of a result the store no longer holds as done, with no error", async () => {
+  it("takes a result the store no longer holds as seen, from its × or its window, with no error", async () => {
     const own = new Store(path.join(tempHome(), "store"));
     own.upsertSession({ id: "gone-result", provider: "Test", project: { name: "alpha", dir: "/home/demo/Projects/alpha" }, title: "work in alpha", state: "working" });
-    const r = own.addResult({ sessionId: "gone-result", title: "alpha finished" });
+    const dismissed = own.addResult({ sessionId: "gone-result", title: "alpha finished" });
+    const opened = own.addResult({ sessionId: "gone-result", title: "alpha built" });
     const served = await serve(own);
     const page = await browser.newPage(1400, 900);
     try {
       await page.goto(served.base + "/");
-      const tile = `document.querySelector('[data-key="r-${r.id}"]')`;
-      await page.waitFor(`!!${tile}?.querySelector('.rdismiss')`);
-      // Held before the store loses it: the click comes from a tile still drawn when it went.
-      await page.eval(`window.dismiss = ${tile}.querySelector('.rdismiss')`);
-      fs.rmSync(own.paths.result(r.id));
-      await page.eval("window.dismiss.click()");
-      await page.waitFor(`!${tile}`);
-      await new Promise((done) => setTimeout(done, 300));
-      assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.toast')].map((t) => t.textContent)"), [], "no toast says it is missing");
+      // Settled once the seen request's answer is read and no fetch of the state runs: a refusal's toast
+      // is shown in the microtasks after, so a zero timeout comes after it.
+      await page.eval(`import('/server.js').then((m) => {
+        window.desk = m;
+        const real = window.fetch;
+        window.fetch = async (url, init) => {
+          const res = await real(url, init);
+          if (!String(url).includes('/seen')) return res;
+          const json = res.json.bind(res);
+          res.json = () => json().finally(() => { window.seenRead = true; });
+          return res;
+        };
+      })`);
+      for (const [r, button] of [[dismissed, ".rdismiss"], [opened, ".rtile"]] as const) {
+        const tile = `document.querySelector('[data-key="r-${r.id}"]')`;
+        await page.waitFor(`!!${tile}?.querySelector('${button}')`);
+        // Held before the store loses it: the click comes from a tile still drawn when it went.
+        await page.eval(`window.held = ${tile}.querySelector('${button}'); window.seenRead = false`);
+        fs.rmSync(own.paths.result(r.id));
+        await page.eval("window.held.click()");
+        await page.waitFor("window.seenRead && window.desk.requestsWaiting === 0");
+        await page.eval("new Promise((done) => setTimeout(done, 0))");
+        assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.toast')].map((t) => t.textContent)"), [], `${button}: no toast says it is missing`);
+        await page.waitFor(`!${tile}`);
+      }
     } finally {
       await page.close();
       await served.close();

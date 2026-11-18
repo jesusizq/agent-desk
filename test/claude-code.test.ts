@@ -1043,7 +1043,7 @@ describe("Claude Code hooks", () => {
       return s;
     };
     const before = kept();
-    for (const [field, bad] of [["last_assistant_message", 42], ["stop_hook_active", "yes"], ["background_tasks", [{ type: "subagent", id: "../x" }]]] as const) {
+    for (const [field, bad] of [["last_assistant_message", 42], ["stop_hook_active", "yes"], ["background_tasks", [{ type: "subagent", id: "../x" }]], ["transcript_path", 42]] as const) {
       assert.throws(() => handleHook(event("Stop", { last_assistant_message: "Done.", [field]: bad }), ctx(store)), new RegExp(field));
       assert.equal(store.getQuestion(permission.id)?.status, "open", `${field}: its permission prompt still open`);
       assert.deepEqual(kept(), before, `${field}: still working`);
