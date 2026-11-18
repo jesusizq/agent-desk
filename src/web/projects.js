@@ -2,7 +2,7 @@
 // Projects: their worktrees on disk, what can go and what is still open.
 import { dialog, h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
-import { ago, gb } from "./format.js";
+import { ago, clockAt, gb } from "./format.js";
 import { copy, dialogHead, projectMark } from "./pieces.js";
 import { data, ui } from "./state.js";
 
@@ -66,31 +66,40 @@ export const pendingNotes = (p) => p.notes.filter((n) => Date.parse(n.expiresAt)
 /** The projects shown that have work left for a new conversation. */
 export const resumesInView = () => data.resumes.filter((p) => (ui.project === null || p.name === ui.project) && pendingNotes(p).length > 0);
 
-/** A project's pending handoffs, newest first: what each is about, its age, and the command that loads it, copied with a click. @param {string} projectId */
+/**
+ * Pending handoffs, newest first: what each is about, its age, until when it is offered, and the
+ * command that loads it, copied with a click. Of one project, or without one, of every project in
+ * view, each under its name. @param {string} [projectId]
+ */
 export function openResumes(projectId) {
-  const p = data.resumes.find((x) => x.id === projectId);
-  if (!p) return;
+  const projects = projectId === undefined ? resumesInView() : data.resumes.filter((x) => x.id === projectId);
+  const [one] = projects;
+  if (!one) return;
   ui.panelSession = null;
   const d = dialog("session");
   const t = TEXT.resumes;
+  const single = projects.length === 1;
+  /** @param {ProjectResumes} p */
+  const list = (p) =>
+    h(
+      "div",
+      { class: "alist resume-list" },
+      pendingNotes(p).map((n) =>
+        h(
+          "div",
+          { class: "arow resume" },
+          h("span", { class: "awhat" }, h("span", { class: "agoal" }, n.title ?? t.untitled), h("span", { class: "adoing" }, t.written(ago(n.writtenAt), clockAt(n.expiresAt)))),
+          h("button", { class: "secondary", title: t.copy, onclick: () => copy(n.command) }, icon("copy"), h("code", {}, n.command)),
+        ),
+      ),
+    );
   d.replaceChildren(
-    dialogHead(d, projectMark(p.name), t.title),
+    dialogHead(d, single ? projectMark(one.name) : "", t.title),
     h(
       "div",
       { class: "dbody" },
-      h("div", { class: "status" }, h("span", {}, t.note(p.name))),
-      h(
-        "div",
-        { class: "alist resume-list" },
-        pendingNotes(p).map((n) =>
-          h(
-            "div",
-            { class: "arow resume" },
-            h("span", { class: "awhat" }, h("span", { class: "agoal" }, n.title ?? t.untitled), h("span", { class: "adoing" }, t.written(ago(n.writtenAt)))),
-            h("button", { class: "secondary", title: t.copy, onclick: () => copy(n.command) }, icon("copy"), h("code", {}, n.command)),
-          ),
-        ),
-      ),
+      h("div", { class: "status" }, h("span", {}, t.note(single ? one.name : undefined))),
+      single ? list(one) : projects.map((p) => h("div", { class: "rsec resume-project" }, h("h4", {}, projectMark(p.name)), list(p))),
     ),
   );
   if (!d.open) d.showModal();

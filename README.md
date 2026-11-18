@@ -33,9 +33,10 @@ and step away. When you come back, one browser tab shows:
   kept for the session to get back.
 - **What was said,** so a question makes sense without scrolling back through the terminal.
 - **Work left for a new conversation:** each project's pending handoffs (written by a handoff
-  plugin, under 48 h and not loaded yet; the Claude Code adapter reads the `ahorro` plugin's), with
-  what each is about, how old it is and the command that loads it, copied with a click, in the
-  strip and in the summary of what happened while you were away.
+  plugin, while it still offers them and they are not loaded yet; the Claude Code adapter reads the
+  `ahorro` plugin's), with what each is about, how old it is, until when it is offered and the
+  command that loads it, copied with a click, in the strip and in the summary of what happened while
+  you were away, whose "more" lists every project's when they span several.
 - **Warnings before something breaks:** a context nearly full, a disk nearly full, the machine
   loaded past its cores, short of memory or at 95 °C, worktrees piling
   up (how much each takes, which are already merged into the main branch or landed there by

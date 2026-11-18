@@ -601,7 +601,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.waitFor(arrived("session"));
       const rows = await page.eval<string[]>("[...document.querySelectorAll('#session .resume')].map((r) => r.textContent)");
       assert.equal(rows.length, 2, "the expired one is not offered");
-      assert.match(rows[0] ?? "", /^Finish the pay page <b>now<\/b>written 3 h ago\/load 1$/, "its objective as plain text");
+      assert.match(rows[0] ?? "", /^Finish the pay page <b>now<\/b>written 3 h ago · offered until \w{3} \d\d:\d\d\/load 1$/, "its objective as plain text, and until when its note says it is offered");
+      assert.equal(await page.eval<string>("document.querySelector('#session .status').textContent"), "Paste the command in a new conversation of web-shop: it loads that handoff.", "no adapter's own policy in the page's words");
       assert.match(rows[1] ?? "", /^A handoff with no objective/);
       assert.equal(await page.eval<number>("document.querySelectorAll('#session .resume b').length"), 0);
       await page.click("#session .resume button", "/load 1");
@@ -3053,6 +3054,27 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.waitFor(`${arrived("session")} && document.querySelector('#session .resume')?.textContent.includes('/load')`);
       } finally {
         store.putResumes({ ...resumes, notes: [] });
+      }
+    });
+
+    it("opens every project's handoffs from the resumes group's \"more\" when those hidden span several", async () => {
+      const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
+      const note = (title: string, hoursAgo: number, command: string) => ({ title, writtenAt: iso(-hoursAgo * 3600_000), expiresAt: iso((48 - hoursAgo) * 3600_000), command });
+      const shop = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", at: iso(0), notes: [note("Shop newest", 1, "/load 1"), note("Shop older", 5, "/load 2")] };
+      const billing = { id: "billing-0badc0de", name: "billing", dir: "/home/demo/Projects/billing", at: iso(0), notes: [note("Billing new", 2, "/load 1"), note("Billing oldest", 9, "/load 2")] };
+      store.putResumes(shop);
+      store.putResumes(billing);
+      try {
+        const page = await openAway(600);
+        await page.waitFor("document.querySelector('.away [data-key=\"resumes\"] .away-more')");
+        assert.deepEqual(await lines(page, "resumes"), ["Shop newest web-shop", "Billing new billing", "Shop older web-shop"]);
+        await page.click(".away [data-key=\"resumes\"] .away-more");
+        await page.waitFor(`${arrived("session")} && document.querySelectorAll('#session .resume').length === 4`);
+        assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('#session .resume-project h4')].map((x) => x.textContent).sort()"), ["billing", "web-shop"]);
+        assert.ok(await page.eval<boolean>("[...document.querySelectorAll('#session .resume .agoal')].some((x) => x.textContent === 'Billing oldest')"), "the hidden one, of the other project");
+      } finally {
+        store.putResumes({ ...shop, notes: [] });
+        store.putResumes({ ...billing, notes: [] });
       }
     });
 

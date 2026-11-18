@@ -146,9 +146,10 @@ export function awaySummary() {
         [headline(q.text), q.answer ? [" → ", h("b", {}, firstLine(q.answer.text))] : null, " ", where(q.sessionId)],
         session(q.sessionId),
       ], history("decision")),
+      // "More" opens every project's list when the handoffs span several: those hidden may be in any of them.
       group("resumes", t.resumes, resumes, ({ note, project }) => [icon("history"), [note.title ?? TEXT.resumes.untitled, " ", h("span", { class: "away-where" }, project.name)], () => openResumes(project.id)], () => {
-        const next = resumes[shown];
-        if (next) openResumes(next.project.id);
+        const ids = new Set(resumes.map((r) => r.project.id));
+        openResumes(ids.size === 1 ? resumes[0]?.project.id : undefined);
       }),
       group("reviews", t.reviews, stale, (r) => [icon("doc"), [t.untouched(r.title, dayLabel(touchedAt(r))), " ", h("span", { class: "away-where" }, r.project.name)], () => openReview(r.id)], () => ((ui.view = "desk"), (ui.tab = "review"), page.render())),
     ),

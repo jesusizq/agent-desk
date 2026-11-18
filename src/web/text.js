@@ -328,11 +328,11 @@ export const TEXT = {
     title: "To resume",
     /** @param {string} name @param {number} n */
     chip: (name, n) => `${name}: ${plural(n, "handoff", "handoffs")} to resume`,
-    /** @param {string} t */
-    written: (t) => `written ${t} ago`,
+    /** @param {string} t @param {string} until */
+    written: (t, until) => `written ${t} ago · offered until ${until}`,
     untitled: "A handoff with no objective",
-    /** @param {string} name */
-    note: (name) => `Paste the command in a new conversation of ${name}: it loads that handoff. Each one is offered for 48 hours.`,
+    /** @param {string} [name] one project's, or each under its own */
+    note: (name) => (name ? `Paste the command in a new conversation of ${name}: it loads that handoff.` : "Paste a command in a new conversation of its project: it loads that handoff."),
     copy: "Copy the command",
   },
   worktrees: {
