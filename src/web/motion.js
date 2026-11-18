@@ -231,27 +231,42 @@ export function animateLists(scope, update) {
 }
 
 const TIMING = new Set(["offset", "computedOffset", "easing", "composite"]);
+/** @type {WeakMap<Animation, number>} when the change of height a redraw started again first started, on the document's timeline */
+const origins = new WeakMap();
 /**
  * Every change of height an earlier redraw started in a scroll area (a card still folding away) starts again
  * from where it is, with this redraw's: on one curve from one start, the area's content grows or shrinks
  * steadily to its end, where one ending first while another just starts would dip below the scroll, and
- * the browser would pull it down mid-way.
+ * the browser would pull it down mid-way. Never past two lengths from its first start, however many redraws
+ * follow (a burst of the event stream): a card on its way out leaves by then. What holds the element's
+ * stacking while it changes goes on as long; each keeps its play state.
  * @param {Animation[]} earlier the animations running before this redraw's @param {Element} scroller @param {Tokens} t
  */
 function retime(earlier, scroller, t) {
-  for (const a of earlier) {
-    if (a.id !== MOTION || (a.playState !== "running" && a.playState !== "paused") || !(a.effect instanceof KeyframeEffect)) continue;
-    const { effect } = a;
-    const el = effect.target;
-    const last = effect.getKeyframes().at(-1);
-    if (!el || !last || !("height" in last) || !carries(scroller, el)) continue;
-    const props = Object.keys(last).filter((k) => !TIMING.has(k));
-    const now = getComputedStyle(el);
+  const now = Number(document.timeline.currentTime ?? performance.now());
+  const ours = earlier.flatMap((a) => {
+    const effect = a.effect;
+    const el = effect instanceof KeyframeEffect ? effect.target : null;
+    const end = effect instanceof KeyframeEffect ? effect.getKeyframes().at(-1) : undefined;
+    const live = a.playState === "running" || a.playState === "paused";
+    return a.id === MOTION && live && effect instanceof KeyframeEffect && el && end && carries(scroller, el) ? [{ a, effect, el, end }] : [];
+  });
+  const changing = new Set(ours.filter(({ end }) => "height" in end).map(({ el }) => el));
+  for (const { a, effect, el, end } of ours) {
+    if (!changing.has(el) || !("height" in end || "zIndex" in end)) continue;
+    const origin = origins.get(a) ?? now - Number(a.currentTime ?? 0);
+    const duration = Math.min(t.move, origin + 2 * t.move - now);
+    if (duration <= 0) continue;
+    const props = Object.keys(end).filter((k) => !TIMING.has(k));
+    const style = getComputedStyle(el);
     /** @param {string} prop */
-    const value = (prop) => now.getPropertyValue(prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`));
+    const value = (prop) => style.getPropertyValue(prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`));
     const from = Object.fromEntries(props.map((p) => [p, value(p)]));
-    const to = Object.fromEntries(props.map((p) => [p, last[p]]));
-    const next = el.animate([from, to], { duration: t.move, easing: t.easing, fill: effect.getTiming().fill, id: MOTION });
+    const to = Object.fromEntries(props.map((p) => [p, end[p]]));
+    const paused = a.playState === "paused";
+    const next = el.animate([from, to], { duration, easing: t.easing, fill: effect.getTiming().fill, id: MOTION });
+    origins.set(next, origin);
+    if (paused) next.pause();
     Object.assign(next, { onfinish: a.onfinish, oncancel: a.oncancel });
     Object.assign(a, { onfinish: null, oncancel: null });
     a.cancel();

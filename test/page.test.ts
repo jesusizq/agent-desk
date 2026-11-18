@@ -3560,6 +3560,105 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       });
     }
 
+    // Each redraw that moves a column starts again the folds still running there: a burst of them (the event
+    // stream's) must not hold a card on its way out for longer than two lengths from its first start.
+    it("a burst of redraws restarting a card's fold lets it leave within two lengths of its start", async () => {
+      const id = "fold-burst";
+      const done = asking(id, "folds through a burst");
+      // A project of its own, shown alone, one question staying open: the board keeps its shape.
+      store.upsertSession({ id, provider: "Test", project: { name: "burst-shop", dir: "/home/demo/Projects/burst-shop" }, title: "folds through a burst", state: "waiting" });
+      store.ask({ sessionId: id, kind: "question", text: "Folds during a burst?", options: ["Yes", "No"] });
+      store.ask({ sessionId: id, kind: "question", text: "Stays open during the burst?", options: ["Yes", "No"] });
+      try {
+        const page = await open(1400, 900);
+        await page.click("#projects button", "burst-shop");
+        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Folds during a burst?') && ${STILL}`);
+        // Every change of height the card runs, when it started and ends on the document's timeline, and the
+        // last frame it was seen running in.
+        const seen = page.eval<{ move: number; folds: { start: number; end: number; last: number }[]; gone: boolean }>(`new Promise((done) => {
+          const card = document.querySelector('.next');
+          const css = getComputedStyle(document.documentElement).getPropertyValue('--dur-3').trim();
+          const move = css.endsWith('ms') ? parseFloat(css) : parseFloat(css) * 1000;
+          const folds = [];
+          const known = new Map();
+          const until = performance.now() + 5000;
+          ${DISMISS};
+          const tick = (now) => {
+            for (const a of card.getAnimations()) {
+              if (a.id !== 'motion' || a.playState !== 'running' || a.currentTime === null || !a.effect.getKeyframes().some((k) => 'height' in k)) continue;
+              if (!known.has(a)) folds.push(known.set(a, {}).get(a));
+              const start = now - a.currentTime;
+              Object.assign(known.get(a), { start, end: start + a.effect.getComputedTiming().endTime, last: now });
+            }
+            if (!card.isConnected || performance.now() > until) done({ move, folds, gone: !card.isConnected });
+            else requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        })`);
+        // A row a redraw every 70 ms, for longer than the fold could be held.
+        const asked: string[] = [];
+        for (let i = 1; i <= 20; i++) {
+          asked.push(store.ask({ sessionId: id, kind: "question", text: `Asked in the burst, ${i}?`, options: ["Yes", "No"] }).id);
+          await new Promise((r) => setTimeout(r, 70));
+        }
+        const { move, folds, gone } = await seen;
+        const log = JSON.stringify({ move, folds });
+        assert.ok(gone, `the card left: ${log}`);
+        const [first] = folds;
+        assert.ok(first && move > 0, `the card folded: ${log}`);
+        assert.ok(folds.some((f) => f.start > first.start + move), `a redraw started its fold again past one length, where a whole length more would hold it: ${log}`);
+        // Started again from where it was in the redraw's frame, each fold waits for the next frame to start, as the redraw's own do.
+        assert.ok(folds.every((f, i) => i === 0 || f.end <= first.start + 2 * move + Math.max(0, f.start - folds[i - 1]!.last) + 1), `it never folds past two lengths from its start: ${log}`);
+      } finally {
+        done();
+      }
+    });
+
+    it("a redraw that starts again a paused change of height leaves it paused, with what holds its stacking", async () => {
+      const id = "fold-paused";
+      const done = asking(id, "a paused fold");
+      store.upsertSession({ id, provider: "Test", project: { name: "paused-shop", dir: "/home/demo/Projects/paused-shop" }, title: "a paused fold", state: "waiting" });
+      store.ask({ sessionId: id, kind: "question", text: "Folds and is paused?", options: ["Yes", "No"] });
+      store.ask({ sessionId: id, kind: "question", text: "Stays open while it is paused?", options: ["Yes", "No"] });
+      try {
+        const page = await open(1400, 900);
+        await page.click("#projects button", "paused-shop");
+        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Folds and is paused?') && ${STILL}`);
+        // Two frames into its fold, it is held, with a hold of its stacking ending with it, as a card growing over others has.
+        await page.eval(`new Promise((done) => {
+          const card = document.querySelector('.next');
+          window.pausedCard = card;
+          ${DISMISS};
+          let frames = 0;
+          const tick = () => {
+            if (!card.hasAttribute('data-leaving') || ++frames < 2) return requestAnimationFrame(tick);
+            const fold = card.getAnimations().find((a) => a.id === 'motion' && a.effect.getKeyframes().some((k) => 'height' in k));
+            const left = fold.effect.getComputedTiming().endTime - fold.currentTime;
+            card.animate([{ zIndex: 3 }, { zIndex: 3 }], { id: 'motion', duration: left });
+            for (const a of card.getAnimations()) a.pause();
+            done();
+          };
+          requestAnimationFrame(tick);
+        })`);
+        store.ask({ sessionId: id, kind: "question", text: "Asked while the fold is paused?", options: ["Yes", "No"] });
+        await page.waitFor("[...document.querySelectorAll('.col-needs .qrow')].some((r) => r.textContent.includes('Asked while the fold is paused?'))");
+        const motions = await page.eval<{ height: boolean; state: string; left: number }[]>(`pausedCard.getAnimations().filter((a) => a.id === 'motion' && a.effect.getKeyframes().some((k) => 'height' in k || 'zIndex' in k)).map((a) => ({
+          height: a.effect.getKeyframes().some((k) => 'height' in k),
+          state: a.playState,
+          left: Math.round(a.effect.getComputedTiming().endTime - a.currentTime),
+        }))`);
+        const log = JSON.stringify(motions);
+        const height = motions.filter((m) => m.height);
+        const stacking = motions.filter((m) => !m.height);
+        assert.ok(height.length === 1 && stacking.length === 1, `the card changes height and holds its stacking: ${log}`);
+        assert.ok(motions.every((m) => m.state === "paused"), `both stay paused: ${log}`);
+        assert.equal(stacking[0]!.left, height[0]!.left, `its stacking is held as long as its height changes: ${log}`);
+        await page.eval("new Promise((done) => { for (const a of pausedCard.getAnimations()) a.play(); const tick = () => (pausedCard.isConnected ? requestAnimationFrame(tick) : done()); requestAnimationFrame(tick); })");
+      } finally {
+        done();
+      }
+    });
+
     it("on a phone, a redraw that changes the view at once mid-way stops the header and the strip with the cards", async () => {
       const id = "scrolled-instant";
       const done = asking(id, "stopped mid-way");
