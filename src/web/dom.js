@@ -380,6 +380,13 @@ export const REVIEWS_KEY = "agent-desk:reviews";
 /** The page's windows (index.html): a backdrop click, going back to Needs you and the arrival bubble treat them alike. */
 export const WINDOWS = /** @type {const} */ (["result", "session", "zoom", "review", "review-send", "strip-alerts"]);
 
+/**
+ * The head of an open window, under which a bubble or toast comes in from the top. A sheet gives none:
+ * its head is not at the screen's top, and coming in under it would cover the rows it holds.
+ * @param {Element} d
+ */
+export const windowHead = (d) => (d.matches(".sheet") ? null : d.querySelector(":scope > :is(.dhead, .rv-head)"));
+
 /** @param {string} id @returns {HTMLDialogElement} */
 export function dialog(id) {
   const el = byId(id);

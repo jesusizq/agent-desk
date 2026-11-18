@@ -17,7 +17,7 @@ import { liveServices } from "../core/ports.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
-import { heldOf, IMAGE_MAX_BYTES, IMAGE_TYPES, readReviewChange, StaleReview, type Store, Undeliverable } from "../store/store.ts";
+import { heldOf, IMAGE_MAX_BYTES, IMAGE_TYPES, MissingError, readReviewChange, StaleReview, type Store, Undeliverable } from "../store/store.ts";
 import { type FeedOptions, StateFeed } from "./feed.ts";
 import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
 import { type Access, deskOrigin, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, reviewHeaders, send, sendJson, writeAllowed } from "./security.ts";
@@ -280,6 +280,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   try {
     return sendJson(res, 200, action(store, m[2], await readBody(req)));
   } catch (error) {
+    if (error instanceof MissingError) return sendJson(res, 404, { error: error.message });
     if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
     throw error;
   }

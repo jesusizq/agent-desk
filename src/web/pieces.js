@@ -1,6 +1,6 @@
 // @ts-check
 // Small pieces shared by every part of the page: marks, links to sessions, toasts, switches and menus.
-import { byId, h, icon } from "./dom.js";
+import { byId, h, icon, windowHead } from "./dom.js";
 import { grow } from "./motion.js";
 import { TEXT } from "./text.js";
 import { ago, clockAt, color, heat, providerMark } from "./format.js";
@@ -61,7 +61,7 @@ export function toast(msg) {
   const t = h("div", { class: "toast" }, msg);
   // A toast on screen stays at the edge it came in from, even when a window closes or the keyboard drops under it.
   if (!box.childElementCount) {
-    const head = [...document.querySelectorAll("dialog[open] > :is(.dhead, .rv-head)")].at(-1);
+    const head = [...document.querySelectorAll("dialog[open]")].map(windowHead).filter(Boolean).at(-1);
     box.style.setProperty("--dialog-head", `${head ? Math.round(head.getBoundingClientRect().bottom) : 0}px`);
     box.dataset.edge = document.querySelector("dialog[open]") || document.documentElement.hasAttribute("data-keyboard") ? "top" : "bottom";
   }

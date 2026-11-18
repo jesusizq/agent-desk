@@ -184,8 +184,9 @@ export function renderStrip() {
   alertsShown = phone ? all.filter((w) => w.phone === "alerts") : [];
   // Back from a while away, the summary of what happened meanwhile takes the place of the line on what is new.
   const away = awaySummary();
-  // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear.
-  const line = !ui.loaded ? h("span", { class: "skel", "aria-hidden": "true" }) : phone ? null : h("span", { class: "muted" }, summary);
+  // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear. A phone has no
+  // such line, and a placeholder would hold a room its empty strip gives back once loaded, moving the board up.
+  const line = phone ? null : !ui.loaded ? h("span", { class: "skel", "aria-hidden": "true" }) : h("span", { class: "muted" }, summary);
   patch(
     byId("strip"),
     ui.offline ? offlineNotice("strip-offline") : null,
@@ -193,10 +194,11 @@ export function renderStrip() {
     // Marks exactly what the line counts, failures included: no result of a project out of view.
     !phone && fresh.length ? h("button", { class: "linkish", onclick: () => run(markResultsSeen(fresh)) }, TEXT.markSeen) : null,
     phone ? null : h("span", { class: "spacer" }),
-    all.filter((w) => !phone || w.phone === "strip").map(warningChip),
+    // First of the chips on a phone, whose strip scrolls sideways: in sight however many warnings follow.
     alertsShown.length
       ? h("button", { class: `chip alerts-chip${alertsShown.some((w) => w.warn) ? " warn" : ""}`, "aria-haspopup": "dialog", onclick: openAlerts }, TEXT.stripAlerts.chip(alertsShown.length))
       : null,
+    all.filter((w) => !phone || w.phone === "strip").map(warningChip),
   );
   const sheet = dialog("strip-alerts");
   if (sheet.open && alertsShown.length) drawAlerts();

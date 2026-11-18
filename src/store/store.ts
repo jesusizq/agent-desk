@@ -96,6 +96,11 @@ export type TurnCheck =
 export type ReviewOp = { op: "set"; key: string; value: string } | { op: "remove"; key: string } | { op: "clear" };
 export type ReviewChange = { ops: ReviewOp[]; progress?: string; summary?: string };
 
+/** The store holds nothing under the id asked for: gone since it was shown, or never there. */
+export class MissingError extends InputError {
+  override name = "MissingError";
+}
+
 /** A review's line could not reach the session that published it; the message says why. */
 export class Undeliverable extends InputError {
   override name = "Undeliverable";
@@ -978,7 +983,7 @@ export class Store {
     const file = this.paths.result(resultId);
     return withLock(file, () => {
       const raw = readJson(file);
-      if (raw === undefined) throw new InputError(`no result ${resultId} in the store`);
+      if (raw === undefined) throw new MissingError(`no result ${resultId} in the store`);
       const current = readResult(raw, file);
       const next = change(current);
       if (next !== current) writeJson(file, next);

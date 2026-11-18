@@ -2314,15 +2314,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.waitFor(`${strip}.includes('Disk: 12.0 GB free') && document.querySelector('#strip .alerts-chip')`);
         const shown = await page.eval<string[]>("[...document.querySelectorAll('#strip > *')].map((c) => c.textContent)");
         assert.equal(shown.length, 4, shown.join(" | "));
-        assert.equal(shown[0], "Disk: 12.0 GB free (web-shop)");
-        assert.equal(shown[1], "invoices-api › VAT rounding: Context 86%");
-        assert.match(shown[2] ?? "", /^5 h limit: at this pace, out around /, "a window running out before its reset");
-        assert.equal(shown[3], "5 alerts", "the unreadable file, load, memory, the handoff and the worktrees, counted");
+        assert.equal(shown[0], "5 alerts", "the unreadable file, load, memory, the handoff and the worktrees, counted, first so it is in sight");
+        assert.equal(shown[1], "Disk: 12.0 GB free (web-shop)");
+        assert.equal(shown[2], "invoices-api › VAT rounding: Context 86%");
+        assert.match(shown[3] ?? "", /^5 h limit: at this pace, out around /, "a window running out before its reset");
         assert.equal(await page.eval<boolean>("document.querySelector('#strip .alerts-chip').classList.contains('warn')"), true, "loud: warnings among them");
         assert.doesNotMatch(await page.eval<string>(strip), /7 d limit/, "how full a window gets by its reset only informs: not on a phone");
         assert.doesNotMatch(await page.eval<string>(strip), /Not reviewed|Mark all as seen/, "To review counts what is new, and marks it seen");
         const openAlerts = async () => {
-          await page.eval("document.querySelector('#strip .alerts-chip').scrollIntoView({ inline: 'end', block: 'nearest' })");
+          assert.equal(await page.eval<boolean>(underFinger("document.querySelector('#strip .alerts-chip')")), true, "in sight without scrolling the strip");
           await page.tap("#strip .alerts-chip");
           await page.waitFor(arrived("strip-alerts"));
         };
@@ -2371,6 +2371,128 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       },
       machine,
     );
+  });
+
+  it("on a phone, keeps the Alerts sheet's rows clear of a new question and a toast, follows its warnings while open, and closes on Escape, its backdrop or when they all go", async () => {
+    const machine = sickMachine();
+    await ownPhone(
+      async (page, own) => {
+        const sheet = "document.getElementById('strip-alerts')";
+        const openAlerts = async () => {
+          await page.tap("#strip .alerts-chip");
+          await page.waitFor(arrived("strip-alerts"));
+        };
+        await page.waitFor("document.querySelector('#strip .alerts-chip')?.textContent === '2 alerts'");
+        await openAlerts();
+        // What comes in over the sheet comes in at the screen's top, not under the sheet's head, over its rows.
+        const asked = own.ask({ sessionId: "demo-pagos", kind: "question", text: "Over the alerts?" });
+        const bubble = "document.getElementById('arrival')";
+        await page.waitFor(`${bubble}.matches(':popover-open') && !${bubble}.inert && !${bubble}.getAnimations().length`);
+        await page.eval("import('/pieces.js').then((m) => m.toast('Copied'))");
+        await page.waitFor("document.querySelector('.toast') && !document.querySelector('.toast').getAnimations().length");
+        const clear = await page.eval<Record<string, boolean>>(`(() => {
+          const rows = document.querySelector('#strip-alerts .alert-list').getBoundingClientRect();
+          const above = (el) => el.getBoundingClientRect().bottom <= rows.top;
+          return { bubble: above(${bubble}), toast: above(document.querySelector('.toast')) };
+        })()`);
+        assert.deepEqual(clear, { bubble: true, toast: true }, "neither covers the rows about to be tapped");
+        own.dismiss(asked.id);
+        await page.waitFor(`!${bubble}.matches(':popover-open') && !document.querySelector('.toast')`);
+        await page.press("Escape");
+        await page.waitFor(`!${sheet}.open`);
+        await openAlerts();
+        const top = await page.eval<number>(`${sheet}.getBoundingClientRect().top`);
+        await page.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: top / 2 }] });
+        await page.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await page.waitFor(`!${sheet}.open`);
+        // Open, it follows its warnings: the memory back, one row left; the load too, and it closes by itself.
+        await openAlerts();
+        fs.writeFileSync(path.join(machine.proc, "meminfo"), "MemTotal:       32000000 kB\nMemAvailable:   30000000 kB\n");
+        await fetchNow(page);
+        await page.waitFor(`${sheet}.open && document.querySelectorAll('#strip-alerts .alert-row').length === 1`);
+        assert.match(await page.eval<string>("document.querySelector('#strip-alerts .alert-row').textContent"), /^Load: 21\.4/);
+        assert.equal(await page.eval<string>("document.querySelector('#strip .alerts-chip').textContent"), "1 alert");
+        fs.writeFileSync(path.join(machine.proc, "loadavg"), "0.50 0.50 0.50 1/900 1234\n");
+        await fetchNow(page);
+        await page.waitFor(`!${sheet}.open && !document.querySelector('#strip .alerts-chip')`);
+      },
+      undefined,
+      machine,
+    );
+  });
+
+  it("on a phone, gives the strip's room to the board before the first data and with nothing that wants a look, and still shows Offline", async () => {
+    const desk = await serve(new Store(path.join(tempHome(), "store")));
+    const page = await browser.newPage(390, 844);
+    try {
+      // The first state waits for the test, as over a slow network; later the desk can stop answering.
+      await page.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `(() => {
+          const realFetch = window.fetch;
+          let release;
+          const gate = new Promise((resolve) => (release = resolve));
+          window.releaseState = () => release();
+          window.fetch = (url, init) => String(url) !== "/api/state" ? realFetch(url, init) : window.cut ? Promise.reject(new TypeError("Failed to fetch")) : gate.then(() => realFetch(url, init));
+        })()`,
+      });
+      await page.goto(desk.base + "/");
+      await page.waitFor("document.querySelector('.board[aria-busy]')");
+      const strip = "({ room: document.getElementById('strip').getBoundingClientRect().height, placeholder: !!document.querySelector('#strip .skel') })";
+      assert.deepEqual(await page.eval(strip), { room: 0, placeholder: false }, "no placeholder for a line a phone does not show, which its strip would give back once loaded");
+      await page.eval("releaseState()");
+      await page.waitFor("!document.querySelector('.board[aria-busy]')");
+      assert.deepEqual(await page.eval(strip), { room: 0, placeholder: false }, "nothing wants a look: still no strip");
+      await page.eval("window.cut = true");
+      await fetchNow(page);
+      await page.waitFor("document.querySelector('#strip .offline')");
+      assert.deepEqual(
+        await page.eval("(() => { const strip = document.getElementById('strip'); const r = strip.querySelector('.offline').getBoundingClientRect(); return [getComputedStyle(strip).display !== 'none', strip.childElementCount, r.height > 0 && r.top >= 0 && r.bottom <= innerHeight]; })()"),
+        [true, 1, true],
+        "Offline alone in the strip, in sight",
+      );
+    } finally {
+      await page.close();
+      await desk.close();
+    }
+    assert.deepEqual(page.errors, [], "the page reports no errors");
+  });
+
+  it("on a phone, Mark all as seen on To review says how many it could not mark, and takes a result gone meanwhile as done", async () => {
+    await ownPhone(async (page, own) => {
+      await page.tap(".tabbar button", "To review");
+      await page.waitFor(`document.querySelectorAll('.col-review .rtile-wrap').length === 3 && ${STILL}`);
+      const id = (title: string) => own.listResults().find((r) => r.title === title)?.id ?? assert.fail(`no result ${title}`);
+      const refused = id("Three pay button variants");
+      const gone = id("Migration 0041 applied locally");
+      // The desk's state waits, so the page still lists the result removed below when it is tapped; one mark is refused.
+      await page.eval(`(() => {
+        const real = window.fetch;
+        const held = [];
+        window.marks = 0;
+        window.releaseState = () => { window.fetch = real; held.splice(0).forEach((go) => go()); };
+        window.fetch = (url, init) => {
+          const route = String(url);
+          if (route === "/api/state") return new Promise((r) => held.push(() => r(real(url, init))));
+          if (!route.endsWith("/seen")) return real(url, init);
+          const answer = route === "/api/results/${refused}/seen" ? Promise.resolve(new Response(JSON.stringify({ error: "disk full" }), { status: 500, headers: { "Content-Type": "application/json" } })) : real(url, init);
+          return answer.finally(() => window.marks++);
+        };
+      })()`);
+      fs.rmSync(own.paths.result(gone));
+      await page.tap(".col-review .col-head button", "Mark all as seen");
+      await page.waitFor("window.marks === 3");
+      await page.eval("releaseState()");
+      await page.waitFor("document.querySelector('.toast')");
+      assert.equal(await page.eval<string>("document.querySelector('.toast').textContent"), "1 of 3 not marked as seen: disk full", "the one refused, counted; the one gone has nothing left to mark");
+      await page.waitFor("[...document.querySelectorAll('.col-review .rtile-wrap .rt')].map((t) => t.textContent).join() === 'Three pay button variants'"); // only the refused one left to mark
+      assert.deepEqual(
+        own.listResults().filter((r) => !r.seenAt && r.status !== "failed").map((r) => r.title),
+        ["Three pay button variants"],
+      );
+      const missing = page.errors.findIndex((e) => e.includes("404 (Not Found)") && e.endsWith(`/api/results/${gone}/seen`));
+      assert.ok(missing >= 0, `the desk said the result is gone (${page.errors.join("; ")})`);
+      page.errors.splice(missing, 1);
+    });
   });
 
   it("opens and closes a header menu from its button or Escape, keeping the focus on each choice", async () => {

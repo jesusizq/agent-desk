@@ -188,6 +188,9 @@ describe("server", () => {
     assert.ok(ids.every((id) => now.find((x) => x.id === id)?.seenAt), "the listed ones are marked, the failure too");
     assert.equal(now.find((x) => x.id === left.id)?.seenAt, undefined, "a result not listed stays new");
     assert.equal(store.getSeen(), undefined);
+    const gone = await post("/api/results/r-gone/seen", {});
+    assert.equal(gone.status, 404, "a result no longer in the store: nothing left to mark, said as such");
+    assert.match(((await gone.json()) as { error: string }).error, /no result r-gone in the store/);
     assert.equal((await post("/api/seen", {})).status, 404, "no endpoint marks everything any more");
   });
 

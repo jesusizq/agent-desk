@@ -298,6 +298,8 @@ export const TEXT = {
   markSeen: "Mark all as seen",
   /** @param {number} failed @param {number} total @param {string} why */
   notSeen: (failed, total, why) => `${failed} of ${plural(total, "result", "results")} could not be marked seen: ${why}`,
+  /** @param {number} n @param {number} of @param {string} why */
+  notMarked: (n, of, why) => `${n} of ${of} not marked as seen: ${why}`,
   /** @param {string} free @param {string} projects */
   disk: (free, projects) => `Disk: ${free} free (${projects})`,
   machine: {

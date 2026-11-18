@@ -609,7 +609,7 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/questions/<id>/answer` `{ "text": "…", "images"?: ["<id>"] }` | answer from the page, with up to 10 attached images |
 | `POST /api/questions/<id>/dismiss` | close without answering |
 | `POST /api/sessions/<id>/message` `{ "text": "…", "images"?: ["<id>"] }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
-| `POST /api/results/<id>/seen` | mark one result seen |
+| `POST /api/results/<id>/seen` | mark one result seen; 404 `{ error }` when the store holds no such result (gone since the page drew it) |
 | `POST /api/results/seen` `{ "ids": ["<id>"] }` | mark just these results seen (5000 at most), each under its own lock: the strip's "Mark all as seen" sends those its line counts; returns `{ seen, failed: [{ id, error }] }`, one that could not be marked (gone, unreadable) named in `failed` with its reason while the others are marked |
 | `GET /review/<id>`, `GET /review/<id>/raw` | a review's latest page, with the shim or without, only with `reviewHeaders` (see Reviews) |
 | `GET /api/reviews/<id>/state` | `{ data, summary?, options?, rev }` (`options`: what the options marked in the page read as) |

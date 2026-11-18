@@ -1,6 +1,6 @@
 // @ts-check
 // Arrivals: a question that comes out of sight is a small bubble at the screen's edge.
-import { byId, dialog, h, icon, md, patch, WINDOWS } from "./dom.js";
+import { byId, dialog, h, icon, md, patch, windowHead, WINDOWS } from "./dom.js";
 import { arrive, bump, fadeIn, retreat } from "./motion.js";
 import { TEXT } from "./text.js";
 import { askBody } from "./answer.js";
@@ -34,7 +34,7 @@ function needsTarget() {
 
 /**
  * The bubble lives in the window on top, if one is open: a modal window makes everything outside it
- * inert, the top layer too. It comes from the top under that window's head, else from the bottom.
+ * inert, the top layer too. It comes from the top under that window's head (over a sheet, from the screen's top), else from the bottom.
  */
 function placeArrival() {
   const el = byId("arrival");
@@ -48,7 +48,7 @@ function placeArrival() {
     if (open) el.showPopover();
     if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
   }
-  const head = host.querySelector(":scope > :is(.dhead, .rv-head)");
+  const head = windowHead(host);
   el.style.setProperty("--dialog-head", `${head ? Math.round(head.getBoundingClientRect().bottom) : 0}px`);
   el.dataset.edge = host === document.body ? "bottom" : "top";
 }
