@@ -36,7 +36,8 @@ command.
     other signal, and no process the session did not register as its own.
 - To show a session's local servers and what works in each checkout, the desk reads only fixed /proc
   files of the session's own process tree (`children`, `fd`, `cmdline`, `cwd`, `stat`) and
-  `/proc/net/tcp{,6}`; it never signals or runs anything there.
+  `/proc/net/tcp{,6}`; it never signals or runs anything there. For the machine's own warnings it
+  reads only `/proc/loadavg`, `/proc/meminfo` and the `temp` files under `/sys/class/thermal/`.
 
 ## Data
 
