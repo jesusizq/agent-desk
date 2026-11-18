@@ -108,6 +108,8 @@ export class Page {
   readonly errors: string[] = [];
   /** The sessions attached to this page's out-of-process frames (a sandboxed iframe runs in its own process), by target. */
   private readonly frames = new Map<string, string>();
+  /** Waiting for the page's next document to load (reloadedBy). */
+  private readonly loads = new Set<() => void>();
 
   private readonly browser: Browser;
   private readonly sessionId: string;
@@ -138,7 +140,7 @@ export class Page {
       if (entry.level === "error") this.errors.push(`${entry.text} ${entry.url ?? ""}`.trim());
     } else if (m.method === "Runtime.consoleAPICalled" && p.type === "error") {
       this.errors.push((p.args as { value?: unknown; description?: string }[]).map((a) => String(a.value ?? a.description)).join(" "));
-    }
+    } else if (m.method === "Page.loadEventFired") for (const loaded of this.loads) loaded();
   }
 
   /**
@@ -185,6 +187,26 @@ export class Page {
     const r = await this.send<{ result: { value?: T }; exceptionDetails?: { exception?: { description?: string }; text: string } }>("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
     if (r.exceptionDetails) throw new Error(`${expression}: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
     return r.result.value as T;
+  }
+
+  /**
+   * Runs an action after which the page loads a new document by itself (a reload of its own), and
+   * returns once that document has loaded: an evaluation sent while it navigates fails with "Inspected
+   * target navigated or closed", so a page about to reload cannot be polled for it.
+   */
+  async reloadedBy(action: () => Promise<unknown>, ms = WAIT_MS): Promise<void> {
+    let loaded = () => {};
+    const load = new Promise<void>((resolve) => (loaded = resolve));
+    this.loads.add(loaded);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await action();
+      const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(`the page loaded no new document in ${ms} ms`)), ms)));
+      await Promise.race([load, late]);
+    } finally {
+      clearTimeout(timer);
+      this.loads.delete(loaded);
+    }
   }
 
   /** Waits until an expression is truthy in the page. */

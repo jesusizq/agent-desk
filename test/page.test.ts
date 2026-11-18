@@ -719,7 +719,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       const real = window.fetch;
       window.fetch = (url, init) => String(url) === "/api/state" ? Promise.resolve(new Response("{}", { status: 401, headers: { "X-Agent-Desk-Locked": "1" } })) : real(url, init);
     })()`);
-    await fetchNow(page);
+    await page.reloadedBy(() => fetchNow(page));
     await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')");
     assert.equal(await page.eval<string | null>("localStorage.getItem('agent-desk:drafts')"), null, "nothing written outlives the unlock");
     await page.click(".scard", "pin ended");
@@ -745,18 +745,26 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
   it("reloads when the unlock the desk named ends, so a device offline then shows nothing it saved", async () => {
     const page = await open();
-    // What the server tells a device that entered the PIN: when its unlock ends, here in a moment.
+    // What the server tells a device that entered the PIN: when its unlock ends, here in a moment from
+    // its first answer, so a slow answer cannot already be past it. The tab's session storage outlives
+    // the reload, to compare when it came with that end.
     await page.eval(`(() => {
       window.beforeReload = true;
       const real = window.fetch;
-      const ends = String(Date.now() + 800);
-      window.fetch = (url, init) => String(url) === "/api/state" ? real(url).then(async (r) => new Response(await r.text(), { headers: { "Content-Type": "application/json", "X-Agent-Desk-Unlock-Ends": ends } })) : real(url, init);
+      let ends = "";
+      window.fetch = (url, init) => String(url) === "/api/state" ? real(url).then(async (r) => {
+        const body = await r.text();
+        if (!ends) sessionStorage.setItem("ends", (ends = String(Date.now() + 800)));
+        return new Response(body, { headers: { "Content-Type": "application/json", "X-Agent-Desk-Unlock-Ends": ends } });
+      }) : real(url, init);
+      addEventListener("pagehide", () => sessionStorage.setItem("left", String(Date.now())));
     })()`);
     await page.eval(`localStorage.setItem("agent-desk:drafts", JSON.stringify({ drafts: [["message-demo-pagos", "unsent idea"]], images: [] }))`);
     await page.eval(`localStorage.setItem("agent-desk:reviews", JSON.stringify({ "rv-gone": { ops: [{ op: "set", key: "answers", value: "kept offline" }], at: 0.4 } }))`);
-    await fetchNow(page);
-    assert.equal(await page.eval<boolean>("window.beforeReload"), true, "not before the end");
-    await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')", 5000);
+    await page.reloadedBy(() => fetchNow(page));
+    await page.waitFor("window.beforeReload === undefined && document.querySelector('.scard')");
+    const [ends, left] = await page.eval<[number, number]>(`[Number(sessionStorage.getItem("ends")), Number(sessionStorage.getItem("left"))]`);
+    assert.ok(ends > 0 && left >= ends, `not before the end (left at ${left}, the unlock ended at ${ends})`);
     assert.equal(await page.eval<string | null>("localStorage.getItem('agent-desk:drafts')"), null, "its drafts went with the unlock");
     assert.equal(await page.eval<string | null>("localStorage.getItem('agent-desk:reviews')"), null, "and the review changes kept on the device");
   });
