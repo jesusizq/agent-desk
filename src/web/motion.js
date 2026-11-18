@@ -28,6 +28,8 @@ function tokens() {
 
 /** @type {WeakSet<Animation>} the slides of cards from where they showed, which a later redraw restarts from where they are */
 const slides = new WeakSet();
+/** @type {WeakSet<Animation>} what holds a card's stacking while its height changes, which a later redraw restarts with it */
+const stackings = new WeakSet();
 /** @type {WeakMap<Element, Animation[]>} what a redraw under a scope slid in the content of its scroll areas, which may lie outside it */
 const shifts = new WeakMap();
 
@@ -239,7 +241,8 @@ const origins = new WeakMap();
  * steadily to its end, where one ending first while another just starts would dip below the scroll, and
  * the browser would pull it down mid-way. Never past two lengths from its first start, however many redraws
  * follow (a burst of the event stream): a card on its way out leaves by then. What holds the element's
- * stacking while it changes goes on as long; each keeps its play state.
+ * stacking while its height changes goes on as long, not what holds it while it slides, which ends with the
+ * slide; each keeps its play state.
  * @param {Animation[]} earlier the animations running before this redraw's @param {Element} scroller @param {Tokens} t
  */
 function retime(earlier, scroller, t) {
@@ -253,7 +256,7 @@ function retime(earlier, scroller, t) {
   });
   const changing = new Set(ours.filter(({ end }) => "height" in end).map(({ el }) => el));
   for (const { a, effect, el, end } of ours) {
-    if (!changing.has(el) || !("height" in end || "zIndex" in end)) continue;
+    if (!changing.has(el) || !("height" in end || stackings.has(a))) continue;
     const origin = origins.get(a) ?? now - Number(a.currentTime ?? 0);
     const duration = Math.min(t.move, origin + 2 * t.move - now);
     if (duration <= 0) continue;
@@ -266,6 +269,7 @@ function retime(earlier, scroller, t) {
     const paused = a.playState === "paused";
     const next = el.animate([from, to], { duration, easing: t.easing, fill: effect.getTiming().fill, id: MOTION });
     origins.set(next, origin);
+    if (stackings.has(a)) stackings.add(next);
     if (paused) next.pause();
     Object.assign(next, { onfinish: a.onfinish, oncancel: a.oncancel });
     Object.assign(a, { onfinish: null, oncancel: null });
@@ -393,7 +397,7 @@ function animateColumn({ list, items, was, now, added, leftovers }, leaving, out
     const from = outOf.get(el);
     if (from) {
       el.animate([{ height: `${from.rect.height}px`, overflow: "hidden" }, { height: end.height, overflow: "hidden" }], options);
-      el.animate([{ zIndex: 2 }, { zIndex: 2 }], options); // over the cards it crosses
+      stackings.add(el.animate([{ zIndex: 2 }, { zIndex: 2 }], options)); // over the cards it crosses
       continue;
     }
     const side = gapSide(el);
