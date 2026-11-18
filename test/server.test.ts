@@ -582,6 +582,23 @@ describe("unreadable session files", () => {
     }
   });
 
+  it("holds from the state's questions what a live session's later end replaces, never one already dismissed", () => {
+    const own = testStore();
+    addSession(own, "s1");
+    fs.writeFileSync(own.paths.session("cut"), '{"id":"cut","provider":"Test","proj');
+    const replaced = own.ask({ sessionId: "s1", kind: "waiting", text: "Shall I fix the four of them?" });
+    const settled = own.ask({ sessionId: "s1", kind: "waiting", text: "Shall I fix the old ones?" });
+    own.replaceOnceStands("s1", (q) => q.id === replaced.id || q.id === settled.id);
+    own.closeOpen("s1", { which: (q) => q.id === settled.id, status: "dismissed" });
+    const asked = own.ask({ sessionId: "s1", kind: "waiting", text: "Shall I fix only two?" });
+    const at = Date.parse(own.getQuestion(replaced.id)?.replacedAt ?? "");
+    assert.equal(own.getQuestion(settled.id)?.replacedAt, new Date(at).toISOString(), "dismissed with its mark kept");
+    const shown = (ms: number) => deskState(own, new Date(at + ms), QUIET_MACHINE).questions.map((q) => q.id).sort();
+    assert.deepEqual(shown(1000), [settled.id, asked.id].sort(), "the dismissed one stays in the history");
+    assert.deepEqual(shown(10 * 60_000 + 1000), [replaced.id, settled.id, asked.id].sort(), "past ten quiet minutes it shows again");
+    assert.equal(deskState(own, new Date(at + 1000), QUIET_MACHINE).problems.length, 1);
+  });
+
   it("answers the state with a session's inbox that cannot be listed named in the problems", async () => {
     const own = testStore();
     addSession(own, "s1");
