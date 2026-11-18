@@ -11,6 +11,7 @@ import { sessionStatus } from "../../src/project/refresh.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
 import type { AgentFields, Store } from "../../src/store/store.ts";
 import { publishOpenedPages } from "./pages.ts";
+import { inHandoffs, refreshResumes } from "./resumes.ts";
 
 export const PROVIDER = "Claude Code";
 
@@ -73,6 +74,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // Started again (resumed, or the plugins reloaded): what its last end left no longer holds.
       store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, ...s }) => ({ ...s, state: "waiting" }));
       retireContinued(input, ctx, problems);
+      recordResumes(input, ctx, problems);
       return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: [instructions(), unreadReviews(input, ctx, problems), handoffText(input, ctx)].filter(Boolean).join("\n\n") } }) };
 
     case "UserPromptSubmit": {
@@ -135,6 +137,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (input.event !== "PermissionDenied" && (f.tool_name === "Agent" || f.tool_name === "Task")) launchReturned(input, ctx);
       if (input.event === "PostToolUse" && f.tool_name === "TaskStop") stoppedBySession(input, ctx);
       if (input.event === "PostToolUse" && f.tool_name === "Bash") publishPages(input, ctx, problems);
+      if (input.event === "PostToolUse" && f.tool_name === "Write" && writesHandoff(f.tool_input, ctx.env)) recordResumes(input, ctx, problems);
       return { code: 0 };
 
     case "Notification": {
@@ -167,6 +170,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       endTurn(input, ctx, problems);
       store.releaseQuestions(sid, problems); // last: with the turn's message already on them
       ctx.startScan?.(locateProject(workDir(input, ctx)).dir);
+      recordResumes(input, ctx, problems); // a handoff loaded this turn is gone
       return { code: 0 };
 
     case "SessionEnd":
@@ -217,6 +221,21 @@ function continuedElsewhere(transcript: string): boolean {
     if (type === "user" || type === "assistant") return false;
   }
   return false;
+}
+
+/** The project's pending handoffs, read again where one may have been written or loaded (see resumes.ts). */
+function recordResumes(input: Common, ctx: HookContext, problems: string[]): void {
+  try {
+    refreshResumes(locateProject(workDir(input, ctx)), ctx.store, ctx.env, problems);
+  } catch (error) {
+    problems.push(`pending handoffs not recorded: ${(error as Error).message}`);
+  }
+}
+
+/** A Write call whose file lies in the handoff folders. */
+function writesHandoff(toolInput: unknown, env: NodeJS.ProcessEnv): boolean {
+  const file = typeof toolInput === "object" && toolInput !== null ? (toolInput as Fields).file_path : undefined;
+  return typeof file === "string" && inHandoffs(file, env);
 }
 
 /** The folder the session was started in. */

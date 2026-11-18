@@ -271,14 +271,15 @@ export const TEXT = {
     title: "While you were away",
     /** @param {string} t */
     since: (t) => `since ${t}`,
-    /** @param {number} done @param {number} failed @param {number} answered @param {number} [stale] reviews left alone for days */
-    summary: (done, failed, answered, stale = 0) =>
-      [counts(done, failed), answered && `${answered} answered in the terminal`, stale && `${plural(stale, "review", "reviews")} waiting for you`].filter(Boolean).join(", ") || "new questions",
+    /** @param {number} done @param {number} failed @param {number} answered @param {number} [stale] reviews left alone for days @param {number} [resumes] handoffs to resume */
+    summary: (done, failed, answered, stale = 0, resumes = 0) =>
+      [counts(done, failed), answered && `${answered} answered in the terminal`, stale && `${plural(stale, "review", "reviews")} waiting for you`, resumes && `${plural(resumes, "handoff", "handoffs")} to resume`].filter(Boolean).join(", ") || "new questions",
     waits: COLS.needs,
     failed: "Failed",
     finished: "Finished",
     answered: "Answered in the terminal",
     reviews: "Reviews waiting",
+    resumes: "To resume",
     /** @param {string} title @param {string} day */
     untouched: (title, day) => `${title} · untouched since ${day}`,
     /** @param {number} n */
@@ -303,6 +304,17 @@ export const TEXT = {
   worktreeChip: (name, size, merged, reclaim) => `${name}: ${size} in worktrees${merged ? ` · ${merged} merged (${reclaim})` : ""}`,
   /** @param {number} n @param {string} size @param {number} merged */
   worktreeLine: (n, size, merged) => `${plural(n, "checkout", "checkouts")} · ${size}${merged ? ` · ${merged} already merged` : ""}`,
+  resumes: {
+    title: "To resume",
+    /** @param {string} name @param {number} n */
+    chip: (name, n) => `${name}: ${plural(n, "handoff", "handoffs")} to resume`,
+    /** @param {string} t */
+    written: (t) => `written ${t} ago`,
+    untitled: "A handoff with no objective",
+    /** @param {string} name */
+    note: (name) => `Paste the command in a new conversation of ${name}: it loads that handoff. Each one is offered for 48 hours.`,
+    copy: "Copy the command",
+  },
   worktrees: {
     title: "Worktrees",
     /** @param {string} size @param {string} grew @param {string} t */

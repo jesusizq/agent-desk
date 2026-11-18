@@ -390,6 +390,8 @@ describe("Claude Code hooks", () => {
     assert.ok(runs(call("Bash", { command: "sleep 120 && tail run.log" })));
     for (const command of ["xdg-open /tmp/r.html", "python3 -m webbrowser file:///tmp/r", "open review.htm"]) assert.ok(runs(call("Bash", { command })), `a page it may publish: ${command}`);
     assert.equal(runs(call("Edit", { file_path: "page.html" })), undefined, "an edit of a page opens nothing");
+    assert.ok(runs(call("Write", { file_path: "/home/u/.cache/claude-handoffs/shop/2026-11-18-0900.md", content: "## Objetivo" })), "a handoff written is read at once");
+    assert.equal(runs(call("Write", { file_path: "/work/shop/notes.md", content: "" })), undefined, "any other write is sampled");
     fs.writeFileSync(path.join(home, ".failing"), "");
     assert.ok(runs(call("Read", { file_path: "a.ts" })), "while a streak of failures is open, every call counts");
   });

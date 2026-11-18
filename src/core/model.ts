@@ -26,6 +26,8 @@ import {
   type InboxEntry,
   type BranchState,
   type Handoff,
+  type ProjectResumes,
+  type ResumeNote,
   type PastDecision,
   type ProjectScan,
   type Worktree,
@@ -405,6 +407,32 @@ export function readHandoff(value: unknown, where = "handoff"): Handoff {
 
 /** The most a handoff says, in characters: what a compacted session reads first stays short. */
 export const HANDOFF_MAX = 3000;
+
+/** A resume note's title and command are one line each; a project keeps at most this many notes. */
+export const RESUME_TITLE_MAX = 200;
+export const RESUME_COMMAND_MAX = 200;
+export const RESUME_NOTES_MAX = 20;
+
+export function readProjectResumes(value: unknown, where = "resumes"): ProjectResumes {
+  const f = fields(value, where);
+  return {
+    id: id(f.id, `${where}.id`),
+    name: label(f.name, `${where}.name`),
+    dir: nonEmpty(f.dir, `${where}.dir`, 4096),
+    at: isoTime(f.at, `${where}.at`),
+    notes: list(f.notes, `${where}.notes`, readResumeNote, RESUME_NOTES_MAX),
+  };
+}
+
+function readResumeNote(value: unknown, where: string): ResumeNote {
+  const f = fields(value, where);
+  return compact({
+    title: optional(f.title, `${where}.title`, (v, w) => oneLine(v, w, RESUME_TITLE_MAX)),
+    writtenAt: isoTime(f.writtenAt, `${where}.writtenAt`),
+    expiresAt: isoTime(f.expiresAt, `${where}.expiresAt`),
+    command: oneLine(f.command, `${where}.command`, RESUME_COMMAND_MAX),
+  });
+}
 
 export function readSeen(value: unknown, where = "seen"): Seen {
   return { since: isoTime(fields(value, where).since, `${where}.since`) };

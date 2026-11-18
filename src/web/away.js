@@ -7,6 +7,7 @@ import { dayLabel, firstLine, headline, stamp } from "./format.js";
 import { ONE_COLUMN, showNeedsYou } from "./layout.js";
 import { beacon, dot } from "./pieces.js";
 import { openResult } from "./result.js";
+import { openResumes, pendingNotes, resumesInView } from "./projects.js";
 import { openReview, touchedAt, untouched } from "./review.js";
 import { openSession } from "./session.js";
 import { data, inProject, openItems, openReviews, page, S, ui } from "./state.js";
@@ -77,6 +78,10 @@ function happened() {
     asked: items.filter((it) => it.questions.some((q) => during(q.askedAt))).length,
     // A calm reminder, not news: reviews left alone for days, oldest touched first.
     stale: openReviews().filter(untouched).sort((a, b) => touchedAt(a).localeCompare(touchedAt(b))),
+    // Work left for a new conversation, newest first: the reminder for the next morning.
+    resumes: resumesInView()
+      .flatMap((p) => pendingNotes(p).map((note) => ({ note, project: p })))
+      .sort((a, b) => b.note.writtenAt.localeCompare(a.note.writtenAt)),
   };
 }
 
@@ -88,8 +93,8 @@ function happened() {
 export function awaySummary() {
   if (!away || !ui.loaded || ui.view !== "desk") return null;
   const t = TEXT.away;
-  const { finished, failed, answered, waits, asked, stale } = happened();
-  if (!finished.length && !failed.length && !answered.length && !asked && !stale.length) return null;
+  const { finished, failed, answered, waits, asked, stale, resumes } = happened();
+  if (!finished.length && !failed.length && !answered.length && !asked && !stale.length && !resumes.length) return null;
   // A phone shows one line per group, so the summary leaves Needs you in view.
   const shown = ONE_COLUMN.matches ? 1 : 3;
   /**
@@ -121,7 +126,7 @@ export function awaySummary() {
       "div",
       { class: "away-head" },
       h("b", { id: "away-title" }, t.title),
-      h("span", { class: "muted" }, t.since(stamp(away.since)), " · ", t.summary(finished.length, failed.length, answered.length, stale.length)),
+      h("span", { class: "muted" }, t.since(stamp(away.since)), " · ", t.summary(finished.length, failed.length, answered.length, stale.length, resumes.length)),
       h("span", { class: "spacer" }),
       h("button", { class: "icon-btn away-close", "aria-label": t.dismiss, title: t.dismiss, onclick: () => ((away = null), page.render()) }, icon("x")),
     ),
@@ -141,6 +146,10 @@ export function awaySummary() {
         [headline(q.text), q.answer ? [" → ", h("b", {}, firstLine(q.answer.text))] : null, " ", where(q.sessionId)],
         session(q.sessionId),
       ], history("decision")),
+      group("resumes", t.resumes, resumes, ({ note, project }) => [icon("history"), [note.title ?? TEXT.resumes.untitled, " ", h("span", { class: "away-where" }, project.name)], () => openResumes(project.id)], () => {
+        const next = resumes[shown];
+        if (next) openResumes(next.project.id);
+      }),
       group("reviews", t.reviews, stale, (r) => [icon("doc"), [t.untouched(r.title, dayLabel(touchedAt(r))), " ", h("span", { class: "away-where" }, r.project.name)], () => openReview(r.id)], () => ((ui.view = "desk"), (ui.tab = "review"), page.render())),
     ),
   );

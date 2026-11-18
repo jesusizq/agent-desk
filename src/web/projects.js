@@ -9,6 +9,8 @@ import { data, ui } from "./state.js";
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").ProjectScan} ProjectScan */
 /** @typedef {import("../core/protocol.ts").Worktree} Worktree */
+/** @typedef {import("../core/protocol.ts").ProjectResumes} ProjectResumes */
+/** @typedef {import("../core/protocol.ts").ResumeNote} ResumeNote */
 
 const WARN_BYTES = 5e9;
 /** @param {Worktree[]} ws */
@@ -55,6 +57,41 @@ export function openProject(projectId) {
       open.length ? h("div", { class: "rsec" }, h("h4", {}, t.open(open.length)), rows(open, (w) => (w.ahead !== undefined ? t.ahead(w.ahead) : ""))) : null,
       h("div", { class: "rsec" }, h("h4", {}, t.main), rows(main, (w) => w.branch ?? "")),
       p.problems.length ? h("div", { class: "rsec faint" }, p.problems.join("\n")) : null,
+    ),
+  );
+  if (!d.open) d.showModal();
+}
+
+/** A project's notes that can still be loaded: one past its end is hidden even when no hook ran since. @param {ProjectResumes} p */
+export const pendingNotes = (p) => p.notes.filter((n) => Date.parse(n.expiresAt) > Date.now());
+/** The projects shown that have work left for a new conversation. */
+export const resumesInView = () => data.resumes.filter((p) => (ui.project === null || p.name === ui.project) && pendingNotes(p).length > 0);
+
+/** A project's pending handoffs, newest first: what each is about, its age, and the command that loads it, copied with a click. @param {string} projectId */
+export function openResumes(projectId) {
+  const p = data.resumes.find((x) => x.id === projectId);
+  if (!p) return;
+  ui.panelSession = null;
+  const d = dialog("session");
+  const t = TEXT.resumes;
+  d.replaceChildren(
+    dialogHead(d, projectMark(p.name), t.title),
+    h(
+      "div",
+      { class: "dbody" },
+      h("div", { class: "status" }, h("span", {}, t.note(p.name))),
+      h(
+        "div",
+        { class: "alist resume-list" },
+        pendingNotes(p).map((n) =>
+          h(
+            "div",
+            { class: "arow resume" },
+            h("span", { class: "awhat" }, h("span", { class: "agoal" }, n.title ?? t.untitled), h("span", { class: "adoing" }, t.written(ago(n.writtenAt)))),
+            h("button", { class: "secondary", title: t.copy, onclick: () => copy(n.command) }, icon("copy"), h("code", {}, n.command)),
+          ),
+        ),
+      ),
     ),
   );
   if (!d.open) d.showModal();

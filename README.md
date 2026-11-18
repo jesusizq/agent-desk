@@ -30,6 +30,10 @@ and step away. When you come back, one browser tab shows:
   reading is; `agent-desk status` prints the same for the session, and before a compaction it is
   kept for the session to get back.
 - **What was said,** so a question makes sense without scrolling back through the terminal.
+- **Work left for a new conversation:** each project's pending handoffs (written by a handoff
+  plugin, under 48 h and not loaded yet; the Claude Code adapter reads the `ahorro` plugin's), with
+  what each is about, how old it is and the command that loads it, copied with a click, in the
+  strip and in the summary of what happened while you were away.
 - **Warnings before something breaks:** a context nearly full, a disk nearly full, worktrees piling
   up (how much each takes, which are already merged into the main branch, and the commands to remove
   them, copied, never run).

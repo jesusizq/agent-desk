@@ -7,7 +7,7 @@ import { clockAt, gb, hm } from "./format.js";
 import { awaySummary } from "./away.js";
 import { markCut } from "./layout.js";
 import { projectMark } from "./pieces.js";
-import { mergedOf, openProject, projectsInView, sum, worthWarning } from "./projects.js";
+import { mergedOf, openProject, openResumes, pendingNotes, projectsInView, resumesInView, sum, worthWarning } from "./projects.js";
 import { offlineNotice, post, run } from "./server.js";
 import { openSession } from "./session.js";
 import { CONTEXT_WARN, data, inbox, inProject, isLive, isNew, label, metricsOf, onDesk, openItems, openReviews, page, toReview, ui } from "./state.js";
@@ -160,6 +160,7 @@ export function renderStrip() {
         ? h("span", { class: "chip warn" }, t.out(f.label, t.pace[f.pace], clockAt(f.fullAt), clockAt(f.resetsAt)))
         : h("span", { class: "chip" }, t.high(f.label, t.pace[f.pace], f.atReset, clockAt(f.resetsAt)));
     }),
+    resumesInView().map((p) => h("button", { class: "chip resume-chip", onclick: () => openResumes(p.id) }, TEXT.resumes.chip(p.name, pendingNotes(p).length))),
     projectsInView()
       .filter((p) => worthWarning(p))
       .map((p) => {

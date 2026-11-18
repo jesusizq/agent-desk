@@ -15,6 +15,7 @@ import {
   type MessageAuthor,
   type ConversationEntry,
   type Handoff,
+  type ProjectResumes,
   type ProjectScan,
   type Question,
   type QuestionGroup,
@@ -32,6 +33,7 @@ import {
   type PlanWindow,
   readConversationEntry,
   readHandoff,
+  readProjectResumes,
   readProjectScan,
   readQuestion,
   readResult,
@@ -62,6 +64,7 @@ export type Clock = () => Date;
 /** Everything the page shows, plus the files that could not be read (never silently skipped). */
 export type Snapshot = {
   projects: ProjectScan[];
+  resumes: ProjectResumes[];
   sessions: Session[];
   questions: Question[];
   agents: Agent[];
@@ -1379,6 +1382,27 @@ export class Store {
     return this.readAll(this.paths.projectsDir, readProjectScan, problems);
   }
 
+  // ── Resume notes ──────────────────────────────────────────────────────
+
+  /** A project's notes as its adapter read them; a project left with none has no file. */
+  putResumes(resumes: ProjectResumes): ProjectResumes {
+    const next = readProjectResumes(resumes);
+    const file = this.paths.resumes(next.id);
+    if (next.notes.length) writeJson(file, next);
+    else fs.rmSync(file, { force: true });
+    return next;
+  }
+
+  getResumes(projectId: string): ProjectResumes | undefined {
+    const file = this.paths.resumes(projectId);
+    const raw = readJson(file);
+    return raw === undefined ? undefined : readProjectResumes(raw, file);
+  }
+
+  listResumes(problems?: string[]): ProjectResumes[] {
+    return this.readAll(this.paths.resumesDir, readProjectResumes, problems);
+  }
+
   // ── Handoffs ──────────────────────────────────────────────────────────
 
   putHandoff(handoff: Handoff): Handoff {
@@ -1538,6 +1562,7 @@ export class Store {
       services: this.listServices(problems),
       metrics: this.listMetrics(problems),
       projects: this.listProjectScans(problems),
+      resumes: this.listResumes(problems),
       reviews: this.listReviews(problems),
       seen,
       problems,
@@ -1560,6 +1585,7 @@ export class Store {
       p.servicesDir,
       p.metricsDir,
       p.projectsDir,
+      p.resumesDir,
       p.agentsDir,
       ...this.subdirs(p.agentsDir),
       p.inboxDir,

@@ -414,6 +414,16 @@ export type SessionBranches = { sessionId: string; projectId: string; baseBranch
 /** The mechanical half of a session's handoff, recorded by its adapter before its context is compacted. */
 export type Handoff = { sessionId: string; at: string; trigger: "manual" | "auto"; text: string };
 
+/**
+ * Work left for a new conversation of the project, as its adapter last read it: what it is about
+ * (`title`, one line, absent when it says nothing), when it was written, until when it can be loaded
+ * (the page hides it after), and the command that loads it in a new conversation.
+ */
+export type ResumeNote = { title?: string; writtenAt: string; expiresAt: string; command: string };
+
+/** A project's resume notes, newest first, as its adapter read them at `at`; `id` as `ProjectScan`'s. */
+export type ProjectResumes = { id: string; name: string; dir: string; at: string; notes: ResumeNote[] };
+
 /** A filesystem holding active projects that is running out of space. */
 export type DiskWarning = { dir: string; projects: string[]; freeBytes: number; totalBytes: number };
 
@@ -490,6 +500,8 @@ export type DeskState = {
   disk: DiskWarning[];
   projects: ProjectScan[];
   reviews: Review[];
+  /** Projects with work left for a new conversation; a note past its `expiresAt` is not shown. */
+  resumes: ProjectResumes[];
   /** Each running session's branches, from its project's last scan. */
   branches: SessionBranches[];
   /** Changes when the server restarts; the page reloads itself to pick up new code. */

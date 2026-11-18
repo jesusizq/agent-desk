@@ -750,6 +750,10 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
   .skel, .answer .send[aria-busy="true"] .spin, .arm.armed::after { animation: none; }
 }
 .wt-list { max-height: 340px; overflow: auto; }
+/* A pending handoff: what it is about, wrapped whole, and the command that loads it beside it. */
+.resume .awhat .adoing { padding-left: 0; }
+.resume .agoal { overflow-wrap: anywhere; }
+.resume button { white-space: nowrap; }
 .wt-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
 /* Ending a session cannot be undone: set apart, in the colour of what stops. */
 .wt-actions .danger { color: var(--danger); }

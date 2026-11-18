@@ -36,6 +36,8 @@ export class StorePaths {
   get inboxMarker() { return path.join(this.home, ".inbox-pending"); }
   get projectsDir() { return path.join(this.home, "projects"); }
   get handoffsDir() { return path.join(this.home, "handoffs"); }
+  get resumesDir() { return path.join(this.home, "resumes"); }
+  resumes(projectId: string) { return this.inside(this.resumesDir, `${id(projectId, "project id")}.json`); }
   handoff(sessionId: string) { return this.inside(this.handoffsDir, `${id(sessionId, "session id")}.json`); }
   get messagesDir() { return path.join(this.home, "messages"); }
   messageDir(sessionId: string) { return this.inside(this.messagesDir, id(sessionId, "session id")); }

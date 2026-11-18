@@ -454,6 +454,33 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.equal(await page.eval<string>("navigator.clipboard.readText()"), "git worktree prune");
   });
 
+  it("offers a project's pending handoffs from the strip, each with its age and its command copied with a click, and hides one past its end", async () => {
+    const hour = 3600_000;
+    const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const resumes = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", at: iso(0), notes: [
+      { title: "Finish the pay page <b>now</b>", writtenAt: iso(-3 * hour), expiresAt: iso(45 * hour), command: "/load 1" },
+      { writtenAt: iso(-5 * hour), expiresAt: iso(43 * hour), command: "/load 2" },
+      { title: "Expired since", writtenAt: iso(-49 * hour), expiresAt: iso(-hour), command: "/load 3" },
+    ] };
+    store.putResumes(resumes);
+    try {
+      await browser.send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
+      const page = await open();
+      await page.click("#strip .resume-chip", "web-shop: 2 handoffs to resume");
+      await page.waitFor(arrived("session"));
+      const rows = await page.eval<string[]>("[...document.querySelectorAll('#session .resume')].map((r) => r.textContent)");
+      assert.equal(rows.length, 2, "the expired one is not offered");
+      assert.match(rows[0] ?? "", /^Finish the pay page <b>now<\/b>written 3 h ago\/load 1$/, "its objective as plain text");
+      assert.match(rows[1] ?? "", /^A handoff with no objective/);
+      assert.equal(await page.eval<number>("document.querySelectorAll('#session .resume b').length"), 0);
+      await page.click("#session .resume button", "/load 1");
+      await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent === 'Copied: /load 1')");
+      assert.equal(await page.eval<string>("navigator.clipboard.readText()"), "/load 1");
+    } finally {
+      store.putResumes({ ...resumes, notes: [] });
+    }
+  });
+
   it("opens a session from its card, shows the turn at work, and closes with Escape", async () => {
     const page = await open();
     await page.click(".scard", "checkout redesign");
@@ -2833,6 +2860,22 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       await page.click(".away-close");
       await page.waitFor("!document.querySelector('.away') && document.querySelector('#strip > .muted')");
       store.markResultSeen(done.id);
+    });
+
+    it("reminds of the handoffs waiting to be resumed, a line opening its project's list", async () => {
+      const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
+      const resumes = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", at: iso(0), notes: [{ title: "Pick up the pay page", writtenAt: iso(-10 * 3600_000), expiresAt: iso(38 * 3600_000), command: "/load" }] };
+      store.putResumes(resumes);
+      try {
+        const page = await openAway(600);
+        await page.waitFor("document.querySelector('#strip .away')");
+        assert.match(await page.eval<string>("document.querySelector('.away-head').textContent"), /1 handoff to resume/);
+        assert.deepEqual(await lines(page, "resumes"), ["Pick up the pay page web-shop"]);
+        await page.click(".away [data-key=\"resumes\"] .away-line");
+        await page.waitFor(`${arrived("session")} && document.querySelector('#session .resume')?.textContent.includes('/load')`);
+      } finally {
+        store.putResumes({ ...resumes, notes: [] });
+      }
     });
 
     it("says nothing after a short absence, and sums up on coming back to a page left hidden for a while", async () => {
