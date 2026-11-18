@@ -31,14 +31,20 @@ const slides = new WeakSet();
 /** @type {WeakMap<Element, Animation[]>} what a redraw under a scope slid in the content of its scroll areas, which may lie outside it */
 const shifts = new WeakMap();
 
+/** Whether an element scrolls its content: it may, and it has more than it shows. @param {Element} e */
+function scrolls(e) {
+  const y = getComputedStyle(e).overflowY;
+  return (y === "auto" || y === "scroll") && e.scrollHeight > e.clientHeight;
+}
 /** The element whose scroll carries a list: the first one up that scrolls, else the document (a phone's). @param {Element} el */
 function scrollerOf(el) {
-  for (let e = /** @type {Element | null} */ (el); e && e !== document.body && e !== document.documentElement; e = e.parentElement) {
-    const y = getComputedStyle(e).overflowY;
-    if ((y === "auto" || y === "scroll") && e.scrollHeight > e.clientHeight) return e;
-  }
+  for (let e = /** @type {Element | null} */ (el); e && e !== document.body && e !== document.documentElement; e = e.parentElement) if (scrolls(e)) return e;
   return document.scrollingElement ?? document.documentElement;
 }
+/** The element whose children a scroll area's scroll carries: the body, for the document's. @param {Element} scroller */
+const holderOf = (scroller) => (scroller === document.scrollingElement ? document.body : scroller);
+/** What shows over the page: an open dialog or popover, out of the scroll of what lies under it. */
+const OVER = ":modal, :popover-open";
 /** Where a scroll area starts showing its content, in the window. @param {Element} scroller */
 const viewTop = (scroller) => (scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top + scroller.clientTop);
 /**
@@ -55,21 +61,26 @@ function contentOf(scroller) {
       if (!(el instanceof HTMLElement)) continue;
       const cs = getComputedStyle(el);
       if (cs.display === "contents") walk(el);
-      else if (shown(el) && cs.position !== "fixed" && !el.matches(":modal, :popover-open")) boxes.push(el);
+      else if (shown(el) && cs.position !== "fixed" && !el.matches(OVER)) boxes.push(el);
     }
   };
-  walk(scroller === document.scrollingElement ? document.body : scroller);
+  walk(holderOf(scroller));
   return boxes;
 }
 
 /** The dialog or popover over the page that holds `el`, if any. @param {Element} el */
-const layerOf = (el) => el.closest(":modal, :popover-open");
+const layerOf = (el) => el.closest(OVER);
 /**
- * Whether a scroll area's scroll carries `el`: inside it, and not in a layer over the page (an open session
- * panel over a phone's page) unless the area is too.
+ * Whether a scroll area's scroll carries `el`: inside it, with no area between them that scrolls it instead
+ * (a desktop column's own, within the document), and not in a layer over the page (an open session panel
+ * over a phone's page) unless the area is too.
  * @param {Element} scroller @param {Element} el
  */
-const carries = (scroller, el) => (scroller === document.scrollingElement ? document.body : scroller).contains(el) && layerOf(el) === layerOf(scroller);
+function carries(scroller, el) {
+  if (!holderOf(scroller).contains(el) || layerOf(el) !== layerOf(scroller)) return false;
+  for (let e = el.parentElement; e && e !== scroller && e !== document.body; e = e.parentElement) if (scrolls(e)) return false;
+  return true;
+}
 
 /**
  * How far each scroll area can scroll once every motion has ended: measured with the motions of what it

@@ -3383,6 +3383,43 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    // Needs you not overflowing scrolls with the document, which holds every column: one with a scroll of its
+    // own carries its motions, which a redraw of Needs you neither takes off to measure nor starts again.
+    it("on a desktop, a redraw of a column the document scrolls leaves alone the motions of a column scrolling on its own", async () => {
+      const id = "own-scroll";
+      const done = asking(id, "a column of its own scroll");
+      store.upsertSession({ id, provider: "Test", project: { name: "scrolled-results", dir: "/home/demo/Projects/scrolled-results" }, title: "a column of its own scroll", state: "waiting" });
+      const results = Array.from({ length: 24 }, (_, i) => store.addResult({ sessionId: id, title: `Result ${i + 1} filling its column` }));
+      // Already asking: the next question only adds a row, and the board keeps its shape.
+      store.ask({ sessionId: id, kind: "question", text: "Asked first beside a scrolled column?", options: ["Yes", "No"] });
+      try {
+        const page = await open(1400, 900);
+        await page.click("#projects button", "scrolled-results");
+        await page.waitFor(`document.querySelector('.col-review [data-key^="r-"]') && document.querySelector('.col-needs .next')?.textContent.includes('Asked first beside') && ${STILL}`);
+        const scrolling = await page.eval<{ needs: boolean; review: boolean }>(`(() => {
+          const scrolls = (sel) => { const e = document.querySelector(sel); return e.scrollHeight > e.clientHeight; };
+          return { needs: scrolls('.col-needs .col-body'), review: scrolls('.col-review .col-body') };
+        })()`);
+        assert.deepEqual(scrolling, { needs: false, review: true }, "Needs you scrolls with the document, the results column on its own");
+        // A change of height of the desk's in the results column, which counts each time it is taken off its element.
+        await page.eval(`(() => {
+          const tile = document.querySelector('.col-review [data-list] > [data-key]');
+          window.ownMotion = tile.animate([{ height: tile.getBoundingClientRect().height + 'px' }, { height: tile.getBoundingClientRect().height + 'px' }], { id: 'motion', duration: 60000 });
+          const effect = ownMotion.effect;
+          const target = Object.getOwnPropertyDescriptor(KeyframeEffect.prototype, 'target');
+          window.takenOff = 0;
+          Object.defineProperty(effect, 'target', { get: () => target.get.call(effect), set: (el) => { if (el === null) takenOff++; target.set.call(effect, el); } });
+        })()`);
+        store.ask({ sessionId: id, kind: "question", text: "Asked beside a scrolled column?", options: ["Yes", "No"] });
+        await page.waitFor("[...document.querySelectorAll('.col-needs .qrow')].some((r) => r.textContent.includes('Asked beside a scrolled column?'))");
+        assert.deepEqual(await page.eval("({ takenOff, state: ownMotion.playState })"), { takenOff: 0, state: "running" }, "the results column's motion is neither measured nor started again");
+        await page.eval("ownMotion.cancel()");
+      } finally {
+        for (const r of results) store.markResultSeen(r.id);
+        done();
+      }
+    });
+
     it("puts back the motions and the leaving cards it set aside to measure the board, also when the measure fails", async () => {
       const id = "measure-fails";
       const done = asking(id, "measure fails");
