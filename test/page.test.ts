@@ -3490,12 +3490,12 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       it(`${phone ? "on a phone, " : ""}a redraw of the desk behind the session panel leaves the developer's scroll of the panel going`, async () => {
         const id = `behind-panel-${width}`;
         const done = asking(id, "asks behind the panel");
-        const text = `Asked behind the panel at ${width}?`;
+        const text = `Asked behind the panel at ${width}`;
         try {
           const page = await open(width, height);
           await page.eval("location.hash = '#s=demo-checkout'");
           await page.waitFor(`${arrived("session")} && document.querySelector('#session .msg.from-session') && ${STILL}`);
-          const scrolled = page.eval<{ at: number | null; target: number; end: number; turns: number }>(`new Promise((done) => {
+          const scrolled = page.eval<{ at: number | null; target: number; end: number; turns: number; redraws: number }>(`new Promise((done) => {
             const body = document.querySelector('#session .session-body');
             // Taller while it runs, so the measure would also clamp the panel's scroll.
             const motion = body.firstElementChild.animate([{ marginBottom: '4000px' }, { marginBottom: '4000px' }], { id: 'motion', duration: 60000 });
@@ -3503,10 +3503,16 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
             let target = 0, at = null, turns = 0, still = 0, last = -1;
             // The developer scrolls the panel down and up, smoothly, until the desk behind it redraws, then lets the scroll end.
             const go = () => { target = ends[++turns % 2]; body.scrollTo({ top: target, behavior: 'smooth' }); };
+            window.panelRedraws = 0;
+            window.panelAt = null;
             new MutationObserver((_, observer) => {
-              if (![...document.querySelectorAll('#view .qrow')].some((r) => r.textContent.includes(${JSON.stringify(text)}))) return;
+              const rows = [...document.querySelectorAll('#view .qrow')].filter((r) => r.textContent.includes(${JSON.stringify(text)})).length;
+              if (rows <= panelRedraws) return;
+              panelRedraws = rows;
+              // Landed in the frame a leg of the scroll ended in, before the next began, it could not end one: the next question's is awaited.
+              if (Math.abs(body.scrollTop - target) < 1) return;
               observer.disconnect();
-              at = body.scrollTop;
+              at = panelAt = body.scrollTop;
             }).observe(document.getElementById('view'), { childList: true, subtree: true });
             go();
             const tick = () => {
@@ -3514,14 +3520,19 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
               if (at === null && Math.abs(top - target) < 1) go();
               still = top === last ? still + 1 : 0;
               last = top;
-              if (at !== null && still >= 10) {
+              if ((at !== null && still >= 10) || window.panelGiveUp) {
                 motion.cancel();
-                done({ at, target, end: top, turns });
+                done({ at, target, end: top, turns, redraws: panelRedraws });
               } else requestAnimationFrame(tick);
             };
             requestAnimationFrame(tick);
           })`);
-          store.ask({ sessionId: id, kind: "question", text, options: ["Yes", "No"] });
+          for (let i = 1; i <= 5; i++) {
+            store.ask({ sessionId: id, kind: "question", text: `${text}, ${i}?`, options: ["Yes", "No"] });
+            await page.waitFor(`panelRedraws >= ${i}`);
+            if ((await page.eval<number | null>("panelAt")) !== null) break;
+          }
+          await page.eval("window.panelGiveUp = panelAt === null");
           const seen = await scrolled;
           assert.ok(seen.at !== null && Math.abs(seen.at - seen.target) >= 1, `the desk redrew while the panel scrolled: ${JSON.stringify(seen)}`);
           assert.ok(Math.abs(seen.end - seen.target) < 1, `the panel's scroll went on to its end: ${JSON.stringify(seen)}`);
