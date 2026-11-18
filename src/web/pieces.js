@@ -4,7 +4,7 @@ import { byId, h, icon } from "./dom.js";
 import { grow } from "./motion.js";
 import { TEXT } from "./text.js";
 import { ago, clockAt, color, heat, providerMark } from "./format.js";
-import { CONTEXT_WARN, ID, label, ON_THIS_MACHINE, projectColor, sessionName } from "./state.js";
+import { CONTEXT_WARN, ID, isLive, label, ON_THIS_MACHINE, projectColor, sessionName } from "./state.js";
 import { suggestionOf } from "./suggest.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
@@ -149,10 +149,10 @@ export function emptyState(key, text, { mark, action } = {}) {
 /**
  * The command a session's state calls for now (suggest.js), copied with a click, on its card and in
  * its panel alike; null when it calls for none. The panel names only the command, its chips around say why.
- * @param {Metrics | undefined} m @param {{ bare?: boolean }} [how]
+ * @param {Session} s @param {Metrics | undefined} m @param {{ bare?: boolean }} [how]
  */
-export function suggestionChip(m, { bare = false } = {}) {
-  const suggestion = suggestionOf(m);
+export function suggestionChip(s, m, { bare = false } = {}) {
+  const suggestion = suggestionOf(m, isLive(s));
   if (!m || !suggestion) return null;
   const { command, reason } = suggestion;
   return h("button", { class: "chip warn", title: TEXT.suggest[reason](m), onclick: (/** @type {Event} */ e) => (e.stopPropagation(), copy(command)) }, icon("copy"), bare ? command : TEXT.suggestChip(suggestion, m));

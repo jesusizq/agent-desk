@@ -1972,8 +1972,14 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         store.mergeMetrics({ sessionId: "cold", contextTokens: 40_000, contextPercent: 4 });
         await page.waitFor("!document.querySelector('#session .pchips .chip.warn')");
         await page.press("Escape");
+        // Ended (kept on the desk by the question it ended on), nothing can run the command: its card suggests none.
+        store.mergeMetrics({ sessionId: "cold", contextTokens: 180_000, contextPercent: 18 });
+        await page.waitFor(`${card}?.querySelector('.chip.warn')`);
+        store.updateSession("cold", (s) => ({ ...s, state: "ended", endedAsking: true, lastMessage: { text: "Shall I go on?", at: new Date().toISOString() } }));
+        await page.waitFor(`${card}?.querySelector('.s-actions') && !${card}.querySelector('.chip.warn')`);
       } finally {
         store.updateSession("cold", (s) => ({ ...s, state: "ended" }));
+        store.forgetSession("cold");
       }
     });
 

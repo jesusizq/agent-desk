@@ -23,10 +23,12 @@ export function coldResume(m, now = Date.now()) {
 
 /**
  * The command to suggest: starting afresh over a cold cache comes first, then what its adapter
- * suggested (compacting a full context). @param {Metrics | undefined} m @param {number} [now]
+ * suggested (compacting a full context). None for a session that ended or whose process is gone:
+ * nothing can run it there. @param {Metrics | undefined} m @param {boolean} live @param {number} [now]
  * @returns {Suggestion | undefined}
  */
-export function suggestionOf(m, now = Date.now()) {
+export function suggestionOf(m, live, now = Date.now()) {
+  if (!live) return undefined;
   const cold = coldResume(m, now);
   return cold ? { reason: "cache-cold", command: cold.command } : m?.suggestion;
 }

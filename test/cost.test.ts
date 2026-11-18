@@ -167,19 +167,21 @@ describe("cold resume", () => {
     assert.throws(() => freshCommand(settings), /settings\.json: not valid JSON/);
   });
 
-  it("suggests starting afresh once the cache has expired on a context of 150k tokens or half its window, as time passes", async () => {
+  it("suggests starting afresh once the cache has expired on a context of 150k tokens or half its window, as time passes, only to a live session", async () => {
     const at = Date.parse("2026-11-18T12:00:00Z");
-    const suggest = (await import(path.join(import.meta.dirname, "../src/web/suggest.js"))) as { suggestionOf: (m: Metrics | undefined, now?: number) => Suggestion | undefined };
+    const suggest = (await import(path.join(import.meta.dirname, "../src/web/suggest.js"))) as { suggestionOf: (m: Metrics | undefined, live: boolean, now?: number) => Suggestion | undefined };
     const full: Suggestion = { reason: "context-full", command: "/compact" };
     const m = (contextTokens: number, contextPercent: number, cacheExpiresAt = "2026-11-18T11:59:59Z"): Metrics =>
       ({ sessionId: "cc-1", at: "2026-11-18T11:00:00Z", contextTokens, contextPercent, cacheExpiresAt, suggestion: full, coldResume: { command: "/ahorro:handoff", costUsd: 1.2 } });
     const cold = { reason: "cache-cold", command: "/ahorro:handoff" };
-    assert.deepEqual(suggest.suggestionOf(m(150_000, 15), at), cold);
-    assert.deepEqual(suggest.suggestionOf(m(149_999, 15), at), full, "below both thresholds: what the adapter suggested");
-    assert.deepEqual(suggest.suggestionOf(m(100_000, 50), at), cold, "half of a 200k window");
-    assert.deepEqual(suggest.suggestionOf(m(99_800, 49.9), at), full);
-    assert.deepEqual(suggest.suggestionOf(m(400_000, 40, "2026-11-18T12:00:01Z"), at), full, "the cache still warm");
-    assert.deepEqual(suggest.suggestionOf(m(400_000, 40, "2026-11-18T12:00:01Z"), at + 1000), cold, "the same metrics, a second later");
-    assert.equal(suggest.suggestionOf({ sessionId: "cc-1", at: "2026-11-18T11:00:00Z", contextTokens: 400_000, cacheExpiresAt: "2026-11-18T11:00:00Z" }, at), undefined, "an adapter that offers no command");
+    assert.deepEqual(suggest.suggestionOf(m(150_000, 15), true, at), cold);
+    assert.deepEqual(suggest.suggestionOf(m(149_999, 15), true, at), full, "below both thresholds: what the adapter suggested");
+    assert.deepEqual(suggest.suggestionOf(m(100_000, 50), true, at), cold, "half of a 200k window");
+    assert.deepEqual(suggest.suggestionOf(m(99_800, 49.9), true, at), full);
+    assert.deepEqual(suggest.suggestionOf(m(400_000, 40, "2026-11-18T12:00:01Z"), true, at), full, "the cache still warm");
+    assert.deepEqual(suggest.suggestionOf(m(400_000, 40, "2026-11-18T12:00:01Z"), true, at + 1000), cold, "the same metrics, a second later");
+    assert.equal(suggest.suggestionOf({ sessionId: "cc-1", at: "2026-11-18T11:00:00Z", contextTokens: 400_000, cacheExpiresAt: "2026-11-18T11:00:00Z" }, true, at), undefined, "an adapter that offers no command");
+    assert.equal(suggest.suggestionOf(m(400_000, 40), false, at), undefined, "a session that ended or whose process is gone: nothing can run the command there");
+    assert.equal(suggest.suggestionOf(m(40_000, 90), false, at), undefined, "not even compacting a full context");
   });
 });

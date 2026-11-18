@@ -50,7 +50,7 @@ function panelChips(s, m) {
   return h(
     "div",
     { class: "pchips" },
-    suggestionChip(m, { bare: true }),
+    suggestionChip(s, m, { bare: true }),
     !isLive(s) ? [h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone), forgetButton(s, () => redrawPanel(s.id), "chip")] : null,
     loud ? agents : null,
     m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
