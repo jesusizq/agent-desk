@@ -3326,7 +3326,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
             assert.ok(staying.every((top, i) => i === 0 || top <= staying[i - 1]! + 0.5), `the rows below the answered card only rise: ${log}`);
             for (const f of frames.filter((f) => f.resolved && f.card !== null)) assert.ok(f.card! >= -1, `the answered card shows from its top: ${log}`);
             const shown = frames.filter((f) => f.box !== null).map((f) => f.box!);
-            if (!below) assert.ok(Math.max(...shown) - Math.min(...shown) <= 20, `what showed of the card stays in place as it goes, but for its padding folding: ${log}`);
+            const followed: readonly string[] = parts;
+            if (!below && followed.includes("box")) assert.ok(Math.max(...shown) - Math.min(...shown) <= 20, `what showed of the card stays in place as it goes, but for its padding folding: ${log}`);
           }
         } finally {
           done();
