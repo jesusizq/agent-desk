@@ -6,7 +6,7 @@ import { TEXT } from "./text.js";
 import { askBody } from "./answer.js";
 import { headline } from "./format.js";
 import { COARSE, fitNewBoxes, inSight, ONE_COLUMN, showNeedsYou, topDialog } from "./layout.js";
-import { badge, where } from "./pieces.js";
+import { badge, kindOf, where } from "./pieces.js";
 import { answeredNow, inProject, itemByKey, S, ui } from "./state.js";
 
 /** @typedef {import("./state.js").Item} Item */
@@ -94,7 +94,7 @@ export function renderArrival() {
       h(
         "div",
         { class: "arr-status", role: "status" },
-        h("div", { class: "meta" }, lead.kind !== "question" ? badge(lead.kind) : null, where(S(lead.sessionId)), more > 0 ? h("span", { class: "arr-more" }, TEXT.arrival.more(more)) : null),
+        h("div", { class: "meta" }, lead.kind !== "question" ? badge(kindOf(lead)) : null, where(S(lead.sessionId)), more > 0 ? h("span", { class: "arr-more" }, TEXT.arrival.more(more)) : null),
         h("div", { class: "arr-q", hidden: open }, md(asks)),
       ),
       h("button", { class: "icon-btn arr-x", "aria-label": TEXT.arrival.dismiss, title: TEXT.arrival.dismiss, onclick: dismissArrival }, icon("x")),

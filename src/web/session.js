@@ -7,9 +7,9 @@ import { agentRows, agentsPart, failedUnseen, sessionAgents, sessionQuiet } from
 import { askBody, replyBox } from "./answer.js";
 import { controlSection, forgetButton } from "./control.js";
 import { conversationView, loadConversation, outgoingView } from "./conversation.js";
-import { ago, duration, gb, stamp } from "./format.js";
+import { ago, duration, firstLine, gb, stamp } from "./format.js";
 import { fitNewBoxes, showNeedsYou } from "./layout.js";
-import { badge, bar, dialogHead, dot, goLink, LOCAL_URL, localLink, planGauge, suggestionChip, where } from "./pieces.js";
+import { badge, bar, dialogHead, dot, goLink, kindOf, LOCAL_URL, localLink, planGauge, suggestionChip, where } from "./pieces.js";
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
 import { imageUrl, offlineNotice, offlineText, post, run } from "./server.js";
@@ -284,7 +284,7 @@ export function chat(s) {
             h(
               "div",
               { class: "meta" },
-              badge(lead.kind),
+              badge(kindOf(lead)),
               items.length > 1
                 ? [
                     h("span", { class: "faint num" }, TEXT.conversation.askOf(at + 1, items.length)),
@@ -329,6 +329,7 @@ function workingNow(s, list) {
       sessionQuiet(s) ? h("span", { class: "astuck" }, ` · ${TEXT.quietFor(sessionQuiet(s))}`) : null,
     ),
     turn && s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
+    turn && s.checkReopened ? h("div", { class: "adoing", title: s.checkReopened.reason }, [TEXT.checkReopened(s.checkReopened.times), firstLine(s.checkReopened.reason)].filter(Boolean).join(" · ")) : null,
     agents.length
       ? h(
           "details",

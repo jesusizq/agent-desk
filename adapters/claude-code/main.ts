@@ -5,7 +5,7 @@ import { sessionProcess } from "../../src/core/proc.ts";
 import { tmuxLocation } from "../../src/core/tmux.ts";
 import { storeHome } from "../../src/store/paths.ts";
 import { Store } from "../../src/store/store.ts";
-import { deliverWhileWorking, handleHook, type HookOutput, readHookInput, recordHandoff, waitForAnswer, waitForDialog, waitForPermission } from "./hooks.ts";
+import { deliverWhileWorking, handleHook, type HookOutput, readHookInput, recordHandoff, transcriptOf, waitForAnswer, waitForDialog, waitForPermission } from "./hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "./statusline.ts";
 
 const WAIT_POLL_MS = 500;
@@ -64,10 +64,13 @@ async function main(argv: string[]): Promise<void> {
   }
 
   if (command === "wait") {
-    const { sessionId } = readHookInput(input);
+    const hook = readHookInput(input);
     const stop = new AbortController();
     for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(signal, () => stop.abort());
-    finish(await waitForAnswer(sessionId, store, { pollMs: WAIT_POLL_MS, armWithinMs: WAIT_ARM_MS, deadline: Date.now() + WAIT_MAX_MS, signal: stop.signal }));
+    // Started by a turn's end, at the same moment as the other Stop hooks: it also reads how they ended it.
+    const transcript = hook.event === "Stop" ? transcriptOf(hook) : "";
+    const end = transcript ? { transcript, since: new Date(performance.timeOrigin).toISOString() } : undefined;
+    finish(await waitForAnswer(hook.sessionId, store, { pollMs: WAIT_POLL_MS, armWithinMs: WAIT_ARM_MS, deadline: Date.now() + WAIT_MAX_MS, signal: stop.signal }, end));
   }
 
   if (command === "statusline") {

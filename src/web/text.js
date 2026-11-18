@@ -63,6 +63,8 @@ export const TEXT = {
     agents: (working, done) => [working && `${working} agent${working === 1 ? "" : "s"} working`, done && `${done} done`].filter(Boolean).join(" · "),
   },
   /** @param {number} n */
+  checkReopened: (n) => (n === 1 ? "A check sent it back to work" : `A check sent it back to work ${n} times`),
+  /** @param {number} n */
   failingCalls: (n) => `${n} failed calls in a row`,
   /** @param {string} call */
   lastFailed: (call) => `Last failed: ${call}`,
@@ -83,7 +85,7 @@ export const TEXT = {
   },
   /** @param {string} label @param {number} v @param {string} at when it resets, as a clock time */
   planChip: (label, v, at) => `${label} limit ${Math.round(v)}%${at ? ` · resets ${at}` : ""}`,
-  kinds: { question: "Question", permission: "Permission", waiting: "Your turn", decision: "Decision", dismissed: "Dismissed", result: "Result", failed: "Failed", review: "Review" },
+  kinds: { question: "Question", permission: "Permission", waiting: "Your turn", check: "Check failing", decision: "Decision", dismissed: "Dismissed", result: "Result", failed: "Failed", review: "Review" },
   /** @param {string} t */
   askedAt: (t) => `Asked at ${t}`,
   goTo: "Go to session",

@@ -7,6 +7,7 @@ import {
   ANSWER_CHANNELS,
   ANSWER_SOURCES,
   ATTACHED_IMAGES_MAX,
+  CHECK_REASON_MAX,
   GROUP_SIZE_MAX,
   MESSAGE_AUTHORS,
   QUESTION_KINDS,
@@ -22,6 +23,7 @@ import {
   type Agent,
   type Answer,
   type Check,
+  type CheckReopened,
   type ConversationEntry,
   type InboxEntry,
   type BranchState,
@@ -86,7 +88,13 @@ export function readSession(value: unknown, where = "session"): Session {
     readAt: optional(f.readAt, `${where}.readAt`, isoTime),
     endedAsking: optional(f.endedAsking, `${where}.endedAsking`, bool),
     sentWhileWorking: optional(f.sentWhileWorking, `${where}.sentWhileWorking`, (v, w) => list(v, w, readSent, 20)),
+    checkReopened: optional(f.checkReopened, `${where}.checkReopened`, readCheckReopened),
   });
+}
+
+export function readCheckReopened(value: unknown, where: string): CheckReopened {
+  const f = fields(value, where);
+  return { times: int(f.times, `${where}.times`, 1, 1000), reason: nonEmpty(f.reason, `${where}.reason`, CHECK_REASON_MAX), at: isoTime(f.at, `${where}.at`) };
 }
 
 function readSent(value: unknown, where: string): { text: string; at: string; turnEndedAt?: string } {
@@ -138,6 +146,7 @@ export function readQuestion(value: unknown, where = "question"): Question {
     setAside: optional(f.setAside, `${where}.setAside`, (v, w) => list(v, w, readAnswer, SET_ASIDE_KEPT)),
     dialog: optional(f.dialog, `${where}.dialog`, bool),
     several: optional(f.several, `${where}.several`, bool),
+    checkFailing: optional(f.checkFailing, `${where}.checkFailing`, bool),
     group: optional(f.group, `${where}.group`, readGroup),
     review: optional(f.review, `${where}.review`, readReviewRef),
     past: optional(f.past, `${where}.past`, (v, w) => list(v, w, readPastDecision, PAST_SHOWN)),

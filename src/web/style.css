@@ -611,7 +611,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .next .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 a.primary, a.secondary, a.row-go { text-decoration: none; }
 .problems { color: var(--danger); }
-.k-waiting { --c: var(--todo); } .k-dismissed { --c: var(--blocked); }
+.k-waiting { --c: var(--todo); } .k-check { --c: var(--danger); } .k-dismissed { --c: var(--blocked); }
 /* Offline is calm: nothing is wrong with the work, and the desk shown is the last one known. */
 .offline { color: var(--muted); }
 .offline b { color: var(--text); font-weight: 600; }

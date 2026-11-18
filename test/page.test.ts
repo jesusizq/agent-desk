@@ -175,6 +175,30 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     await page.press("Escape");
   });
 
+  it("says when a check sent a session's turn back to work, and names a check still failing in Needs you", async () => {
+    const project = { name: "web-shop", dir: "/home/demo/Projects/web-shop" };
+    const reason = "verify failed. Fix it before finishing:\n\n[web-shop] typecheck: 1 error";
+    store.upsertSession({ id: "checked", provider: "Test", project, title: "reopened by its check", state: "working", activityAt: new Date().toISOString(), checkReopened: { times: 2, reason, at: new Date().toISOString() } });
+    store.upsertSession({ id: "gave-up", provider: "Test", project, title: "its check gave up", state: "waiting" });
+    const q = store.ask({ sessionId: "gave-up", kind: "waiting", text: "verify keeps failing after 3 attempts", context: reason, checkFailing: true });
+    try {
+      const page = await open();
+      const card = cardOf("reopened by its check");
+      await page.waitFor(card);
+      const line = await page.eval<{ text: string; tip: string }>(`(() => { const l = ${card}.querySelector('.s-bad'); return { text: l.textContent, tip: l.title }; })()`);
+      assert.deepEqual(line, { text: "A check sent it back to work 2 times · verify failed. Fix it before finishing:", tip: reason }, "plain text: the count and the refusal's first line, the rest in its tip");
+      const row = "[...document.querySelectorAll('.qrow')].find((r) => r.textContent.includes('verify keeps failing'))";
+      await page.waitFor(row);
+      assert.equal(await page.eval<string>(`${row}.querySelector('.badge').textContent`), "Check failing");
+    } finally {
+      store.dismiss(q.id);
+      for (const id of ["checked", "gave-up"]) {
+        store.updateSession(id, (s) => ({ ...s, state: "ended" }));
+        store.forgetSession(id);
+      }
+    }
+  });
+
   it("keeps an agent's failure loud only until its session ends a turn after it, then one failed row in its list", async () => {
     const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
     const page = await open();

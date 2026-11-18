@@ -19,6 +19,8 @@ const SESSION_LINKS = /** @type {Record<string, (id: string) => string>} */ ({
 
 /** @param {DotState} st */
 export const dot = (st) => h("span", { class: `dot st-${st}`, title: TEXT.state[st] });
+/** What a question is, as its badge names it: a failing check's item says so. @param {import("../core/protocol.ts").Question} q @returns {keyof typeof TEXT.kinds} */
+export const kindOf = (q) => (q.checkFailing ? "check" : q.kind);
 /** @param {keyof typeof TEXT.kinds} kind */
 export const badge = (kind) => h("span", { class: `badge k-${kind}` }, TEXT.kinds[kind]);
 /** @param {string} iso */

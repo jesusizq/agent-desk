@@ -3,13 +3,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { id, newId, slug } from "../../src/core/ids.ts";
-import { type Agent, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
+import { type Agent, CHECK_REASON_MAX, type CheckReopened, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
 import { fitText, statusLines } from "../../src/core/status.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
 import { checkedOutBranch, locateProject } from "../../src/project/locate.ts";
 import { sessionStatus } from "../../src/project/refresh.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
-import type { AgentFields, Store } from "../../src/store/store.ts";
+import type { AgentFields, Store, TurnCheck } from "../../src/store/store.ts";
 import { publishOpenedPages } from "./pages.ts";
 import { inHandoffs, refreshResumes } from "./resumes.ts";
 
@@ -93,7 +93,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // that arrives while the session works is kept, to show later whether that turn took it in.
       const at = new Date().toISOString();
       const wasWorking = store.getSession(sid)?.state === "working";
-      store.updateSession(sid, (s) =>
+      store.updateSession(sid, ({ checkReopened: _reopened, ...s }) =>
         compact({
           ...s,
           state: "working" as const,
@@ -273,10 +273,12 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   syncPermissionMarker(store, problems);
   const message = text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000).trim();
   const at = new Date().toISOString();
+  const checkReopened = optional(input.raw.stop_hook_active, "hook input.stop_hook_active", bool) === true ? reopenedBy(stopRounds(transcriptOf(input))) : undefined;
   // The turn is over: what its calls were doing, failing in a row or waiting on, ends with it.
-  store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, ...s }) =>
+  store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, checkReopened: _reopened, ...s }) =>
     compact({
       ...s,
+      checkReopened,
       state: "waiting" as const,
       activity: undefined,
       activityIsCall: undefined,
@@ -297,7 +299,7 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   // background task finishing). A turn that asks again replaces it; a report that asks nothing
   // ("still waiting for your answer") leaves it open, or the developer would lose the question.
   // One the session opened again (the reply did not answer it) stays until it is answered or asked again.
-  const replaced = () => store.closeOpen(sid, { kinds: ["waiting"], which: (q) => q.setAside === undefined, status: "dismissed", problems });
+  const replaced = () => store.closeOpen(sid, { kinds: ["waiting"], which: (q) => q.setAside === undefined && !q.checkFailing, status: "dismissed", problems });
   const open = store.openQuestions(sid, problems);
   const reopened = open.filter((q) => q.setAside !== undefined);
   const asked = open.filter((q) => q.kind === "question" && q.setAside === undefined);
@@ -317,6 +319,95 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   const { question, context, options, several } = offered ?? freeQuestion(last, before);
   if (reopened.some((r) => sameWords(r.text, question))) return;
   store.ask(compact({ sessionId: sid, kind: "waiting" as const, text: question, context: context || undefined, options: options.length > 0 ? options : undefined, several: several || undefined }));
+}
+
+// ── Checks at the end of a turn ─────────────────────────────────────────
+// Claude Code runs every Stop hook at once and records, in this order: each refusal of the end (a
+// `hook_blocking_error` attachment, its reason fed back to Claude), each `systemMessage` a Stop hook
+// showed the developer (a `hook_system_message` attachment), then, once all have finished, one
+// `stop_hook_summary`. A refused end goes on in the same turn, with `stop_hook_active` at its next Stop.
+
+/** One end of the turn and its Stop hooks: their refusals and what they said to the developer, and when the last of them finished. */
+export type StopRound = { refusals: string[]; said: string[]; finishedAt: string };
+
+/** The session's transcript the hook input names; empty when it names none. */
+export const transcriptOf = (input: Common) => optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096)) ?? "";
+
+/**
+ * The finished rounds of Stop hooks of the session's current turn, or of the turn that just ended,
+ * oldest first, read from the end of its transcript: back to the prompt that started the turn, or
+ * the end of the turn before (`turn_duration`, after the turn's own one).
+ */
+export function stopRounds(transcript: string): StopRound[] {
+  if (!transcript.endsWith(".jsonl")) return [];
+  const rounds: StopRound[] = [];
+  let open: StopRound | undefined;
+  let inTurn = false;
+  for (const line of readTail(transcript, TRANSCRIPT_TAIL).split("\n").reverse()) {
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue; // the first line of the tail is cut, and the last may be half written
+    }
+    if (typeof entry !== "object" || entry === null) continue;
+    const e = entry as Fields;
+    if (e.isSidechain === true || !["user", "assistant", "attachment", "system"].includes(String(e.type))) continue;
+    if (e.type === "system" && e.subtype === "turn_duration") {
+      if (inTurn) break;
+      continue;
+    }
+    inTurn = true;
+    const at = typeof e.timestamp === "string" ? Date.parse(e.timestamp) : Number.NaN;
+    if (e.type === "system" && e.subtype === "stop_hook_summary" && !Number.isNaN(at)) {
+      open = { refusals: [], said: [], finishedAt: new Date(at).toISOString() };
+      rounds.unshift(open);
+      continue;
+    }
+    const a = typeof e.attachment === "object" && e.attachment !== null ? (e.attachment as Fields) : undefined;
+    if (a?.hookEvent === "Stop" && open) {
+      const blocking = typeof a.blockingError === "object" && a.blockingError !== null ? (a.blockingError as Fields).blockingError : undefined;
+      if (a.type === "hook_blocking_error" && typeof blocking === "string" && blocking.trim() !== "") open.refusals.unshift(blocking.trim());
+      if (a.type === "hook_system_message" && typeof a.content === "string" && a.content.trim() !== "") open.said.unshift(a.content.trim());
+      continue;
+    }
+    if (e.type === "assistant") open = undefined; // a refusal's round is the summary after it, never an earlier one
+    if (e.type !== "user") continue;
+    const content = typeof e.message === "object" && e.message !== null ? (e.message as Fields).content : undefined;
+    const origin = typeof e.origin === "object" && e.origin !== null ? (e.origin as Fields).kind : undefined;
+    if (e.isMeta === true && origin !== "peer") continue;
+    const blocks = Array.isArray(content) ? content : [];
+    if (typeof content === "string" || !blocks.some((b) => typeof b === "object" && b !== null && (b as Fields).type === "tool_result")) break; // the prompt
+  }
+  return rounds;
+}
+
+/** The first lines of a check's refusal, as the desk keeps it. */
+export function checkExcerpt(reason: string): string {
+  const lines = reason.trim().split("\n").slice(0, 12).join("\n");
+  return bounded(lines, CHECK_REASON_MAX);
+}
+
+/** The refusals of the turn's end so far, counted by round, with the latest one; undefined when none refused it. */
+function reopenedBy(rounds: StopRound[]): CheckReopened | undefined {
+  const refused = rounds.filter((r) => r.refusals.length > 0);
+  const last = refused.at(-1);
+  return last ? { times: refused.length, reason: checkExcerpt(last.refusals.join("\n\n")), at: last.finishedAt } : undefined;
+}
+
+/**
+ * How the Stop hooks of the turn's end that started after `since` ended it; undefined while they
+ * still run. A Stop hook that refused an earlier end of the turn and now lets it end with a message to
+ * the developer has given up on it: the check still fails. Letting it end silently reads as passing
+ * (a check that gives up without a word cannot be told from one that passed).
+ */
+export function turnCheck(rounds: StopRound[], since: string): TurnCheck | undefined {
+  const last = rounds.at(-1);
+  if (!last || last.finishedAt <= since) return undefined;
+  const reopened = reopenedBy(rounds);
+  if (!reopened) return { outcome: "passed" };
+  if (last.refusals.length > 0) return { outcome: "reopened", reopened };
+  return last.said.length > 0 ? { outcome: "failing", reopened, said: last.said.join("\n") } : { outcome: "passed" };
 }
 
 /** A question without options: the sentences that ask; what the paragraph says around them reads first under it. */
@@ -1661,6 +1752,8 @@ function instructions(): string {
 // ── Answers from the desk ───────────────────────────────────────────────
 
 export type WaitOptions = { pollMs: number; deadline: number; armWithinMs: number; now?: () => number; signal?: AbortSignal };
+/** The session's transcript, for a waiter started by a turn's end (`since`: when it started) to read how its Stop hooks ended the turn. */
+export type EndOfTurn = { transcript: string; since: string };
 
 /**
  * Runs after Stop as a background hook that wakes Claude: waits for an answer given on the desk
@@ -1668,18 +1761,20 @@ export type WaitOptions = { pollMs: number; deadline: number; armWithinMs: numbe
  * marked as waiting (the synchronous Stop hook may finish after this one starts) and gives up with
  * exit code 0 when the developer answers in the terminal, the session ends, or a newer turn takes over.
  */
-export async function waitForAnswer(sessionId: string, store: Store, options: WaitOptions): Promise<HookOutput> {
+export async function waitForAnswer(sessionId: string, store: Store, options: WaitOptions, end?: EndOfTurn): Promise<HookOutput> {
   const now = options.now ?? Date.now;
   const armBy = now() + options.armWithinMs;
   let armed = false;
   let mine: string | undefined;
-  return whileListening(sessionId, store, options, () => {
+  const settle = end && endOfTurn(sessionId, store, end);
+  const out = await whileListening(sessionId, store, options, () => {
     mine ??= store.listeners(sessionId).find((l) => l.pid === process.pid)?.since ?? new Date(now()).toISOString();
     const session = store.getSession(sessionId);
     if (!session || session.state === "ended") return { code: 0 };
     if (session.state === "waiting") armed = true;
     else if (armed || now() > armBy) return { code: 0 };
     if (!armed) return undefined;
+    if (settle?.() === "reopened") return { code: 0 }; // a Stop hook sent it back to work: the turn goes on
     const answers = store.takeInbox(sessionId, forTheTurn(store));
     if (answers.length > 0) {
       const message = answers.map((a) => deliveryText(a, imageFiles(store, a.images))).join("\n\n");
@@ -1693,6 +1788,45 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
     }
     return store.listeners(sessionId).some((l) => l.pid !== process.pid && l.since > (mine ?? "")) ? { code: 0 } : undefined;
   });
+  // What went wrong reading the turn's checks is told only where it cannot reach Claude as the developer's answer.
+  const problems = settle?.problems ?? [];
+  return out.code === 2 || problems.length === 0 ? out : { ...out, stderr: [out.stderr, ...problems.map((p) => `agent-desk: ${p}`)].filter(Boolean).join("\n") };
+}
+
+/**
+ * Reads, while the waiter runs, how the Stop hooks of the turn's end it was started by ended the turn
+ * (turnCheck), and records it once on the desk; the transcript is read again only when it grew. A
+ * transcript that cannot be read ends the reading, never the wait: answers still reach the session.
+ */
+function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => TurnCheck["outcome"] | undefined) & { problems: string[] } {
+  const problems: string[] = [];
+  let size = -1;
+  let done = false;
+  const step = () => {
+    if (done) return undefined;
+    let check: TurnCheck | undefined;
+    try {
+      const now = fs.statSync(end.transcript).size;
+      if (now === size) return undefined;
+      size = now;
+      check = turnCheck(stopRounds(end.transcript), end.since);
+    } catch (error) {
+      if (isCode(error, "ENOENT")) return undefined; // not written yet
+      done = true;
+      problems.push(`could not read how the checks ended the turn from ${end.transcript}: ${(error as Error).message}`);
+      return undefined;
+    }
+    if (!check) return undefined;
+    done = true;
+    try {
+      store.recordTurnCheck(sessionId, check, problems);
+    } catch (error) {
+      problems.push(`could not record that the checks ${check.outcome === "reopened" ? "reopened" : "ended"} the turn: ${(error as Error).message}`);
+      return undefined;
+    }
+    return check.outcome;
+  };
+  return Object.assign(step, { problems });
 }
 
 /**

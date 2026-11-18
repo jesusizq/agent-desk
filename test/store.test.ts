@@ -1004,3 +1004,61 @@ describe("decisions", () => {
     assert.equal(store.decisions({ project: { dir: "/work/shop" }, limit: 500 }).total, 80);
   });
 });
+
+describe("checks at a turn's end", () => {
+  const reopened = (times: number, reason = "verify failed.\n\n[shop] typecheck: 1 error") => ({ times, reason, at: "2026-10-28T08:00:30.000Z" });
+
+  it("a refused end sends the session back to work, the refusals counted on it", () => {
+    const store = testStore();
+    addSession(store);
+    store.updateSession("s1", (s) => ({ ...s, state: "waiting" }));
+    assert.equal(store.recordTurnCheck("s1", { outcome: "reopened", reopened: reopened(2) }), undefined);
+    const s = store.getSession("s1");
+    assert.equal(s?.state, "working");
+    assert.deepEqual(s?.checkReopened, reopened(2));
+    assert.equal(store.openQuestions("s1").length, 0, "a turn at work asks nothing");
+  });
+
+  it("a check that let the turn end still failing leaves one waiting item, gone when a later turn passes", () => {
+    const store = testStore();
+    addSession(store);
+    store.updateSession("s1", (s) => ({ ...s, state: "waiting", checkReopened: reopened(3) }));
+    const q = store.recordTurnCheck("s1", { outcome: "failing", reopened: reopened(3), said: "verify keeps failing after 3 attempts" });
+    assert.equal(q?.kind, "waiting");
+    assert.equal(q?.checkFailing, true);
+    assert.equal(q?.text, "verify keeps failing after 3 attempts");
+    assert.equal(q?.context, "verify failed.\n\n[shop] typecheck: 1 error");
+    assert.equal(store.getSession("s1")?.checkReopened, undefined, "the turn is over: its count goes, the item tells it");
+    const again = store.recordTurnCheck("s1", { outcome: "failing", reopened: reopened(1, "tests failed") });
+    assert.deepEqual(store.openQuestions("s1").map((x) => x.id), [again?.id], "a newer failure replaces the older item");
+    assert.equal(again?.text, "tests failed", "with nothing said at the end, the refusal's first line names it");
+    // A check that passes in a later turn takes the item away; one asked after that turn ended stays.
+    store.updateSession("s1", (s) => ({ ...s, turnEndedAt: "2026-10-28T09:00:00.000Z" }));
+    store.recordTurnCheck("s1", { outcome: "passed" });
+    assert.equal(store.openQuestions("s1").length, 0);
+    assert.equal(store.getQuestion(again?.id ?? "")?.status, "dismissed");
+    store.updateSession("s1", (s) => ({ ...s, turnEndedAt: "2026-10-28T08:00:00.000Z" }));
+    const late = store.recordTurnCheck("s1", { outcome: "failing", reopened: reopened(1) });
+    store.recordTurnCheck("s1", { outcome: "passed" });
+    assert.deepEqual(store.openQuestions("s1").map((x) => x.id), [late?.id], "asked after the turn ended: not that turn's to take away");
+  });
+
+  it("an ended session neither works again nor asks", () => {
+    const store = testStore();
+    addSession(store);
+    store.updateSession("s1", (s) => ({ ...s, state: "ended" }));
+    store.recordTurnCheck("s1", { outcome: "reopened", reopened: reopened(1) });
+    assert.equal(store.getSession("s1")?.state, "ended");
+    assert.equal(store.recordTurnCheck("s1", { outcome: "failing", reopened: reopened(1), said: "still failing" }), undefined);
+    assert.equal(store.openQuestions("s1").length, 0);
+  });
+
+  it("refuses a malformed count of refusals in a session file", () => {
+    const store = testStore();
+    addSession(store);
+    const at = "2026-10-28T08:00:00.000Z";
+    for (const bad of [{ times: 0, reason: "x", at }, { times: 1, reason: "", at }, { times: 1, reason: "x", at: "yesterday" }, { times: 1, reason: "x".repeat(2001), at }]) {
+      assert.throws(() => store.updateSession("s1", (s) => ({ ...s, checkReopened: bad })), /checkReopened/, JSON.stringify(bad).slice(0, 80));
+    }
+  });
+});

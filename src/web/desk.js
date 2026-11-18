@@ -7,7 +7,7 @@ import { askBody, decisionOf } from "./answer.js";
 import { forgetButton } from "./control.js";
 import { ago, firstLine, headline, heat, hm, stamp } from "./format.js";
 import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
-import { badge, bar, beacon, dot, emptyState, goLink, LOCAL_URL, localLink, planGauge, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
+import { badge, bar, beacon, dot, emptyState, goLink, kindOf, LOCAL_URL, localLink, planGauge, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
 import { openResult } from "./result.js";
 import { reviewLine, reviewTile } from "./review.js";
 import { imageUrl, post, run } from "./server.js";
@@ -48,7 +48,7 @@ function nextCard(item) {
   if (!lead) return null;
   const s = S(lead.sessionId);
   const canAnswer = data.listening.includes(lead.sessionId);
-  const meta = h("div", { class: "meta" }, h("span", { class: `qkind k-${lead.kind}` }, TEXT.kinds[lead.kind]), where(s), h("span", { class: `age${heat(lead.askedAt)}`, title: TEXT.askedAt(hm(lead.askedAt)) }, ago(lead.askedAt)));
+  const meta = h("div", { class: "meta" }, h("span", { class: `qkind k-${kindOf(lead)}` }, TEXT.kinds[kindOf(lead)]), where(s), h("span", { class: `age${heat(lead.askedAt)}`, title: TEXT.askedAt(hm(lead.askedAt)) }, ago(lead.askedAt)));
   // An item shares its row's `data-flip`: picked or next in line, the row grows into this card.
   const card = { "aria-label": TEXT.next, "data-key": `next-${item.key}`, "data-flip": `q-${item.key}` };
   if (!item.open.length) return h("article", { ...card, class: "next resolved" }, meta, askBody(item));
@@ -106,7 +106,7 @@ function questionRow(item) {
     key: item.key,
     flip: `q-${item.key}`,
     mark: beacon(q.askedAt),
-    line: [q.kind !== "question" ? [badge(q.kind), " "] : null, h("b", {}, group ? item.open.map((x) => headline(x.text)).join(" · ") : headline(q.text))],
+    line: [q.kind !== "question" ? [badge(kindOf(q)), " "] : null, h("b", {}, group ? item.open.map((x) => headline(x.text)).join(" · ") : headline(q.text))],
     meta: [label(s), group ? TEXT.group.row(item.questions.length, item.questions.length - item.open.length) : q.options.length && !decisionOf(q) ? TEXT.nOptions(q.options.length) : ""].filter(Boolean).join(" · "),
     when: h("span", { class: `age${heat(q.askedAt)}`, title: TEXT.askedAt(hm(q.askedAt)) }, ago(q.askedAt)),
     go: goLink(s, "row-go", icon("go"), TEXT.go),
@@ -230,7 +230,7 @@ const sessionWeight = (s) =>
   asksOf(s.id).length * 10 +
   (endedUnseen(s) ? 10 : 0) +
   sessionAgents(s.id).filter(inTrouble).length +
-  (sessionQuiet(s) || failing(s) ? 1 : 0);
+  (sessionQuiet(s) || failing(s) || s.checkReopened ? 1 : 0);
 
 /**
  * One row per session: its state, name, context and age, then only what matters about it — what it
@@ -269,6 +269,8 @@ function sessionCard(s, rich) {
   const listed = rich ? [] : as;
   for (const a of listed.filter((a) => failedUnseen(a) || a.state === "blocked")) matters.push(troubleLine(a.state, `${a.goal ?? a.name} · ${troubleText(a, true)}`));
   if (failing(s)) matters.push(failLine(s, ""));
+  // A check sent the turn back to work: not a turn like any other, nor one that has ended.
+  if (s.checkReopened && isLive(s)) matters.push(troubleLine("idle", [TEXT.checkReopened(s.checkReopened.times), firstLine(s.checkReopened.reason)].filter(Boolean).join(" · "), s.checkReopened.reason));
   for (const a of listed.filter(failing)) matters.push(failLine(a, a.goal ?? a.name));
   const quiet = sessionQuiet(s);
   if (quiet) matters.push(troubleLine("idle", TEXT.quietFor(quiet)));

@@ -76,7 +76,18 @@ export type Session = {
    * that received them ended; the session's last message says how it applied them.
    */
   sentWhileWorking?: { text: string; at: string; turnEndedAt?: string }[];
+  /**
+   * A check its provider runs when a turn ends (a hook that can refuse the end and send the session
+   * back to work, e.g. the repository's tests) refused the end of the turn now running `times` times;
+   * `reason` is the start of its latest refusal, `at` when it was given. Gone once a turn ends with no
+   * refusal, or the developer writes to the session.
+   */
+  checkReopened?: CheckReopened;
 };
+
+export type CheckReopened = { times: number; reason: string; at: string };
+/** The start of a check's refusal kept on the desk: its first lines, up to this many characters. */
+export const CHECK_REASON_MAX = 2000;
 
 export const QUESTION_KINDS = ["question", "permission", "waiting"] as const;
 export type QuestionKind = (typeof QUESTION_KINDS)[number];
@@ -127,6 +138,11 @@ export type Question = {
   dialog?: boolean;
   /** More than one option can be picked: the answer names them, separated by commas. */
   several?: boolean;
+  /**
+   * The turn ended while a check that had refused its end was still failing (the check let it end
+   * without passing): a waiting item that says so, its context the check's latest refusal.
+   */
+  checkFailing?: boolean;
   /** Asked together with other questions (one dialog), which waits until every one of them is answered. */
   group?: QuestionGroup;
   /**

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { deliverWhileWorking, ENVELOPES_REVISED, fromAnother, handleHook, type HookContext, plainSummary, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
+import { checkExcerpt, deliverWhileWorking, ENVELOPES_REVISED, fromAnother, handleHook, type HookContext, plainSummary, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, stopRounds, turnCheck, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import { slug } from "../src/core/ids.ts";
 import type { Store } from "../src/store/store.ts";
@@ -1764,5 +1764,159 @@ describe("status line", () => {
     assert.equal(stdout, input);
     const { Store } = await import("../src/store/store.ts");
     assert.equal(new Store(home).listMetrics()[0]?.contextPercent, 12);
+  });
+});
+
+describe("checks at a turn's end (Stop hooks that refuse it)", () => {
+  // Rows shaped as Claude Code 2.1.327 writes them around a Stop hook's refusal and its summary.
+  const COMMAND = 'python3 -I "${CLAUDE_PLUGIN_ROOT}/hooks/run.py" Stop';
+  const REASON = "verify failed. Fix it before finishing (do not rerun typecheck or tests by hand except to debug; the full log is at the path shown):\n\n[shop] verify: FALLO en typecheck client (12 s)\nclient/src/layout.tsx:2: error TS2322: Type 'string' is not assignable to type 'number'.\nlog: /home/dev/.cache/ahorro/verify/shop/last.log";
+  const GAVE_UP = "ahorro: verify keeps failing after 3 attempts; I am no longer blocking.";
+  const base = { isSidechain: false, userType: "external", entrypoint: "cli", cwd: "/work/shop", sessionId: "cc-1", version: "2.1.327" };
+  const rows = {
+    prompt: (text: string, timestamp: string) => ({ ...base, type: "user", message: { role: "user", content: text }, uuid: "p", timestamp }),
+    said: (text: string, timestamp: string, sidechain = false) => ({ ...base, isSidechain: sidechain, type: "assistant", message: { role: "assistant", type: "message", content: [{ type: "text", text }], stop_reason: "end_turn" }, timestamp }),
+    refusal: (reason: string, timestamp: string, hookEvent = "Stop") => [
+      { ...base, type: "user", message: { role: "user", content: `Stop hook feedback:\n${reason}` }, isMeta: true, timestamp },
+      { ...base, type: "attachment", attachment: { type: "hook_blocking_error", hookName: hookEvent, toolUseID: "t1", hookEvent, blockingError: { blockingError: reason, command: COMMAND } }, timestamp },
+    ],
+    told: (content: string, timestamp: string) => ({ ...base, type: "attachment", attachment: { type: "hook_system_message", content, hookName: "Stop", toolUseID: "t1", hookEvent: "Stop" }, timestamp }),
+    summary: (hookErrors: string[], timestamp: string) => ({
+      ...base,
+      type: "system",
+      subtype: "stop_hook_summary",
+      hookCount: 3,
+      hookInfos: [{ command: "agent-desk-claude hook", durationMs: 94 }, { command: "agent-desk-claude wait" }, { command: COMMAND }],
+      hookErrors,
+      failedHookErrorIndexes: [],
+      hookAdditionalContext: [],
+      preventedContinuation: false,
+      stopReason: "",
+      hasOutput: hookErrors.length > 0,
+      level: "suggestion",
+      timestamp,
+    }),
+    turnEnd: (timestamp: string) => ({ ...base, type: "system", subtype: "turn_duration", durationMs: 4000, messageCount: 12, timestamp, isMeta: false }),
+    trailer: [{ type: "last-prompt", lastPrompt: "fix it", sessionId: "cc-1" }, { type: "ai-title", aiTitle: "Fix", sessionId: "cc-1" }, { type: "permission-mode", permissionMode: "auto", sessionId: "cc-1" }],
+  };
+  const at = (s: number) => new Date(Date.parse("2026-11-18T12:00:00.000Z") + s * 1000).toISOString();
+  const write = (file: string, list: unknown[]) => fs.appendFileSync(file, list.map((r) => `${JSON.stringify(r)}\n`).join(""));
+  const transcript = (list: unknown[]) => {
+    const file = path.join(tempHome(), "cc-1.jsonl");
+    write(file, list);
+    return file;
+  };
+
+  it("reads each round of Stop hooks of the current turn, its refusals and what it told the developer", () => {
+    const file = transcript([
+      // An earlier turn refused once: not this turn's.
+      rows.prompt("first", at(0)),
+      ...rows.refusal("old failure", at(1)),
+      rows.summary(["old failure"], at(1)),
+      rows.turnEnd(at(2)),
+      rows.prompt("fix the table", at(10)),
+      rows.said("Done.", at(11)),
+      ...rows.refusal(REASON, at(12)),
+      rows.summary([REASON], at(12)),
+      rows.said("Fixed the type.", at(20)),
+      rows.said("a sub-agent's words", at(21), true),
+      ...rows.refusal("a sub-agent's own check", at(22), "SubagentStop"),
+      rows.told(GAVE_UP, at(23)),
+      rows.summary([], at(23)),
+      rows.turnEnd(at(24)),
+      ...rows.trailer,
+    ]);
+    assert.deepEqual(stopRounds(file), [
+      { refusals: [REASON], said: [], finishedAt: at(12) },
+      { refusals: [], said: [GAVE_UP], finishedAt: at(23) },
+    ]);
+  });
+
+  it("maps the rounds to how the checks ended the turn", () => {
+    const refused = { refusals: [REASON], said: [], finishedAt: at(12) };
+    assert.equal(turnCheck([refused], at(15)), undefined, "the Stop hooks of this end still run");
+    const reopened = turnCheck([refused, { refusals: ["tests failed"], said: [], finishedAt: at(30) }], at(25));
+    assert.deepEqual(reopened, { outcome: "reopened", reopened: { times: 2, reason: "tests failed", at: at(30) } });
+    const failing = turnCheck([refused, { refusals: [], said: [GAVE_UP], finishedAt: at(30) }], at(25));
+    assert.deepEqual(failing, { outcome: "failing", reopened: { times: 1, reason: checkExcerpt(REASON), at: at(12) }, said: GAVE_UP });
+    assert.deepEqual(turnCheck([refused, { refusals: [], said: [], finishedAt: at(30) }], at(25)), { outcome: "passed" }, "a silent end reads as passing");
+    assert.deepEqual(turnCheck([{ refusals: [], said: ["Formatted 3 files."], finishedAt: at(30) }], at(25)), { outcome: "passed" }, "a message from a check that never refused is no failure");
+    const long = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
+    assert.equal(checkExcerpt(long).split("\n").length, 12, "only the refusal's first lines are kept");
+  });
+
+  it("counts the refusals at an end the Stop hooks continued, and drops them when the developer writes", () => {
+    const store = testStore();
+    const file = transcript([rows.prompt("fix the table", at(10)), rows.said("Done.", at(11)), ...rows.refusal(REASON, at(12)), rows.summary([REASON], at(12)), rows.said("Fixed the type.", at(20))]);
+    handleHook(event("Stop", { last_assistant_message: "Fixed the type.", transcript_path: file, stop_hook_active: true }), ctx(store));
+    assert.deepEqual(store.getSession("cc-1")?.checkReopened, { times: 1, reason: checkExcerpt(REASON), at: at(12) });
+    handleHook(event("UserPromptSubmit", { prompt: "leave it" }), ctx(store));
+    assert.equal(store.getSession("cc-1")?.checkReopened, undefined);
+    handleHook(event("Stop", { last_assistant_message: "Left it.", transcript_path: file, stop_hook_active: false }), ctx(store));
+    assert.equal(store.getSession("cc-1")?.checkReopened, undefined, "an end no Stop hook continued has no refusals to count");
+  });
+
+  it("the waiter sees a Stop hook refuse the end and marks the session working again", async () => {
+    const store = testStore();
+    const file = transcript([rows.prompt("fix the table", at(10)), rows.said("Done.", at(11))]);
+    handleHook(event("Stop", { last_assistant_message: "Done.", transcript_path: file }), ctx(store));
+    const since = new Date(Date.now() - 1).toISOString();
+    const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since });
+    await new Promise((r) => setTimeout(r, 50));
+    const now = new Date().toISOString();
+    write(file, [...rows.refusal(REASON, now), rows.summary([REASON], now)]);
+    assert.deepEqual(await waiting, { code: 0 });
+    const s = store.getSession("cc-1");
+    assert.equal(s?.state, "working");
+    assert.deepEqual(s?.checkReopened, { times: 1, reason: checkExcerpt(REASON), at: now });
+  });
+
+  it("a check that gave up waits in Needs you, and the developer's answer from the desk reaches the session", async () => {
+    const store = testStore();
+    const file = transcript([rows.prompt("fix the table", at(10)), rows.said("Done.", at(11)), ...rows.refusal(REASON, at(12)), rows.summary([REASON], at(12)), rows.said("I could not fix it.", at(20))]);
+    handleHook(event("Stop", { last_assistant_message: "I could not fix it.", transcript_path: file, stop_hook_active: true }), ctx(store));
+    const since = new Date(Date.now() - 1).toISOString();
+    const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since });
+    const now = new Date().toISOString();
+    write(file, [rows.told(GAVE_UP, now), rows.summary([], now), rows.turnEnd(now), ...rows.trailer]);
+    let q = store.openQuestions("cc-1")[0];
+    for (let i = 0; i < 100 && !q; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      q = store.openQuestions("cc-1")[0];
+    }
+    assert.equal(q?.checkFailing, true);
+    assert.equal(q?.text, GAVE_UP);
+    assert.equal(q?.context, checkExcerpt(REASON));
+    assert.equal(store.getSession("cc-1")?.checkReopened, undefined);
+    store.answerFromDesk(q?.id ?? "", "Leave it; I will look at the types.");
+    const out = await waiting;
+    assert.equal(out.code, 2);
+    assert.match(out.stderr ?? "", /Their answer, verbatim:\nLeave it; I will look at the types\.$/);
+    assert.equal(store.getQuestion(q?.id ?? "")?.status, "answered");
+  });
+
+  it("a question the next end asks does not replace the failing check's item", () => {
+    const store = testStore();
+    handleHook(event("Stop", { last_assistant_message: "Done." }), ctx(store));
+    const q = store.recordTurnCheck("cc-1", { outcome: "failing", reopened: { times: 3, reason: REASON, at: at(12) }, said: GAVE_UP });
+    handleHook(event("Stop", { last_assistant_message: "Shall I also migrate the old rows?" }), ctx(store));
+    assert.deepEqual(store.openQuestions("cc-1").map((x) => x.text).sort(), [GAVE_UP, "Shall I also migrate the old rows?"].sort());
+    assert.equal(store.getQuestion(q?.id ?? "")?.status, "open");
+  });
+
+  it("the waiter a turn's end starts reads that end's Stop hooks, through the adapter's entry point", async () => {
+    const home = tempHome();
+    const file = transcript([rows.prompt("fix the table", at(10)), rows.said("Done.", at(11))]);
+    const { run, hook } = hookProcesses(home, file);
+    assert.equal((await hook({ hook_event_name: "Stop", last_assistant_message: "Done." })).code, 0);
+    const waiter = run([MAIN, "wait"], JSON.stringify({ session_id: "cc-c", cwd: "/work/shop", transcript_path: file, hook_event_name: "Stop" }));
+    const { Store } = await import("../src/store/store.ts");
+    const store = new Store(home);
+    for (let i = 0; i < 100 && !store.isListening("cc-c"); i++) await new Promise((r) => setTimeout(r, 50));
+    const now = new Date().toISOString();
+    write(file, [...rows.refusal(REASON, now), rows.summary([REASON], now)]);
+    assert.deepEqual(await waiter, { code: 0, stderr: "" });
+    assert.equal(store.getSession("cc-c")?.state, "working");
+    assert.equal(store.getSession("cc-c")?.checkReopened?.times, 1);
   });
 });
