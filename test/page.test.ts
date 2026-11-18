@@ -2168,6 +2168,82 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
   const touch = (page: Page, type: string, points: [number, number][]) =>
     page.send("Input.dispatchTouchEvent", { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
 
+  /**
+   * A phone with a touch screen on a demo desk of its own, for a test that changes what every other
+   * test reads (results marked seen) or needs a machine of its own; the page closes before its desk.
+   */
+  async function ownPhone(test: (page: Page, own: Store) => Promise<void>, prepare: (own: Store) => void = () => {}, machine?: Parameters<typeof serve>[3]): Promise<void> {
+    const home = path.join(tempHome(), "store");
+    execFileSync(process.execPath, [path.join(import.meta.dirname, "../scripts/demo.ts"), home]);
+    const own = new Store(home);
+    prepare(own);
+    const desk = await serve(own, undefined, undefined, machine);
+    const page = await browser.newPage(390, 844);
+    try {
+      await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+      await page.goto(desk.base + "/");
+      await page.waitFor("document.querySelector('.next') && document.querySelectorAll('.scard').length");
+      await test(page, own);
+    } finally {
+      await page.close();
+      await desk.close();
+    }
+    assert.deepEqual(page.errors, [], "the page reports no errors");
+  }
+  /** Whether a finger on the element's centre lands on it: in the viewport, and nothing else on top. */
+  const underFinger = (el: string) =>
+    `(() => { const el = ${el}; const r = el.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2; const top = x >= 0 && x < innerWidth && y >= 0 && y < innerHeight ? document.elementFromPoint(x, y) : null; return !!top && el.contains(top); })()`;
+
+  it("on a phone, marks every result seen with a tap in sight on To review, not past the strip's warnings", async () => {
+    await ownPhone(async (page) => {
+      await page.tap(".tabbar button", "To review");
+      await page.waitFor(`document.querySelectorAll('.col-review .rtile-wrap').length === 3 && ${STILL}`);
+      // The strip's own button is there too, a sideways scroll past the context warnings.
+      const button = "[...document.querySelectorAll('.col-review .col-head button')].find((b) => b.textContent === 'Mark all as seen')";
+      await page.waitFor(button);
+      assert.equal(await page.eval<boolean>(underFinger(button)), true, "in sight, under the finger");
+      assert.ok((await page.eval<number>(`${button}.getBoundingClientRect().height`)) >= 44, "a finger's height");
+      await page.tap(".col-review .col-head button", "Mark all as seen");
+      await page.waitFor("!document.querySelector('.col-review .rtile-wrap')");
+      assert.equal(await page.eval<boolean>("!!document.querySelector('.col-review .rv-tile')"), true, "the reviews stay: only results are marked seen");
+    });
+  });
+
+  it("on a phone, draws the strip's chips one height, each whole in its border, and fades the edge that hides more", async () => {
+    const sick = tempHome();
+    fs.writeFileSync(path.join(sick, "loadavg"), "21.37 9.00 4.00 9/900 1234\n");
+    fs.writeFileSync(path.join(sick, "meminfo"), "MemTotal:       32000000 kB\nMemAvailable:    1953125 kB\n");
+    const dir = "/home/demo/Projects/a-checkout-project-with-a-long-name";
+    const worktree = (n: number) => ({ path: `${dir}/.claude/worktrees/w${n}`, branch: `agent/w${n}`, head: `abc123${n}`, main: false, merged: true, bytes: 4e9 });
+    await ownPhone(
+      async (page) => {
+        const chips = "[...document.querySelectorAll('#strip > .chip')]";
+        await page.waitFor(`${chips}.length >= 4 && document.getElementById('strip').textContent.includes('in worktrees')`);
+        const shape = await page.eval<{ heights: number[]; spilled: string[]; kinds: string[]; down: boolean; cut: string | undefined }>(`(() => {
+          const strip = document.getElementById('strip');
+          return {
+            heights: [...new Set(${chips}.map((c) => c.getBoundingClientRect().height))],
+            spilled: ${chips}.filter((c) => c.scrollWidth > c.clientWidth).map((c) => c.textContent),
+            kinds: [...new Set(${chips}.map((c) => c.tagName))].sort(),
+            down: strip.scrollHeight > strip.clientHeight,
+            cut: strip.dataset.cut,
+          };
+        })()`);
+        assert.deepEqual(shape.kinds, ["BUTTON", "SPAN"], "warnings that open something and warnings that only inform");
+        assert.equal(shape.heights.length, 1, `one height for every chip, not ${shape.heights.join(", ")}`);
+        assert.deepEqual(shape.spilled, [], "no chip's text runs out of its border");
+        assert.equal(shape.down, false, "the strip scrolls sideways only");
+        assert.equal(shape.cut, "end", "its end fades, where more is hidden");
+        const first = `${chips}.find((c) => c.tagName === 'BUTTON')`;
+        await page.eval(`${first}.scrollIntoView({ inline: 'start' })`);
+        assert.equal(await page.eval<boolean>(underFinger(first)), true, "a warning that opens something is under the finger");
+      },
+      (own) =>
+        own.putProjectScan({ id: projectId(dir), name: "a-checkout-project-with-a-long-name", dir, worktrees: [{ path: dir, branch: "main", head: "abc1234", main: true, bytes: 1e9 }, worktree(1), worktree(2)], totalBytes: 9e9, dayStart: { day: "2026-10-28", bytes: 9e9 }, measuredAt: new Date().toISOString(), problems: [] }),
+      { proc: sick, sys: sick, cores: 12 },
+    );
+  });
+
   it("opens and closes a header menu from its button or Escape, keeping the focus on each choice", async () => {
     const page = await open();
     await page.click("#theme");

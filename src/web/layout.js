@@ -60,11 +60,11 @@ export function fitNewBoxes(root) {
 }
 
 // Scroll areas whose edge hides more of their list; style.css fades that edge.
-const CUT = "#projects, .board .col-body";
+const CUT = "#projects, #strip, .board .col-body";
 /** @param {Element} el */
 export function markCut(el) {
   if (!(el instanceof HTMLElement)) return;
-  const across = el.id === "projects";
+  const across = el.id === "projects" || el.id === "strip";
   const at = across ? el.scrollLeft : el.scrollTop;
   const rest = across ? el.scrollWidth - el.clientWidth - at : el.scrollHeight - el.clientHeight - at;
   const cut = [at > 1 ? "start" : "", rest > 1 ? "end" : ""].filter(Boolean).join(" ");

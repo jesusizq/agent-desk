@@ -14,6 +14,7 @@ import { openSession } from "./session.js";
 import { CONTEXT_WARN, data, inbox, inProject, isLive, isNew, label, metricsOf, onDesk, openItems, openReviews, page, toReview, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
+/** @typedef {import("../core/protocol.ts").Result} Result */
 
 export function renderHeader() {
   const n = inbox().count;
@@ -128,6 +129,9 @@ function renderTabbar(needs) {
   );
 }
 
+/** Marks these results seen: in the strip, and on a phone also at the head of To review. @param {readonly Result[]} results */
+export const markAllSeenButton = (results) => h("button", { class: "linkish", onclick: () => run(markResultsSeen(results)) }, TEXT.markSeen);
+
 export function renderStrip() {
   const fresh = data.results.filter((r) => inProject(r.sessionId) && isNew(r));
   const failed = fresh.filter((r) => r.status === "failed").length;
@@ -148,7 +152,7 @@ export function renderStrip() {
     // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear.
     away ?? (ui.loaded ? h("span", { class: "muted" }, summary) : h("span", { class: "skel", "aria-hidden": "true" })),
     // Marks exactly what the line counts, failures included: no result of a project out of view.
-    fresh.length ? h("button", { class: "linkish", onclick: () => run(markResultsSeen(fresh)) }, TEXT.markSeen) : null,
+    fresh.length ? markAllSeenButton(fresh) : null,
     h("span", { class: "spacer" }),
     data.problems.length ? h("span", { class: "chip warn problems", title: data.problems.join("\n") }, TEXT.problems(data.problems.length)) : null,
     data.disk.map((d) => h("span", { class: "chip warn", title: d.dir }, TEXT.disk(gb(d.freeBytes), d.projects.join(", ")))),

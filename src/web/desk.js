@@ -12,6 +12,7 @@ import { openResult } from "./result.js";
 import { reviewLine, reviewTile } from "./review.js";
 import { imageUrl, post, run } from "./server.js";
 import { baseBranchOf } from "./projects.js";
+import { markAllSeenButton } from "./header.js";
 import { openSession } from "./session.js";
 import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, openReviews, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
 
@@ -211,7 +212,9 @@ function reviewColumn() {
   const earlier = h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory);
   if (!list.length && !reviews.length) return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: earlier }), { quiet: true });
   const results = list.length ? h("div", { class: "rtiles", "data-list": true, "data-key": "results" }, list.map(resultTile)) : null;
-  if (!reviews.length) return column("review", list.length, results, { quiet: true });
+  // On a phone the strip's own button sits past its warnings, a sideways scroll away: To review offers it in sight.
+  const aside = list.length && ONE_COLUMN.matches ? markAllSeenButton(list) : null;
+  if (!reviews.length) return column("review", list.length, results, { quiet: true, aside });
   return column(
     "review",
     list.length + reviews.length,
@@ -222,6 +225,7 @@ function reviewColumn() {
       h("div", { class: "rv-tiles", "data-list": true }, reviews.map(reviewTile)),
       results ? [h("div", { class: "rv-group" }, TEXT.review.results), results] : h("div", { class: "rv-earlier" }, earlier),
     ),
+    { aside },
   );
 }
 

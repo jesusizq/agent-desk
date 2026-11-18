@@ -518,14 +518,19 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   .board.quiet .col-needs > .col-body { flex: none; padding-inline: 8px; padding-bottom: 6px; }
   /* The head and foot reserve the list's scrollbar gutter too, whatever its width here, so all three share one right edge. */
   :is(.col-head, .col-foot) { overflow: hidden; scrollbar-gutter: stable; }
-  /* A list cut by its scroll area fades at the edge that hides more (layout.js sets data-cut). */
-  [data-cut] { --fade-dir: to bottom; --fade-a: 0px; --fade-b: 0px;
-    -webkit-mask-image: linear-gradient(var(--fade-dir), transparent, #000 var(--fade-a), #000 calc(100% - var(--fade-b)), transparent);
-    mask-image: linear-gradient(var(--fade-dir), transparent, #000 var(--fade-a), #000 calc(100% - var(--fade-b)), transparent); }
-  [data-cut~="start"] { --fade-a: 20px; }
-  [data-cut~="end"] { --fade-b: 32px; }
-  #projects[data-cut] { --fade-dir: to right; }
 }
+/* A list cut by its scroll area fades at the edge that hides more (layout.js sets data-cut): a column's
+   list, or on a phone the projects and the strip, which scroll sideways. */
+[data-cut] { --fade-dir: to bottom; --fade-a: 0px; --fade-b: 0px;
+  --fade: linear-gradient(var(--fade-dir), transparent, #000 var(--fade-a), #000 calc(100% - var(--fade-b)), transparent);
+  -webkit-mask-image: var(--fade); mask-image: var(--fade); }
+[data-cut~="start"] { --fade-a: 20px; }
+[data-cut~="end"] { --fade-b: 32px; }
+:is(#projects, #strip)[data-cut] { --fade-dir: to right; }
+/* The strip's bottom border stays whole under its fading line: a second mask layer keeps its last pixel row. */
+#strip[data-cut] { -webkit-mask-image: var(--fade), linear-gradient(#000 0 0); mask-image: var(--fade), linear-gradient(#000 0 0);
+  -webkit-mask-size: 100% 100%, 100% 1px; mask-size: 100% 100%, 100% 1px; -webkit-mask-position: 0 0, bottom; mask-position: 0 0, bottom;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
 /* Below this the header's labelled buttons leave the projects too little room: views and Display keep their icons. */
 @media (max-width: 1180px) {
   #views .lbl, #theme .lbl { display: none; }
@@ -888,6 +893,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .strip:has(.offline) { flex-wrap: wrap; }
   .strip .offline { order: -2; flex: 1 1 100%; white-space: normal; }
   .strip .chip { order: -1; } /* warnings first: the summary repeats the Results count */
+  .strip > .chip { max-width: none; } /* it scrolls sideways: a chip is as wide as its text, never spilling out of its border */
   /* So does the summary of the time away, one row per group: what it names stays a tap away above Needs you. */
   .strip:has(> .away) { flex-wrap: wrap; }
   .strip > .away { order: -1; flex: 1 1 100%; white-space: normal; }
@@ -1134,10 +1140,15 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   .touch-only { display: inline; }
   .links a { display: inline-block; padding-block: 12px; margin-block: -10px; }
   .col-foot:has(> .keys-only:only-child) { display: none; }
-  /* The session panel's chips keep one height, the buttons among them a finger's reach in an invisible margin. */
-  .pchips > .chip { min-height: 32px; }
-  .pchips button.chip { position: relative; }
-  .pchips button.chip::after { content: ""; position: absolute; inset: -6px 0; }
+  /* The session panel's chips and the strip's line keep one height, the buttons among them a finger's reach in an
+     invisible margin (inside the strip's padding, which its sideways scroll would otherwise clip and scroll by). */
+  :is(.pchips, .strip) > .chip { min-height: 32px; }
+  .strip > .linkish { min-height: 32px; padding-block: 0; margin-block: 0; }
+  :is(.pchips, .strip) > button:is(.chip, .linkish) { position: relative; }
+  :is(.pchips, .strip) > button:is(.chip, .linkish)::after { content: ""; position: absolute; inset: -6px 0; }
+  /* To review's own Mark all as seen (desk.js, one column only): a finger's height, which the head's ellipsis would clip. */
+  .col-review .head-aside { overflow: visible; }
+  .col-review .head-aside .linkish { min-height: 44px; padding-block: 0; margin-block: -14px; }
 }
 
 /* No hover: what hover reveals is shown, and a tap does not leave a card lifted. */
