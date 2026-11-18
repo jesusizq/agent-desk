@@ -3,12 +3,13 @@
 import { byId, h, icon, patch } from "./dom.js";
 import { reducedMotion } from "./motion.js";
 import { TEXT } from "./text.js";
-import { clockAt, gb, hm } from "./format.js";
+import { clockAt, gb } from "./format.js";
 import { awaySummary } from "./away.js";
 import { markCut } from "./layout.js";
 import { projectMark } from "./pieces.js";
 import { mergedOf, openProject, openResumes, pendingNotes, projectsInView, resumesInView, sum, worthWarning } from "./projects.js";
-import { offlineNotice, post, run } from "./server.js";
+import { markResultsSeen } from "./result.js";
+import { offlineNotice, run } from "./server.js";
 import { openSession } from "./session.js";
 import { CONTEXT_WARN, data, inbox, inProject, isLive, isNew, label, metricsOf, onDesk, openItems, openReviews, page, toReview, ui } from "./state.js";
 
@@ -128,15 +129,12 @@ function renderTabbar(needs) {
 }
 
 export function renderStrip() {
-  const since = data.seen?.since ?? null;
   const fresh = data.results.filter((r) => inProject(r.sessionId) && isNew(r));
   const failed = fresh.filter((r) => r.status === "failed").length;
   const summary = fresh.length
-    ? since
-      ? TEXT.sinceSummary(hm(since), fresh.length - failed, failed)
-      : TEXT.unseenSummary(fresh.length - failed, failed)
-    : since
-      ? TEXT.nothingNew(hm(since))
+    ? TEXT.unseenSummary(fresh.length - failed, failed)
+    : data.results.some((r) => inProject(r.sessionId))
+      ? TEXT.nothingNew
       : TEXT.nothingYet;
   const contexts = data.sessions
     .filter((s) => isLive(s) && inProject(s.id))
@@ -149,7 +147,8 @@ export function renderStrip() {
     ui.offline ? offlineNotice("strip-offline") : null,
     // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear.
     away ?? (ui.loaded ? h("span", { class: "muted" }, summary) : h("span", { class: "skel", "aria-hidden": "true" })),
-    fresh.length ? h("button", { class: "linkish", onclick: () => run(post("/api/seen")) }, TEXT.markSeen) : null,
+    // Marks exactly what the line counts, failures included: no result of a project out of view.
+    fresh.length ? h("button", { class: "linkish", onclick: () => run(markResultsSeen(fresh)) }, TEXT.markSeen) : null,
     h("span", { class: "spacer" }),
     data.problems.length ? h("span", { class: "chip warn problems", title: data.problems.join("\n") }, TEXT.problems(data.problems.length)) : null,
     data.disk.map((d) => h("span", { class: "chip warn", title: d.dir }, TEXT.disk(gb(d.freeBytes), d.projects.join(", ")))),

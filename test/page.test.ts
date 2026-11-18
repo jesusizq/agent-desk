@@ -1069,6 +1069,35 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     for (const id of ["hue-a", "hue-b"]) store.updateSession(id, (s) => ({ ...s, state: "ended", endedAt: new Date().toISOString() }));
   });
 
+  it("marks seen from the strip only what its line counts: the project shown, its failures too, no other project's results", async () => {
+    // A desk of its own: the shared one has results other tests count on staying new.
+    const own = new Store(path.join(tempHome(), "store"));
+    for (const name of ["alpha", "beta"]) {
+      own.upsertSession({ id: `seen-${name}`, provider: "Test", project: { name, dir: `/home/demo/Projects/${name}` }, title: `work in ${name}`, state: "working" });
+      own.addResult({ sessionId: `seen-${name}`, title: `${name} finished` });
+      own.addResult({ sessionId: `seen-${name}`, title: `${name} broke`, status: "failed" });
+    }
+    const served = await serve(own);
+    try {
+      const page = await browser.newPage(1400, 900);
+      pages.push(page);
+      await page.goto(served.base + "/");
+      const strip = "document.querySelector('#strip').textContent";
+      await page.waitFor(`${strip}.includes('Not reviewed: 2 finished, 2 failures.')`);
+      await page.click("#projects button", "alpha");
+      await page.waitFor(`${strip}.includes('Not reviewed: 1 finished, 1 failure.')`);
+      await page.click("#strip button", "Mark all as seen");
+      await page.waitFor(`${strip}.includes('Nothing new to review.')`);
+      const seen = Object.fromEntries(own.listResults().map((r) => [r.title, r.seenAt !== undefined]));
+      assert.deepEqual(seen, { "alpha finished": true, "alpha broke": true, "beta finished": false, "beta broke": false }, "what the line counted is cleared, beta's results stay new");
+      assert.equal(own.getSeen(), undefined, "nothing marks everything at once");
+      await page.click("#projects button", "All");
+      await page.waitFor(`${strip}.includes('Not reviewed: 1 finished, 1 failure.')`);
+    } finally {
+      await served.close();
+    }
+  });
+
   it("marks a session unread back to the list, and opening it reads it again", async () => {
     store.upsertSession({ id: "come-back", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "come back later" });
     store.updateSession("come-back", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Here is the long report", at: new Date().toISOString() } }));

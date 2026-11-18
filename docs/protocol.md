@@ -28,7 +28,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `reviews/<review>/review.json` | `Review`: title, project, the session that published the latest round, every round (`n`, `at`, `sessionId`, `bytes`), progress parsed from the page's counter, when its saved state last changed and from where (`local`, `remote`), whether the page has handed over the text it copies (`hasSummary`), each send (with the developer's `note`, when one went with it), the last read through the CLI (`collected`), `openedAt`, `closedAt`, `closedReason`, `closedBy` | `agent-desk review`, the page |
 | `reviews/<review>/round-<n>.html` | the page of that round, its images inlined; the last 5 rounds are kept | `agent-desk review` |
 | `reviews/<review>/state.json` | `ReviewState`: the page's `localStorage` (`data`, string to string), the text it copied (`summary`) and `rev`, one more at each accepted write; never in `DeskState` | the page |
-| `seen.json` | when the developer last marked everything as seen | the page |
+| `seen.json` | when the developer last marked everything as seen, which earlier versions of the page did: results recorded before it are still not new; nothing writes it now, each result keeps its own `seenAt` | earlier versions of the page |
 | `plan.json` | per plan window label (`5 h`, `7 d`, as the provider names it), its windows oldest first, the last the current one: `resetsAt` and a sample (`at`, `percent`) each time the percentage rose a point or more. A new reset time starts a window; the last four finished windows are kept, none that reset more than 35 days earlier. A label holding one window object instead of a list (the format of earlier installs) is read as its current window | the server, from the freshest metrics |
 | `secret` | per-install secret for the page's writes | the server, on first start |
 | `compile-cache/` | Node's compiled code of the desk's own TypeScript, kept between runs so a hook does not strip its types again (about 60 ms of each hook, measured 2026-11-17); Node checks each file's source and recompiles what changed | `bin/compile-cache.mjs`, preloaded by every command |
@@ -609,7 +609,8 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/questions/<id>/answer` `{ "text": "…", "images"?: ["<id>"] }` | answer from the page, with up to 10 attached images |
 | `POST /api/questions/<id>/dismiss` | close without answering |
 | `POST /api/sessions/<id>/message` `{ "text": "…", "images"?: ["<id>"] }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
-| `POST /api/results/<id>/seen`, `POST /api/seen` | mark one result, or everything, as seen |
+| `POST /api/results/<id>/seen` | mark one result seen |
+| `POST /api/results/seen` `{ "ids": ["<id>"] }` | mark just these results seen (5000 at most), each under its own lock: the strip's "Mark all as seen" sends those its line counts; returns `{ seen, failed: [{ id, error }] }`, one that could not be marked (gone, unreadable) named in `failed` with its reason while the others are marked |
 | `GET /review/<id>`, `GET /review/<id>/raw` | a review's latest page, with the shim or without, only with `reviewHeaders` (see Reviews) |
 | `GET /api/reviews/<id>/state` | `{ data, summary?, options?, rev }` (`options`: what the options marked in the page read as) |
 | `POST /api/reviews/<id>/state` `{ "ops": [{ "op": "set", "key", "value" } \| { "op": "remove", "key" } \| { "op": "clear" }], "progress"?: "12/97", "summary"?: "…" }` | applies the page's changes; returns `{ rev }`; 5 MB body at most |

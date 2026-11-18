@@ -26,6 +26,8 @@ before(async () => {
   ({ base, port, close } = await serve(store));
 });
 after(() => close());
+/** A write that changes nothing, to test who may write. */
+const NO_IDS = JSON.stringify({ ids: [] });
 
 const post = (route: string, body: unknown, headers: Record<string, string> = {}) =>
   fetch(base + route, {
@@ -162,12 +164,31 @@ describe("server", () => {
     }
   });
 
-  it("marks results and everything as seen", async () => {
+  it("marks one result seen, or just the results listed by id, and never everything at once", async () => {
     const r = store.addResult({ sessionId: "s1", title: "Done" });
     assert.equal((await post(`/api/results/${r.id}/seen`, {})).status, 200);
     assert.ok(store.listResults().find((x) => x.id === r.id)?.seenAt);
-    assert.equal((await post("/api/seen", {})).status, 200);
-    assert.ok(store.getSeen());
+
+    const listed = [store.addResult({ sessionId: "s1", title: "Finished" }), store.addResult({ sessionId: "s1", title: "Broke", status: "failed" })];
+    const left = store.addResult({ sessionId: "s1", title: "Not listed" });
+    const ids = listed.map((x) => x.id);
+    assert.equal((await post("/api/results/seen", { ids }, { "X-Agent-Desk-Secret": "wrong" })).status, 403, "behind the secret");
+    assert.equal((await post("/api/results/seen", { ids }, { Origin: "http://evil.example" })).status, 403, "and the page's origin");
+    for (const bad of [{}, { ids: "r-1" }, { ids: ["../secret"] }, { ids: Array.from({ length: 5001 }, (_, i) => `r-${i}`) }]) {
+      assert.equal((await post("/api/results/seen", bad)).status, 400, JSON.stringify(bad).slice(0, 40));
+    }
+    assert.ok(listed.every((x) => !store.listResults().find((y) => y.id === x.id)?.seenAt), "a refused request marks nothing");
+
+    const res = await post("/api/results/seen", { ids: [...ids, "r-gone"] });
+    assert.equal(res.status, 200);
+    const reply = (await res.json()) as { seen: number; failed: { id: string; error: string }[] };
+    assert.equal(reply.seen, 2);
+    assert.deepEqual(reply.failed.map((f) => f.id), ["r-gone"], "what could not be marked is said");
+    const now = store.listResults();
+    assert.ok(ids.every((id) => now.find((x) => x.id === id)?.seenAt), "the listed ones are marked, the failure too");
+    assert.equal(now.find((x) => x.id === left.id)?.seenAt, undefined, "a result not listed stays new");
+    assert.equal(store.getSeen(), undefined);
+    assert.equal((await post("/api/seen", {})).status, 404, "no endpoint marks everything any more");
   });
 
   it("has no way left to take a result off the desk but marking it seen", async () => {
@@ -313,8 +334,8 @@ describe("remote access through Tailscale Serve", () => {
       setPin(store.paths.pin, "424242");
       const cookie = new RemoteUnlock(store.paths.pin, secret).unlock("424242").split(";")[0] ?? "";
       const write = { Host: remote.host, "Tailscale-User-Login": remote.user, "Content-Type": "application/json", "X-Agent-Desk-Secret": secret, Cookie: cookie };
-      assert.equal(await call("POST", "/api/seen", { ...write, Origin: `https://${remote.host}` }, "{}"), 200);
-      assert.equal(await call("POST", "/api/seen", { ...write, Origin: `http://${remote.host}` }, "{}"), 403);
+      assert.equal(await call("POST", "/api/results/seen", { ...write, Origin: `https://${remote.host}` }, NO_IDS), 200);
+      assert.equal(await call("POST", "/api/results/seen", { ...write, Origin: `http://${remote.host}` }, NO_IDS), 403);
     } finally {
       server.close();
     }
@@ -363,7 +384,7 @@ describe("a request through a proxy is never local", () => {
             const page = await call(server.port, "GET", "/", { Host: host, ...proxy });
             assert.equal(page.status, 421, `${host} with ${Object.keys(proxy)[0]} is refused`);
             assert.ok(!page.body.includes(store.secret()), `${host} with ${Object.keys(proxy)[0]} never gets the secret`);
-            const write = await call(server.port, "POST", "/api/seen", { Host: host, ...proxy, Origin: `http://${local}`, "X-Agent-Desk-Secret": store.secret(), "Content-Type": "application/json" }, "{}");
+            const write = await call(server.port, "POST", "/api/results/seen", { Host: host, ...proxy, Origin: `http://${local}`, "X-Agent-Desk-Secret": store.secret(), "Content-Type": "application/json" }, NO_IDS);
             assert.equal(write.status, 421, `${host} with ${Object.keys(proxy)[0]} cannot write even with the secret`);
           }
         }
@@ -392,8 +413,8 @@ describe("a request through a proxy is never local", () => {
       setPin(store.paths.pin, "424242");
       const cookie = new RemoteUnlock(store.paths.pin, store.secret()).unlock("424242").split(";")[0] ?? "";
       const write = { ...fromServe, Cookie: cookie, "X-Agent-Desk-Secret": store.secret(), "Content-Type": "application/json" };
-      assert.equal((await call(server.port, "POST", "/api/seen", { ...write, Origin: `https://${remote.host}` }, "{}")).status, 200);
-      assert.equal((await call(server.port, "POST", "/api/seen", { ...write, Origin: `http://127.0.0.1:${server.port}` }, "{}")).status, 403, "a remote write needs the remote origin, not this machine's");
+      assert.equal((await call(server.port, "POST", "/api/results/seen", { ...write, Origin: `https://${remote.host}` }, NO_IDS)).status, 200);
+      assert.equal((await call(server.port, "POST", "/api/results/seen", { ...write, Origin: `http://127.0.0.1:${server.port}` }, NO_IDS)).status, 403, "a remote write needs the remote origin, not this machine's");
     } finally {
       await server.close();
     }

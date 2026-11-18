@@ -4,9 +4,9 @@ import * as fs from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import * as path from "node:path";
 import { gzipSync } from "node:zlib";
-import { fields, InputError, int, oneOf, optional, text } from "../core/check.ts";
+import { fields, InputError, int, list, oneOf, optional, text } from "../core/check.ts";
 import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
-import { ID_PATTERN } from "../core/ids.ts";
+import { ID_PATTERN, id } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
 import { type DeskState, type DiskWarning, imageIds, type ProjectScan, type ReviewState, reviewNote, type Session, type SessionBranches } from "../core/model.ts";
@@ -67,6 +67,9 @@ const STATIC: Record<string, string> = {
 const BODY_LIMIT = 64 * 1024;
 /** A review's saved state (2 MB) with the text its page copies (200 KB), as JSON; the store checks the real limits. */
 const REVIEW_BODY_LIMIT = 5 * 1024 * 1024;
+/** Results marked seen in one request: every result the desk lists, in one go; each id up to 128 characters, as JSON. */
+const SEEN_IDS_MAX = 5000;
+const SEEN_BODY_LIMIT = SEEN_IDS_MAX * 132 + 64;
 /** What the PIN page may load before the device is unlocked. */
 const UNLOCK_ASSETS = new Set(["/unlock.js", "/dom.js", "/text.js", "/theme.js", "/style.css", "/favicon.svg", "/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"]);
 /** Marks what a locked device gets: the device never keeps the PIN page as the desk, and drops the desk it kept (sw.js). */
@@ -245,7 +248,15 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
   if (!writeAllowed(req, access, reach.from, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
   // What the desk itself writes is told to the other pages at once, without waiting for the watch.
   res.on("finish", () => feed.poke());
-  if (route === "/api/seen") return sendJson(res, 200, store.markAllSeen());
+  if (route === "/api/results/seen") {
+    try {
+      const ids = list(fields(await readBody(req, SEEN_BODY_LIMIT), "body").ids, "ids", id, SEEN_IDS_MAX);
+      return sendJson(res, 200, store.markResultsSeen(ids));
+    } catch (error) {
+      if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
+      throw error;
+    }
+  }
   if (route === "/api/images") return attachImage(store, req, res);
   if (route === "/api/push/subscribe" || route === "/api/push/unsubscribe") {
     try {

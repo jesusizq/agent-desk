@@ -272,12 +272,9 @@ export const TEXT = {
   /** @param {string} t */
   idleSince: (t) => `idle since ${t}`,
   context: contextAt,
-  /** @param {string} t @param {number} done @param {number} failed */
-  sinceSummary: (t, done, failed) => `Since ${t}: ${counts(done, failed)}.`,
   /** @param {number} done @param {number} failed */
   unseenSummary: (done, failed) => `Not reviewed: ${counts(done, failed)}.`,
-  /** @param {string} t */
-  nothingNew: (t) => `Nothing new since ${t}.`,
+  nothingNew: "Nothing new to review.",
   nothingYet: "Nothing has finished yet.",
   away: {
     title: "While you were away",
@@ -299,6 +296,8 @@ export const TEXT = {
     dismiss: "Dismiss this summary",
   },
   markSeen: "Mark all as seen",
+  /** @param {number} failed @param {number} total @param {string} why */
+  notSeen: (failed, total, why) => `${failed} of ${plural(total, "result", "results")} could not be marked seen: ${why}`,
   /** @param {string} free @param {string} projects */
   disk: (free, projects) => `Disk: ${free} free (${projects})`,
   machine: {

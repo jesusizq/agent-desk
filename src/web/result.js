@@ -4,12 +4,24 @@ import { dialog, h, icon, md } from "./dom.js";
 import { TEXT } from "./text.js";
 import { stamp } from "./format.js";
 import { badge, dialogHead, dot, goLink, localLink, where } from "./pieces.js";
-import { imageUrl, post, run } from "./server.js";
+import { imageUrl, post, postJson, refresh, run } from "./server.js";
 import { isNew, S } from "./state.js";
 import { zoom } from "./zoom.js";
 
 /** @typedef {import("../core/protocol.ts").Result} Result */
 /** @typedef {import("./zoom.js").Picture} Picture */
+
+/**
+ * Marks these results seen in one request, and nothing else; those the desk could not mark are said,
+ * with the first reason, once the others are marked. @param {readonly Result[]} results
+ */
+export async function markResultsSeen(results) {
+  const reply = await postJson("/api/results/seen", { ids: results.map((r) => r.id) });
+  await refresh();
+  const failed = typeof reply === "object" && reply !== null && "failed" in reply && Array.isArray(reply.failed) ? reply.failed : null;
+  if (failed === null) throw new Error(TEXT.notSeen(results.length, results.length, "the desk's answer did not say which were marked"));
+  if (failed.length) throw new Error(TEXT.notSeen(failed.length, results.length, String(failed[0]?.error)));
+}
 
 /** @param {Result} r @param {{ markSeen?: boolean }} [opts] */
 export function openResult(r, { markSeen = true } = {}) {

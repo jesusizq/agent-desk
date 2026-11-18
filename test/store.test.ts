@@ -849,14 +849,25 @@ describe("agents and results", () => {
     assert.throws(() => store.addResult({ sessionId: "s1", title: "x", url: "javascript:alert(1)" }), /only local URLs/);
   });
 
-  it("marks results seen and everything seen", () => {
+  it("marks one result seen, or just the results listed, reporting each it could not mark", () => {
     const store = testStore();
     addSession(store);
     const r = store.addResult({ sessionId: "s1", title: "Done" });
     assert.equal(r.seenAt, undefined);
     assert.ok(store.markResultSeen(r.id).seenAt);
-    const seen = store.markAllSeen();
-    assert.equal(store.getSeen()?.since, seen.since);
+    const done = store.addResult({ sessionId: "s1", title: "Finished" });
+    const broke = store.addResult({ sessionId: "s1", title: "Broke", status: "failed" });
+    const other = store.addResult({ sessionId: "s1", title: "Not listed" });
+    const unreadable = store.addResult({ sessionId: "s1", title: "Unreadable" });
+    fs.writeFileSync(store.paths.result(unreadable.id), "{ half");
+    const reply = store.markResultsSeen([done.id, broke.id, done.id, "r-gone", unreadable.id]);
+    assert.equal(reply.seen, 2, "each listed result once, the duplicate too");
+    assert.deepEqual(reply.failed.map((f) => f.id), ["r-gone", unreadable.id], "the others are marked, and each that could not be is named");
+    assert.match(reply.failed[0]?.error ?? "", /no result r-gone/);
+    const byId = new Map(store.listResults([]).map((x) => [x.id, x]));
+    assert.ok(byId.get(done.id)?.seenAt && byId.get(broke.id)?.seenAt, "a failure is marked too");
+    assert.equal(byId.get(other.id)?.seenAt, undefined, "a result not listed stays new");
+    assert.equal(store.getSeen(), undefined, "nothing marks everything at once");
   });
 
   it("still reads a result recorded with the dismissal the desk no longer keeps, and drops it on the next write", () => {

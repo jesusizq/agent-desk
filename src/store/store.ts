@@ -959,6 +959,24 @@ export class Store {
     return this.updateResult(resultId, (r) => (r.seenAt ? r : { ...r, seenAt: this.stamp() }));
   }
 
+  /**
+   * Marks these results seen, each under its own lock: one that cannot be marked (gone, unreadable)
+   * is returned with its reason and the others are still marked; running it again is safe.
+   */
+  markResultsSeen(resultIds: readonly string[]): { seen: number; failed: { id: string; error: string }[] } {
+    const failed: { id: string; error: string }[] = [];
+    let seen = 0;
+    for (const resultId of new Set(resultIds)) {
+      try {
+        this.markResultSeen(resultId);
+        seen++;
+      } catch (error) {
+        failed.push({ id: resultId, error: (error as Error).message });
+      }
+    }
+    return { seen, failed };
+  }
+
   /** Changes a result under its lock; one `change` returns unchanged is not written. */
   private updateResult(resultId: string, change: (current: Result) => Result): Result {
     const file = this.paths.result(resultId);
@@ -1322,17 +1340,12 @@ export class Store {
     return this.readAll(this.paths.metricsDir, readMetrics, problems);
   }
 
+  /** The cut-off an earlier page wrote when it marked everything seen: results before it are still not new. */
   getSeen(): Seen | undefined {
     const raw = readJson(this.paths.seen);
     return raw === undefined ? undefined : readSeen(raw, this.paths.seen);
   }
 
-  /** "Mark everything as seen": what happened before now is no longer new. */
-  markAllSeen(): Seen {
-    const seen = { since: this.stamp() };
-    writeJson(this.paths.seen, seen);
-    return seen;
-  }
 
   // ── Conversation ────────────────────────────────────────────────────────
 
