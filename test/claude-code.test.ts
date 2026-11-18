@@ -1840,7 +1840,8 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     const failing = turnCheck([refused, { refusals: [], said: [GAVE_UP], finishedAt: at(30) }], at(25));
     assert.deepEqual(failing, { outcome: "failing", reopened: { times: 1, reason: checkExcerpt(REASON), at: at(12) }, said: GAVE_UP });
     assert.deepEqual(turnCheck([refused, { refusals: [], said: [], finishedAt: at(30) }], at(25)), { outcome: "passed" }, "a silent end reads as passing");
-    assert.deepEqual(turnCheck([{ refusals: [], said: ["Formatted 3 files."], finishedAt: at(30) }], at(25)), { outcome: "passed" }, "a message from a check that never refused is no failure");
+    assert.deepEqual(turnCheck([{ refusals: [], said: ["Formatted 3 files."], finishedAt: at(30) }], at(25)), { outcome: "unrefused" }, "a message from a check that never refused is no failure");
+    assert.deepEqual(turnCheck([{ refusals: [], said: [], finishedAt: at(30) }], at(25)), { outcome: "unrefused" }, "an end no check refused may be one it skipped, not a pass");
     const long = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
     assert.equal(checkExcerpt(long).split("\n").length, 12, "only the refusal's first lines are kept");
   });
@@ -1893,6 +1894,26 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     assert.equal(out.code, 2);
     assert.match(out.stderr ?? "", /Their answer, verbatim:\nLeave it; I will look at the types\.$/);
     assert.equal(store.getQuestion(q?.id ?? "")?.status, "answered");
+  });
+
+  it("a later turn no check refused leaves the failing check's item; one a check refused and then let end silently takes it away", () => {
+    const store = testStore();
+    handleHook(event("Stop", { last_assistant_message: "I could not fix it." }), ctx(store));
+    const q = store.recordTurnCheck("cc-1", { outcome: "failing", reopened: { times: 3, reason: REASON, at: at(12) }, said: GAVE_UP });
+    const endsAt = (rows: object[], since: string) => {
+      store.updateSession("cc-1", (s) => ({ ...s, turnEndedAt: new Date(Date.now() + 1000).toISOString() })); // after the item was asked
+      const check = turnCheck(stopRounds(transcript(rows)), since);
+      assert.ok(check);
+      store.recordTurnCheck("cc-1", check);
+      return check.outcome;
+    };
+    // A message that closes nothing wakes the session, which replies without editing: the check skips that end.
+    const skipped = [rows.prompt("<task-notification>build done</task-notification>", at(30)), rows.said("Noted.", at(31)), rows.summary([], at(32)), rows.turnEnd(at(32)), ...rows.trailer];
+    assert.equal(endsAt(skipped, at(31)), "unrefused");
+    assert.equal(store.getQuestion(q?.id ?? "")?.status, "open", "a skipped check is no pass");
+    const fixed = [rows.prompt("fix the types", at(40)), rows.said("Done.", at(41)), ...rows.refusal(REASON, at(42)), rows.summary([REASON], at(42)), rows.said("Fixed.", at(50)), rows.summary([], at(51)), rows.turnEnd(at(51)), ...rows.trailer];
+    assert.equal(endsAt(fixed, at(50)), "passed");
+    assert.equal(store.getQuestion(q?.id ?? "")?.status, "dismissed", "the check refused this turn, then let it end: it passed");
   });
 
   it("a question the next end asks does not replace the failing check's item", () => {

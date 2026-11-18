@@ -81,9 +81,14 @@ export type Snapshot = {
  * How the checks run at the end of a session's latest turn (provider hooks that can refuse the end
  * and send it back to work) ended it, as its adapter read it: one refused it (`reopened`); one that
  * had refused it let the turn end without passing (`failing`, with what it said at that end, if
- * anything); or none refused it (`passed`).
+ * anything); one that had refused it let the turn end silently, as when it passes (`passed`); or none
+ * refused the turn (`unrefused`), which does not tell a check that passed from one that never ran.
  */
-export type TurnCheck = { outcome: "reopened"; reopened: CheckReopened } | { outcome: "failing"; reopened: CheckReopened; said?: string } | { outcome: "passed" };
+export type TurnCheck =
+  | { outcome: "reopened"; reopened: CheckReopened }
+  | { outcome: "failing"; reopened: CheckReopened; said?: string }
+  | { outcome: "passed" }
+  | { outcome: "unrefused" };
 
 /** A change to a review's saved state from its page: localStorage operations, in order, as the page made them. */
 export type ReviewOp = { op: "set"; key: string; value: string } | { op: "remove"; key: string } | { op: "clear" };
@@ -419,13 +424,15 @@ export class Store {
    * again with the refusals counted on it. Failing, the turn is over: the count goes, and the
    * developer gets a waiting item saying the check still fails (replacing one still open), answered
    * like any waiting session. Passed, what a failing check left is gone: the count, and an item asked
-   * before this turn ended. Returns the item asked, if any.
+   * before this turn ended. Unrefused, only the count goes: a turn no check refused may be one where
+   * the check never ran, so an item stays until the developer answers or a newer failure replaces it.
+   * Returns the item asked, if any.
    */
   recordTurnCheck(sessionId: string, check: TurnCheck, problems?: string[]): Question | undefined {
     const session = this.updateSession(sessionId, ({ checkReopened: _reopened, ...s }) =>
       check.outcome === "reopened" && s.state !== "ended" ? { ...s, state: "working", checkReopened: check.reopened } : s,
     );
-    if (check.outcome === "reopened") return undefined;
+    if (check.outcome === "reopened" || check.outcome === "unrefused") return undefined;
     const ended = session.turnEndedAt ?? session.updatedAt;
     const stale = (q: Question) => q.checkFailing === true && (check.outcome === "failing" || q.askedAt < ended);
     this.closeOpen(sessionId, compact({ which: stale, status: "dismissed" as const, problems }));

@@ -113,8 +113,9 @@ button in the session panel.
   (`checkReopened`), and the `wait` it starts reads the first summary written after the waiter
   started: a refusal there marks the session working again; a turn refused earlier that now ends
   with a Stop hook's message to the developer has a check still failing, and gets the `checkFailing`
-  item; any other end clears both. A check that gives up without a message cannot be told from one
-  that passed.
+  item; a turn refused earlier that now ends silently has passed and clears both; a turn no Stop
+  hook refused clears only the count, since it may be one the check skipped (no edits). A check that
+  gives up without a message cannot be told from one that passed.
 - Finding the session's process and its terminal reads `/proc`, so it works on Linux only.
 - A session in a worktree of a bare repository, or of one whose git folder lives elsewhere
   (`--separate-git-dir`), stays a project of its own: there is no main checkout to group it under.

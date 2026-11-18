@@ -1019,7 +1019,7 @@ describe("checks at a turn's end", () => {
     assert.equal(store.openQuestions("s1").length, 0, "a turn at work asks nothing");
   });
 
-  it("a check that let the turn end still failing leaves one waiting item, gone when a later turn passes", () => {
+  it("a check that let the turn end still failing leaves one waiting item, gone when a later turn passes, not when one no check refused ends", () => {
     const store = testStore();
     addSession(store);
     store.updateSession("s1", (s) => ({ ...s, state: "waiting", checkReopened: reopened(3) }));
@@ -1032,8 +1032,12 @@ describe("checks at a turn's end", () => {
     const again = store.recordTurnCheck("s1", { outcome: "failing", reopened: reopened(1, "tests failed") });
     assert.deepEqual(store.openQuestions("s1").map((x) => x.id), [again?.id], "a newer failure replaces the older item");
     assert.equal(again?.text, "tests failed", "with nothing said at the end, the refusal's first line names it");
+    // A later turn no check refused may be one the check skipped: the item stays, only a count goes.
+    store.updateSession("s1", (s) => ({ ...s, turnEndedAt: "2026-10-28T09:00:00.000Z", checkReopened: reopened(1) }));
+    assert.equal(store.recordTurnCheck("s1", { outcome: "unrefused" }), undefined);
+    assert.deepEqual(store.openQuestions("s1").map((x) => x.id), [again?.id], "a skipped check is no pass");
+    assert.equal(store.getSession("s1")?.checkReopened, undefined);
     // A check that passes in a later turn takes the item away; one asked after that turn ended stays.
-    store.updateSession("s1", (s) => ({ ...s, turnEndedAt: "2026-10-28T09:00:00.000Z" }));
     store.recordTurnCheck("s1", { outcome: "passed" });
     assert.equal(store.openQuestions("s1").length, 0);
     assert.equal(store.getQuestion(again?.id ?? "")?.status, "dismissed");

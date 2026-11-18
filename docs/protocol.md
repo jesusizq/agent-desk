@@ -230,10 +230,11 @@ line of the latest refusal, as plain text. When a check that refused the turn le
 passing, the turn's end gets a `waiting` item marked `checkFailing` ("Check failing" on the desk),
 titled with what the check said at that end and with the latest refusal as its context; it is
 answered like any waiting session. A newer failing check replaces it, a question the next end asks
-does not, and it goes when the developer answers or writes in the terminal, or when a later turn ends
-with no check refusing it (`recordTurnCheck`, `src/store/store.ts`). A check that lets the turn end
-without a word cannot be told from one that passed: only a refusal followed by a message at the end
-reads as failing.
+does not, and it goes when the developer answers or writes in the terminal, or when a later turn a
+check refused ends with no check refusing it any more (`recordTurnCheck`, `src/store/store.ts`). A
+check that lets the turn end without a word cannot be told from one that passed: only a refusal
+followed by a message at the end reads as failing. Nor can a turn no check refused be told from one
+the check skipped (nothing edited, say), so such a turn leaves the item where it is.
 
 ### How sure an answer is
 

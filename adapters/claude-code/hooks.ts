@@ -399,13 +399,14 @@ function reopenedBy(rounds: StopRound[]): CheckReopened | undefined {
  * How the Stop hooks of the turn's end that started after `since` ended it; undefined while they
  * still run. A Stop hook that refused an earlier end of the turn and now lets it end with a message to
  * the developer has given up on it: the check still fails. Letting it end silently reads as passing
- * (a check that gives up without a word cannot be told from one that passed).
+ * (a check that gives up without a word cannot be told from one that passed). A turn no Stop hook
+ * refused says nothing either way: a check that skips a turn (nothing edited) ends it the same way.
  */
 export function turnCheck(rounds: StopRound[], since: string): TurnCheck | undefined {
   const last = rounds.at(-1);
   if (!last || last.finishedAt <= since) return undefined;
   const reopened = reopenedBy(rounds);
-  if (!reopened) return { outcome: "passed" };
+  if (!reopened) return { outcome: "unrefused" };
   if (last.refusals.length > 0) return { outcome: "reopened", reopened };
   return last.said.length > 0 ? { outcome: "failing", reopened, said: last.said.join("\n") } : { outcome: "passed" };
 }
