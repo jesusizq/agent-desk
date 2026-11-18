@@ -18,6 +18,22 @@ const chrome = findChrome();
 /** The session card whose text holds `text`, as an expression for page.eval. */
 const cardOf = (text: string) => `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes(${JSON.stringify(text)}))`;
 const STILL = "document.getAnimations().every((a) => a.effect?.getComputedTiming().iterations === Infinity)";
+/**
+ * Fails when `part` jumps between two frames. Every motion of a redraw runs style.css's --dur-3 (280 ms) on
+ * its --ease-out, cubic-bezier(.2, .8, .2, 1), whose steepest slope is 4.06: in dt ms nothing moving with
+ * it goes farther than 4.1 × travel × dt / 280, travel being all it moves over the frames (moved in one go,
+ * it goes all of it at once); 2 px more for the scroll, kept in whole pixels.
+ */
+function smooth<K extends string>(frames: ({ t: number } & Record<K, number | null>)[], part: K, log: string) {
+  const seen = frames.filter((f) => f[part] !== null) as ({ t: number } & Record<K, number>)[];
+  const travel = Math.max(...seen.map((f) => f[part])) - Math.min(...seen.map((f) => f[part]));
+  seen.forEach((f, i) => {
+    const prev = seen[i - 1];
+    if (!prev) return;
+    const step = Math.abs(f[part] - prev[part]);
+    assert.ok(step <= (4.1 * travel * (f.t - prev.t)) / 280 + 2, `the ${part} moves ${step.toFixed(1)} px in ${(f.t - prev.t).toFixed(1)} ms, of ${travel.toFixed(1)} in all: ${log}`);
+  });
+}
 if (!chrome && process.env.CI) throw new Error("no Chrome found: install one or set AGENT_DESK_CHROME");
 
 describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROME)" }, () => {
@@ -1484,12 +1500,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
 
   describe("on a phone, the answer box works as a chat app's", () => {
     /** The desk as a phone shows it: a finger, no hover, the page's own viewport. */
-    async function phone(width = 390, height = 844, setup = ""): Promise<Page> {
+    /** A phone's screen, touched with a finger, or with a mouse when `mouse` (a tablet's keyboard cover, a desktop browser's device mode). */
+    async function phone(width = 390, height = 844, setup = "", mouse = false): Promise<Page> {
       const page = await browser.newPage(width, height);
       pages.push(page);
       await page.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: true });
-      await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
-      await page.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
+      if (!mouse) {
+        await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+        await page.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
+      }
       if (setup) await page.send("Page.addScriptToEvaluateOnNewDocument", { source: setup });
       await page.goto(base + "/");
       await page.waitFor("document.querySelector('.next') && document.querySelectorAll('.scard').length");
@@ -1635,26 +1654,30 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
-    it("under a keyboard that covers the page, a box on the inbox's card growing line by line keeps its end and Send above the keyboard", async () => {
-      const done = asking("growing", "a growing answer");
-      try {
-        const page = await phone(390, 844, coveringKeyboard(844));
-        await page.click(".qrow", "a growing answer");
-        const box = "document.querySelector('.next textarea')";
-        await page.waitFor(`${box} && document.querySelector('.next').textContent.includes('a growing answer') && ${STILL}`);
-        // The keyboard leaves 20 px under the box: no scroll is needed until it grows.
-        await page.eval(`(() => { ${box}.focus(); setKeyboard(innerHeight - ${box}.getBoundingClientRect().bottom - 20); })()`);
-        await page.waitFor("document.documentElement.hasAttribute('data-keyboard')");
-        for (let i = 0; i < 4; i++) await page.type(`Line ${i} of a longer answer\n`);
-        const room = await page.eval<number[]>(`(() => {
-          const send = document.querySelector('.next .send');
-          return [${box}, send].map((el) => Math.round(visualViewport.height - el.getBoundingClientRect().bottom));
-        })()`);
-        assert.ok(room.every((px) => px >= 16), `the box's end and Send stay 16 px above the keyboard: ${room}`);
-      } finally {
-        done();
-      }
-    });
+    for (const mouse of [false, true]) {
+      it(`under a keyboard that covers the page, a box on the inbox's card growing line by line keeps its end and Send above the keyboard${mouse ? ", with a mouse" : ""}`, async () => {
+        const id = mouse ? "growing-mouse" : "growing";
+        const done = asking(id, "a growing answer");
+        try {
+          const page = await phone(390, 844, coveringKeyboard(844), mouse);
+          await page.click(".qrow", "a growing answer");
+          const box = "document.querySelector('.next textarea')";
+          await page.waitFor(`${box} && document.querySelector('.next').textContent.includes('a growing answer') && ${STILL}`);
+          // The keyboard leaves 20 px under the box: no scroll is needed until it grows. Measured whatever the pointer
+          // (with a mouse, no data-keyboard: a box focused there raises no keyboard of the phone's own).
+          await page.eval(`(() => { ${box}.focus(); setKeyboard(innerHeight - ${box}.getBoundingClientRect().bottom - 20); })()`);
+          await page.waitFor(`parseFloat(document.documentElement.style.getPropertyValue('--keyboard')) > 0 && ${mouse ? "!" : ""}document.documentElement.hasAttribute('data-keyboard')`);
+          for (let i = 0; i < 4; i++) await page.type(`Line ${i} of a longer answer\n`);
+          const room = await page.eval<number[]>(`(() => {
+            const send = document.querySelector('.next .send');
+            return [${box}, send].map((el) => Math.round(visualViewport.height - el.getBoundingClientRect().bottom));
+          })()`);
+          assert.ok(room.every((px) => px >= 16), `the box's end and Send stay 16 px above the keyboard: ${room}`);
+        } finally {
+          done();
+        }
+      });
+    }
 
     it("keeps a toast where it came in when the window it came over closes", async () => {
       store.upsertSession({ id: "toast-edge", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a toast's edge", takesMessagesWhileWorking: true });
@@ -3170,63 +3193,142 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
-    for (const phone of [false, true]) {
-      it(`${phone ? "on a phone, " : ""}answers or dismisses a large card scrolled past its top from what shows, nothing below jumping`, async () => {
-        const id = phone ? "scrolled-phone" : "scrolled";
+    /** What the frames below see of the large card, its scroll area and the last row below it. */
+    type Frame = { t: number; redraw: boolean; scroll: number; card: number | null; box: number | null; row: number | null; resolved: boolean; leaving: boolean; heights: number };
+    const DISMISS = "[...card.querySelectorAll('.actions button')].find((b) => b.textContent.includes('Dismiss')).click()";
+    /**
+     * Scrolls the large card 120 px past its scroll area's top, runs `act` on it (`card` in the page), and
+     * records every frame, at its time, until it is gone and nothing moves: the scroll, the card's top against
+     * the scroll area's, the top of the box it held (where its content showed) and of the last row below it,
+     * and whether a redraw started moving the page since the frame before. `then` runs on the card that took its
+     * place (`card` again), 4 frames after the card started leaving, while it still folds; `heights` counts
+     * the animations of that card's height once it leaves too.
+     */
+    const recordFrames = (page: Page, phone: boolean, act: string, then?: string) =>
+      page.eval<Frame[]>(`new Promise((done) => {
+        const scroller = ${phone ? "document.scrollingElement" : "document.querySelector('.col-needs .col-body')"};
+        const edge = () => ${phone ? "0" : "scroller.getBoundingClientRect().top + scroller.clientTop"};
+        const card = document.querySelector('.next');
+        const box = card.querySelector('.answer textarea');
+        const row = [...document.querySelectorAll('.col-needs .qrow')].at(-1);
+        scroller.scrollTop += card.getBoundingClientRect().top - edge() + 120;
+        const frames = [];
+        let next = null;
+        const known = new WeakSet();
+        const started = () => document.getAnimations().filter((a) => a.id === 'motion' && !known.has(a) && known.add(a)).length > 0;
+        started();
+        const sample = (t) => frames.push({ t, redraw: started(), scroll: scroller.scrollTop, card: card.isConnected ? card.getBoundingClientRect().top - edge() : null, box: box.isConnected ? box.getBoundingClientRect().top : null, row: row?.isConnected ? row.getBoundingClientRect().top : null, resolved: card.classList.contains('resolved'), leaving: card.hasAttribute('data-leaving'), heights: next?.hasAttribute('data-leaving') ? next.getAnimations().filter((a) => a.effect.getKeyframes().some((k) => 'height' in k)).length : 0 });
+        sample(document.timeline.currentTime);
+        ${act};
+        const end = performance.now() + 4000;
+        const tick = (t) => {
+          sample(t);
+          ${then ? `if (!next && frames.filter((f) => f.leaving).length === 4) {
+            next = document.querySelector('.next:not([data-leaving])');
+            ((card) => { ${then}; })(next);
+          }` : ""}
+          if ((!card.isConnected && !next?.isConnected && !document.getAnimations().some((a) => a.id === 'motion')) || performance.now() > end) done(frames);
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      })`);
+    /** What holds however a scrolled card goes: nothing jumps, the scroll included, nor any of `parts`. */
+    function nothingJumps(frames: Frame[], parts: ("box" | "row")[] = ["box", "row"]) {
+      const [first] = frames;
+      const log = JSON.stringify(frames);
+      assert.ok(first && first.card !== null && first.card < -100, `the card's top starts out of sight: ${log}`);
+      assert.equal(frames.at(-1)?.card, null, `the card went: ${log}`);
+      // Where what is left is shorter than the window, the scroll follows the content down, never back up.
+      assert.ok(frames.every((f, i) => i === 0 || f.scroll <= frames[i - 1]!.scroll + 0.5), `the scroll never goes back up: ${log}`);
+      // It moves only as a redraw starts: pulled down mid-way, in whole pixels while the cards shrink by fractions, it would shake all below.
+      assert.ok(frames.every((f, i) => i === 0 || f.redraw || f.scroll === frames[i - 1]!.scroll), `the scroll goes where it ends at once: ${log}`);
+      for (const part of parts) smooth(frames, part, log);
+      return log;
+    }
+
+    // A phone 1000 px tall has little left below the card: the scroll must come down as it goes, and nothing may jump with it.
+    for (const [phone, width, height] of [[false, 1400, 640], [true, 390, 700], [true, 390, 1000]] as const) {
+      const below = height === 1000 ? " with little below it," : "";
+      it(`${phone ? "on a phone, " : ""}answers or dismisses a large card scrolled past its top from what shows,${below} nothing below jumping`, async () => {
+        const id = `scrolled-${width}x${height}`;
         const done = asking(id, "scrolled past the top");
         const context = Array.from({ length: 16 }, (_, i) => `Line ${i + 1}: what the session found before asking.`).join("\n");
         store.ask({ sessionId: id, kind: "question", text: "Answered while scrolled?", context, options: ["Yes", "No"] });
         store.ask({ sessionId: id, kind: "question", text: "Dismissed while scrolled?", context, options: ["Yes", "No"] });
+        // Enough rows below for what is left to fill the window, whatever else the desk shows: the scroll can stay.
+        if (!below) for (let i = 1; i <= 10; i++) store.ask({ sessionId: id, kind: "question", text: `Waiting below, ${i}?`, options: ["Yes", "No"] });
         try {
-          const page = await (phone ? open(390, 700) : open(1400, 640));
-          const acts = {
-            answer: "[...card.querySelectorAll('.opts button')].find((b) => b.textContent.includes('Yes')).click()",
-            dismiss: "[...card.querySelectorAll('.actions button')].find((b) => b.textContent.includes('Dismiss')).click()",
-          };
-          for (const [text, act] of [["Answered while scrolled?", acts.answer], ["Dismissed while scrolled?", acts.dismiss]] as const) {
+          const page = await open(width, height);
+          const answer = "[...card.querySelectorAll('.opts button')].find((b) => b.textContent.includes('Yes')).click()";
+          for (const [text, act] of [["Answered while scrolled?", answer], ["Dismissed while scrolled?", DISMISS]] as const) {
             await page.click(".qrow", text);
             await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes(${JSON.stringify(text)}) && ${STILL}`);
-            // Every frame from the click until the card is gone: the scroll, the card's top against the scroll
-            // area's, the top of the box it held (where its content showed) and of the last row below it.
-            type Frame = { scroll: number; card: number | null; box: number | null; row: number | null; resolved: boolean; leaving: boolean };
-            const frames = await page.eval<Frame[]>(`new Promise((done) => {
-              const scroller = ${phone ? "document.scrollingElement" : "document.querySelector('.col-needs .col-body')"};
-              const edge = () => ${phone ? "0" : "scroller.getBoundingClientRect().top + scroller.clientTop"};
-              const card = document.querySelector('.next');
-              const box = card.querySelector('.answer textarea');
-              const row = [...document.querySelectorAll('.col-needs .qrow')].at(-1);
-              scroller.scrollTop += card.getBoundingClientRect().top - edge() + 120;
-              const frames = [];
-              const sample = () => frames.push({ scroll: scroller.scrollTop, card: card.isConnected ? card.getBoundingClientRect().top - edge() : null, box: box.isConnected ? box.getBoundingClientRect().top : null, row: row.isConnected ? row.getBoundingClientRect().top : null, resolved: card.classList.contains('resolved'), leaving: card.hasAttribute('data-leaving') });
-              sample();
-              ${act};
-              const end = performance.now() + 4000;
-              const tick = () => {
-                sample();
-                if ((!card.isConnected && !document.getAnimations().some((a) => a.id === 'motion')) || performance.now() > end) done(frames);
-                else requestAnimationFrame(tick);
-              };
-              requestAnimationFrame(tick);
-            })`);
-            const [first] = frames;
-            const log = JSON.stringify(frames);
-            assert.ok(first && first.card !== null && first.card < -100, `the card's top starts out of sight: ${log}`);
-            assert.equal(frames.at(-1)?.card, null, `the card went: ${log}`);
-            // Where what is left is shorter than the window, the scroll follows the content down, never back up.
-            assert.ok(frames.every((f, i) => i === 0 || f.scroll <= frames[i - 1]!.scroll + 0.5), `the scroll never goes back up: ${log}`);
-            // And it moves once, at the redraw: pulled down mid-way, in whole pixels while the cards shrink by fractions, it would shake all below.
-            assert.ok(new Set(frames.map((f) => f.scroll)).size <= 2, `the scroll goes where it ends at once: ${log}`);
+            const frames = await recordFrames(page, phone, act);
+            const log = nothingJumps(frames);
             const staying = frames.filter((f) => !f.leaving && f.row !== null).map((f) => f.row!);
             assert.ok(staying.every((top, i) => i === 0 || top <= staying[i - 1]! + 0.5), `the rows below the answered card only rise: ${log}`);
             for (const f of frames.filter((f) => f.resolved && f.card !== null)) assert.ok(f.card! >= -1, `the answered card shows from its top: ${log}`);
             const shown = frames.filter((f) => f.box !== null).map((f) => f.box!);
-            assert.ok(Math.max(...shown) - Math.min(...shown) <= 20, `what showed of the card stays in place as it goes, but for its padding folding: ${log}`);
+            if (!below) assert.ok(Math.max(...shown) - Math.min(...shown) <= 20, `what showed of the card stays in place as it goes, but for its padding folding: ${log}`);
           }
         } finally {
           done();
         }
       });
     }
+
+    it("on a phone, dismisses a scrolled large card and the next one while the first still folds, nothing jumping", async () => {
+      const id = "scrolled-twice";
+      const done = asking(id, "dismissed in a row");
+      const context = Array.from({ length: 16 }, (_, i) => `Line ${i + 1}: what the session found before asking.`).join("\n");
+      store.ask({ sessionId: id, kind: "question", text: "First of two in a row?", context, options: ["Yes", "No"] });
+      store.ask({ sessionId: id, kind: "question", text: "Second of two in a row?", context, options: ["Yes", "No"] });
+      try {
+        const page = await open(390, 1000);
+        await page.click(".qrow", "First of two in a row?");
+        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('First of two in a row?') && ${STILL}`);
+        const frames = await recordFrames(page, true, DISMISS, DISMISS);
+        // The rows below change pace there, as the card growing above them stops to fold: only the first card's content keeps one.
+        const log = nothingJumps(frames, ["box"]);
+        assert.ok(frames.some((f) => f.heights), `the second card left while the first still folded: ${log}`);
+        // Out of the page for a moment as the redraw drops it, it must still lose the growth it had, and fold from where it shows.
+        assert.ok(frames.every((f) => f.heights <= 1), `the second card only folds once it leaves: ${log}`);
+      } finally {
+        done();
+      }
+    });
+
+    it("on a phone, a redraw that changes the view at once mid-way stops the header and the strip with the cards", async () => {
+      const id = "scrolled-instant";
+      const done = asking(id, "stopped mid-way");
+      const context = Array.from({ length: 16 }, (_, i) => `Line ${i + 1}: what the session found before asking.`).join("\n");
+      store.ask({ sessionId: id, kind: "question", text: "Dismissed, then all projects?", context, options: ["Yes", "No"] });
+      try {
+        const page = await open(390, 1000);
+        await page.click(".qrow", "Dismissed, then all projects?");
+        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Dismissed, then all projects?') && ${STILL}`);
+        // Dismissed 120 px past its top, the page slides down as it goes; 4 frames on, a project's button redraws the view at once.
+        const seen = await page.eval<{ moving: number; left: [string, number, string][] }>(`new Promise((done) => {
+          const card = document.querySelector('.next');
+          document.scrollingElement.scrollTop += card.getBoundingClientRect().top + 120;
+          ${DISMISS};
+          const parts = ['header.top', '#strip'].map((s) => document.querySelector(s));
+          const motion = (el) => el.getAnimations().filter((a) => a.id === 'motion').length;
+          let frames = 0;
+          const tick = () => {
+            if (!card.hasAttribute('data-leaving') || ++frames < 4) return requestAnimationFrame(tick);
+            const moving = parts.reduce((n, el) => n + motion(el), 0);
+            document.querySelector('#projects button').click();
+            done({ moving, left: parts.map((el) => [el.matches('header') ? 'header' : el.id, motion(el), getComputedStyle(el).transform]) });
+          };
+          requestAnimationFrame(tick);
+        })`);
+        assert.ok(seen.moving > 0, `the header and the strip slid with the page: ${JSON.stringify(seen)}`);
+        assert.deepEqual(seen.left, [["header", 0, "none"], ["strip", 0, "none"]], "they stand where the layout puts them, as the board does");
+      } finally {
+        done();
+      }
+    });
   });
 
   it("dates a result from an earlier day in its tile and its window, and gives today's its time only", async () => {

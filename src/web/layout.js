@@ -34,6 +34,9 @@ export function showNeedsYou() {
   revealNext("start");
 }
 
+/** What followKeyboard last measured: the height a keyboard covers (iOS), and a keyboard up for a finger's box (Android resizes instead). */
+const keyboard = { covered: 0, up: false };
+
 /** A text box is one line when empty and grows with what is written; style.css caps it, past that it scrolls. @param {HTMLTextAreaElement} box */
 export function fitBox(box) {
   if (!box.getClientRects().length) return; // not laid out yet (a window still closed): fitted when it is
@@ -43,8 +46,9 @@ export function fitBox(box) {
   const foot = box.closest(".chat-footer");
   if (foot instanceof HTMLElement) foot.style.setProperty("--footer-rest", `${foot.scrollHeight + foot.clientTop - box.offsetHeight}px`);
   box.style.height = `${box.scrollHeight + 2}px`;
-  // A box on the page grows down under a keyboard that covers it (the panel's foot sits on the keyboard instead).
-  if (!foot && box === document.activeElement && box.offsetHeight > was && document.documentElement.hasAttribute("data-keyboard")) showAboveKeyboard(box);
+  // A box on the page grows down under a keyboard that covers it, whatever the pointer, as followKeyboard brings it
+  // above one (the panel's foot sits on the keyboard instead).
+  if (!foot && box === document.activeElement && box.offsetHeight > was && (keyboard.covered > 0 || keyboard.up)) showAboveKeyboard(box);
 }
 /** Scrolls the page so the box being typed in, with its Send button, ends above the visual viewport's bottom. @param {HTMLTextAreaElement} box */
 function showAboveKeyboard(box) {
@@ -92,35 +96,33 @@ export function followKeyboard() {
   const vv = window.visualViewport;
   const root = document.documentElement;
   const short = matchMedia("(max-height: 500px)");
-  let covered = 0;
-  let up = false;
   let tallest = 0;
   let wide = 0;
   const follow = () => {
     if (vv && vv.scale > 1.01) return; // a pinch shrinks the visual viewport too, with no keyboard
     const box = document.activeElement;
     const typing = box instanceof HTMLTextAreaElement || (box instanceof HTMLInputElement && /^(text|search|email|url|tel|password|number)$/.test(box.type));
-    let keyboard = 0;
+    let covered = 0;
     let raised = false;
     if (vv) {
       // Against the layout's height: on iOS innerHeight shrinks with the keyboard too. Less than this is a browser's toolbar.
       const gap = Math.round(root.clientHeight - vv.height);
-      keyboard = gap > 80 ? gap : 0;
+      covered = gap > 80 ? gap : 0;
       // Android shrinks the layout with the keyboard, so only the height lost since the tallest seen in this orientation tells.
       if (Math.abs(vv.width - wide) > 1) [wide, tallest] = [vv.width, 0];
       tallest = Math.max(tallest, vv.height);
-      raised = COARSE.matches && typing && (keyboard > 0 || tallest - vv.height > 150);
-      root.style.setProperty("--keyboard", `${keyboard}px`);
+      raised = COARSE.matches && typing && (covered > 0 || tallest - vv.height > 150);
+      root.style.setProperty("--keyboard", `${covered}px`);
       root.style.setProperty("--viewport-top", `${Math.round(vv.offsetTop)}px`);
-      if (keyboard) root.style.setProperty("--viewport-height", `${Math.round(vv.height)}px`);
+      if (covered) root.style.setProperty("--viewport-height", `${Math.round(vv.height)}px`);
       else root.style.removeProperty("--viewport-height");
     }
     root.toggleAttribute("data-keyboard", raised);
     root.toggleAttribute("data-compact", raised || short.matches);
-    if (keyboard === covered && raised === up) return;
-    covered = keyboard;
-    up = raised;
-    if (!(keyboard || raised) || !(box instanceof HTMLTextAreaElement)) return;
+    if (covered === keyboard.covered && raised === keyboard.up) return;
+    keyboard.covered = covered;
+    keyboard.up = raised;
+    if (!(covered || raised) || !(box instanceof HTMLTextAreaElement)) return;
     const chat = box.closest(".session-body");
     if (chat) chat.scrollTop = chat.scrollHeight;
     else showAboveKeyboard(box);
