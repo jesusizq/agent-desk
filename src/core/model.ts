@@ -372,6 +372,9 @@ function readWorktree(value: unknown, where: string): Worktree {
     sizedAt: optional(f.sizedAt, `${where}.sizedAt`, isoTime),
     main: f.main === true,
     ...gitState(f, where),
+    upstream: optional(f.upstream, `${where}.upstream`, label),
+    unpushed: optional(f.unpushed, `${where}.unpushed`, (v, w) => int(v, w)),
+    noUpstream: optional(f.noUpstream, `${where}.noUpstream`, bool),
     busy: optional(f.busy, `${where}.busy`, (v, w) => list(v, w, label, BUSY_KEPT)),
   });
 }
@@ -384,6 +387,7 @@ function gitState(f: Fields, where: string) {
   const count = (v: unknown, w: string) => int(v, w);
   return {
     merged: optional(f.merged, `${where}.merged`, bool),
+    cherryPicked: optional(f.cherryPicked, `${where}.cherryPicked`, bool),
     ahead: optional(f.ahead, `${where}.ahead`, count),
     behind: optional(f.behind, `${where}.behind`, count),
     dirty: optional(f.dirty, `${where}.dirty`, count),

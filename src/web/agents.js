@@ -330,7 +330,8 @@ function branchRow(s, r, base) {
   const tags = found
     ? [
         r.dirty !== undefined ? h("span", { class: `btag${r.dirty ? " dirty" : ""}` }, r.dirty ? t.changed(r.dirty) : t.clean) : null,
-        r.merged ? h("span", { class: "btag" }, t.merged) : null,
+        r.merged ? h("span", { class: "btag", title: r.cherryPicked ? t.pickedNote : null }, r.cherryPicked ? t.picked : t.merged) : null,
+        pushTag(r),
         r.busy?.length ? h("span", { class: "btag busy", title: t.inUse(r.busy.join(", ")) }, h("span", { class: "up" }), r.busy.join(", ")) : null,
       ]
     : [h("span", { class: `btag${r.status === "unread" ? "" : " bad"}` }, r.error ? t.error(r.error) : r.status === "missing" ? (r.branch ? t.missing : t.gone) : t.unread)];
@@ -342,6 +343,14 @@ function branchRow(s, r, base) {
     h("span", { class: "awhat" }, h("span", { class: "aname" }, mark, h("span", { class: "agoal bname" }, name), tags), who || last ? h("span", { class: "adoing" }, [who, last].filter(Boolean).join(" · ")) : null),
     counts,
   );
+}
+
+/** Where a checkout stands against its upstream, only when it says something; agents' branches never have one. @param {BranchRow} r */
+function pushTag(r) {
+  const t = TEXT.branches;
+  if (r.unpushed !== undefined) return r.unpushed > 0 ? h("span", { class: "btag", title: t.unpushedTo(r.unpushed, r.upstream ?? "") }, t.unpushed(r.unpushed)) : null;
+  if (r.upstream !== undefined) return h("span", { class: "btag" }, t.upstreamGone(r.upstream));
+  return r.noUpstream && r.main ? h("span", { class: "btag" }, t.noUpstream) : null;
 }
 
 /** A checkout's folder by its last two parts: worktrees sit in deep folders whose start is the project's. @param {string} p */

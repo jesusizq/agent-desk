@@ -7,13 +7,13 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { sessionBranches } from "../src/core/branches.ts";
 import type { Agent, ProjectScan, Session } from "../src/core/model.ts";
-import { fitText, statusLines } from "../src/core/status.ts";
+import { branchLine, fitText, statusLines } from "../src/core/status.ts";
 import { deskHelper } from "../src/project/busy.ts";
 import { branchRef, GitError } from "../src/project/git.ts";
 import { refreshScan } from "../src/project/refresh.ts";
 import { scanProject } from "../src/project/scan.ts";
 import { Store } from "../src/store/store.ts";
-import { tempHome } from "./helpers.ts";
+import { gitIn, landedRepo, tempHome } from "./helpers.ts";
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
 const git = (dir: string, ...args: string[]) => execFileSync("git", ["-C", dir, ...args], { env: ENV }).toString();
@@ -44,15 +44,18 @@ function repo() {
   return { root, main, wip, done, loose };
 }
 
+const NOW = new Date().toISOString();
+const sessionIn = (dir: string): Session => ({ id: "s9", provider: "Test", project: { name: "shop", dir, worktree: dir }, state: "working", startedAt: NOW, updatedAt: NOW });
+
 describe("git state of a project's checkouts", () => {
   it("reads branch, commits ahead and behind, uncommitted files, last commit, detached heads and merged ones", async () => {
     const { main, wip, done, loose } = repo();
     const scan = await scanProject(main, undefined, new Date(), { sizes: false });
     const by = new Map(scan.worktrees.map((w) => [w.path, w]));
     assert.equal(scan.baseBranch, "main");
-    assert.deepEqual(pick(by.get(main)), { branch: "main", main: true, dirty: 0, subject: "main moves on" });
-    assert.deepEqual(pick(by.get(wip)), { branch: "agent/wip", main: false, merged: false, ahead: 2, behind: 1, dirty: 2, subject: "Wip two, the last" });
-    assert.deepEqual(pick(by.get(done)), { branch: "agent/done", main: false, merged: true, ahead: 0, behind: 1, dirty: 0, subject: "first" });
+    assert.deepEqual(pick(by.get(main)), { branch: "main", main: true, dirty: 0, noUpstream: true, subject: "main moves on" });
+    assert.deepEqual(pick(by.get(wip)), { branch: "agent/wip", main: false, merged: false, ahead: 2, behind: 1, dirty: 2, noUpstream: true, subject: "Wip two, the last" });
+    assert.deepEqual(pick(by.get(done)), { branch: "agent/done", main: false, merged: true, ahead: 0, behind: 1, dirty: 0, noUpstream: true, subject: "first" });
     assert.deepEqual(pick(by.get(loose)), { main: false, merged: true, ahead: 0, behind: 1, dirty: 0, subject: "first" });
     assert.ok(scan.worktrees.every((w) => w.bytes === undefined), "without sizes, nothing is walked");
     assert.ok(Math.abs(Date.parse(by.get(wip)?.committedAt ?? "") - Date.now()) < 120_000, "the commit time is the commit's");
@@ -87,6 +90,76 @@ describe("git state of a project's checkouts", () => {
     }
     assert.equal(branchRef("feature/x"), "refs/heads/feature/x");
     assert.equal(branchRef("-x"), undefined);
+  });
+
+  it("counts a branch landed by cherry-pick as merged, and only the commits not picked as ahead", async () => {
+    const { main, wt } = landedRepo();
+    const scan = await scanProject(main, undefined, new Date(), { sizes: false, branches: ["agent/parked"] });
+    const by = new Map(scan.worktrees.map((w) => [w.branch, w]));
+    const state = (b: string) => {
+      const w = by.get(b);
+      return [w?.merged, w?.cherryPicked, w?.ahead, w?.behind];
+    };
+    assert.deepEqual(state("agent/merged"), [true, undefined, 0, 7], "merged by a merge: an ancestor");
+    assert.deepEqual(state("agent/picked"), [true, true, 0, 8], "both commits landed as copies");
+    assert.deepEqual(state("agent/partly"), [false, undefined, 1, 8], "the commit not picked is still ahead");
+    assert.deepEqual(state("agent/dirty"), [true, true, 0, 8]);
+    // A branch no checkout has is read the same way.
+    gitIn(main, "branch", "agent/parked", "agent/picked");
+    const again = await scanProject(main, undefined, new Date(), { sizes: false, branches: ["agent/parked"] });
+    const parked = again.branches?.find((b) => b.name === "agent/parked");
+    assert.deepEqual([parked?.exists, parked?.merged, parked?.cherryPicked, parked?.ahead], [true, true, true, 0]);
+    const row = (w: string) => sessionBranches(sessionIn(main), [{ sessionId: "s9", name: "a", worktree: w, state: "done", after: [], startedAt: NOW, updatedAt: NOW }], again)?.rows[1];
+    const line = (w: string) => {
+      const r = row(w);
+      assert.ok(r);
+      return branchLine(r, main, new Date());
+    };
+    assert.match(line(wt.picked), / · 0 ahead, 8 behind, landed by cherry-pick · clean · /);
+    assert.match(line(wt.merged), / · 0 ahead, 7 behind, merged · clean · /);
+    assert.match(line(wt.partly), / · 1 ahead, 8 behind · clean · /);
+  });
+
+  it("tells how many commits each checkout has not pushed to its upstream, and when it has none or it is gone", async () => {
+    const { root, main, wt } = landedRepo();
+    const remote = path.join(root, "remote.git");
+    gitIn(root, "init", "-q", "--bare", remote);
+    gitIn(main, "remote", "add", "origin", remote);
+    let scan = await scanProject(main, undefined, new Date(), { sizes: false });
+    const of = (b: string) => {
+      const w = scan.worktrees.find((x) => x.branch === b);
+      return [w?.upstream, w?.unpushed, w?.noUpstream];
+    };
+    assert.deepEqual(of("main"), [undefined, undefined, true], "the main branch has no upstream yet");
+    const first = sessionBranches(sessionIn(main), [], scan)?.rows[0];
+    assert.ok(first);
+    assert.match(branchLine(first, main, new Date()), / · no upstream · /);
+    gitIn(main, "push", "-q", "-u", "origin", "main", "agent/partly");
+    gitIn(main, "branch", "-q", "--set-upstream-to=origin/agent/partly", "agent/partly");
+    fs.writeFileSync(path.join(main, "n.txt"), "n\n");
+    gitIn(main, "add", "n.txt");
+    gitIn(main, "commit", "-qm", "local one");
+    gitIn(main, "commit", "-q", "--allow-empty", "-m", "local two");
+    gitIn(main, "push", "-q", "origin", "--delete", "agent/partly");
+    scan = await scanProject(main, undefined, new Date(), { sizes: false });
+    assert.deepEqual(of("main"), ["origin/main", 2, undefined]);
+    assert.deepEqual(of("agent/partly"), ["origin/agent/partly", undefined, undefined], "its upstream is gone");
+    assert.deepEqual(of("agent/picked"), [undefined, undefined, true]);
+    const rows = sessionBranches(sessionIn(main), [], scan)?.rows ?? [];
+    const line = (dir: string) => {
+      const r = rows.find((x) => x.path === dir);
+      assert.ok(r, dir);
+      return branchLine(r, main, new Date());
+    };
+    assert.match(line(main), / · 2 not pushed to origin\/main · /);
+    assert.match(line(wt.partly), / · upstream origin\/agent\/partly gone · /);
+    assert.doesNotMatch(line(wt.dirty), /upstream|pushed/, "an agent's branch without an upstream says nothing about it");
+    gitIn(main, "push", "-q", "origin", "main");
+    scan = await scanProject(main, undefined, new Date(), { sizes: false });
+    assert.deepEqual(of("main"), ["origin/main", 0, undefined]);
+    const pushed = sessionBranches(sessionIn(main), [], scan)?.rows[0];
+    assert.ok(pushed);
+    assert.doesNotMatch(branchLine(pushed, main, new Date()), /pushed|upstream/, "all pushed: nothing to say");
   });
 
   it("names only the commands a live session started through a shell in each checkout, the deepest one holding their folder", async () => {

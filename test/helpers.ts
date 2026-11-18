@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
@@ -18,6 +18,40 @@ export function testStore(home = tempHome()): Store {
 
 export function addSession(store: Store, id = "s1"): void {
   store.upsertSession({ id, provider: "Test", project: { name: "shop", dir: "/work/shop" } });
+}
+
+const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+export const gitIn = (dir: string, ...args: string[]): string => execFileSync("git", ["-C", dir, ...args], { env: GIT_ENV }).toString();
+const commitIn = (dir: string, file: string, message: string) => {
+  fs.writeFileSync(path.join(dir, file), `${message}\n`);
+  gitIn(dir, "add", file);
+  gitIn(dir, "commit", "-qm", message);
+};
+
+/**
+ * `shop` (main, no upstream) with an agent worktree per way a branch lands: `merged` by a merge,
+ * `picked` (2 commits) and `dirty` (then an untracked file) and `moved` by cherry-pick, `partly`
+ * with 1 of its 2 commits picked; main also moves on by a commit of its own.
+ */
+export function landedRepo() {
+  const root = fs.realpathSync(tempHome());
+  const main = path.join(root, "shop");
+  fs.mkdirSync(main);
+  gitIn(main, "init", "-q", "-b", "main");
+  commitIn(main, "a.txt", "first");
+  const names = ["merged", "picked", "partly", "dirty", "moved"] as const;
+  const wt = Object.fromEntries(names.map((n) => [n, path.join(main, ".claude", "worktrees", n)])) as Record<(typeof names)[number], string>;
+  for (const n of names) {
+    gitIn(main, "worktree", "add", "-q", "-b", `agent/${n}`, wt[n]);
+    commitIn(wt[n], `${n}-1.txt`, `${n} one`);
+  }
+  commitIn(wt.picked, "picked-2.txt", "picked two");
+  commitIn(wt.partly, "partly-2.txt", "partly two");
+  commitIn(main, "m.txt", "main moves on");
+  gitIn(main, "merge", "-q", "--no-ff", "-m", "Merge agent/merged", "agent/merged");
+  gitIn(main, "cherry-pick", "agent/picked~1", "agent/picked", "agent/partly~1", "agent/dirty", "agent/moved");
+  fs.writeFileSync(path.join(wt.dirty, "notes.txt"), "not committed\n");
+  return { root, main, wt };
 }
 
 // Smallest valid PNG header; the store only checks the signature.

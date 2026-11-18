@@ -43,8 +43,7 @@ export function openProject(projectId) {
   const rows = (ws, note) =>
     h("div", { class: "alist wt-list" }, ws.map((w) => h("div", { class: "arow", title: w.path }, h("span", { class: "awhat" }, h("span", { class: "agoal" }, w.branch ?? t.detached), h("span", { class: "adoing" }, `${name(w)} · ${note(w)}`)), h("span", { class: "num faint" }, w.bytes === undefined ? t.notMeasured : gb(w.bytes)))));
   const grew = p.totalBytes - p.dayStart.bytes;
-  // Paths come from git's own listing; quoted for the shell the developer pastes them into.
-  const cleanup = merged.map((w) => `git -C '${p.dir.replace(/'/g, "'\\''")}' worktree remove '${w.path.replace(/'/g, "'\\''")}'`).join("\n");
+  const cleanup = cleanupCommands(p.dir, merged);
   d.replaceChildren(
     dialogHead(d, projectMark(p.name), t.title),
     h(
@@ -52,7 +51,7 @@ export function openProject(projectId) {
       { class: "dbody" },
       h("div", { class: "status" }, h("span", {}, t.summary(gb(p.totalBytes), grew > 1e8 ? gb(grew) : "", ago(p.measuredAt)))),
       merged.length
-        ? h("div", { class: "rsec" }, h("h4", {}, t.merged(base, merged.length, gb(sum(merged)))), rows(merged, () => ""), h("div", { class: "row wt-actions" }, h("button", { class: "secondary", onclick: () => copy(cleanup) }, icon("copy"), t.copyCleanup), h("span", { class: "faint" }, t.cleanupNote)))
+        ? h("div", { class: "rsec" }, h("h4", {}, t.merged(base, merged.length, gb(sum(merged)))), rows(merged, (w) => (w.cherryPicked ? t.picked : "")), h("div", { class: "row wt-actions" }, h("button", { class: "secondary", onclick: () => copy(cleanup) }, icon("copy"), t.copyCleanup), h("span", { class: "faint" }, t.cleanupNote)))
         : null,
       open.length ? h("div", { class: "rsec" }, h("h4", {}, t.open(open.length)), rows(open, (w) => (w.ahead !== undefined ? t.ahead(w.ahead) : ""))) : null,
       h("div", { class: "rsec" }, h("h4", {}, t.main), rows(main, (w) => w.branch ?? "")),
@@ -95,4 +94,24 @@ export function openResumes(projectId) {
     ),
   );
   if (!d.open) d.showModal();
+}
+
+/**
+ * Commands that remove merged checkouts, one line each: the worktree (git refuses one with changes),
+ * then its branch once the worktree is gone. A branch landed by cherry-pick needs `branch -D`, so it
+ * goes only while it still points at the commit the scan found landed. Paths and names come from
+ * git's own listing; quoted for the shell they are pasted into.
+ * @param {string} dir @param {Worktree[]} merged
+ */
+export function cleanupCommands(dir, merged) {
+  const q = (/** @type {string} */ s) => `'${s.replace(/'/g, "'\\''")}'`;
+  const g = `git -C ${q(dir)}`;
+  return merged
+    .map((w) => {
+      const remove = `${g} worktree remove ${q(w.path)}`;
+      if (!w.branch) return remove;
+      if (!w.cherryPicked) return `${remove} && ${g} branch -d ${q(w.branch)}`;
+      return `${remove} && test "$(${g} rev-parse ${q(`refs/heads/${w.branch}`)})" = ${q(w.head)} && ${g} branch -D ${q(w.branch)}`;
+    })
+    .join("\n");
 }

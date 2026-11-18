@@ -329,9 +329,10 @@ export const TEXT = {
     /** @param {number} n */
     ahead: (n) => plural(n, "commit ahead", "commits ahead"),
     detached: "detached",
+    picked: "landed by cherry-pick",
     notMeasured: "not measured yet",
-    copyCleanup: "Copy the commands to remove them",
-    cleanupNote: "The desk never removes anything: paste them in a terminal if you agree.",
+    copyCleanup: "Copy the commands to remove them and their branches",
+    cleanupNote: "The desk never removes anything: paste them in a terminal if you agree. A checkout with changes, or a branch that moved since, is kept.",
   },
   branches: {
     title: "Branches",
@@ -347,6 +348,15 @@ export const TEXT = {
     /** @param {number} n */
     changed: (n) => plural(n, "changed file", "changed files"),
     merged: "merged",
+    picked: "landed by cherry-pick",
+    pickedNote: "Each of its commits is in the main branch as a copy with the same changes",
+    /** @param {number} n */
+    unpushed: (n) => `↑${n} not pushed`,
+    /** @param {number} n @param {string} upstream */
+    unpushedTo: (n, upstream) => `${plural(n, "commit", "commits")} not pushed to ${upstream}`,
+    /** @param {string} upstream */
+    upstreamGone: (upstream) => `upstream ${upstream} gone`,
+    noUpstream: "no upstream",
     /** @param {string} names */
     inUse: (names) => `in use: ${names}`,
     /** @param {string} subject @param {string} t */

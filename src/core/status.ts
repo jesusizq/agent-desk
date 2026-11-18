@@ -66,12 +66,21 @@ export function branchLine(r: BranchRow, projectDir: string, now: Date): string 
   else if (r.status === "unread") parts.push("not read yet");
   if (r.error) parts.push(`could not read git: ${oneLine(r.error, 160)}`);
   if (r.status === "found" && !r.error) {
-    if (r.ahead !== undefined) parts.push(`${r.ahead} ahead, ${r.behind ?? 0} behind${r.merged ? ", merged" : ""}`);
+    if (r.ahead !== undefined) parts.push(`${r.ahead} ahead, ${r.behind ?? 0} behind${r.cherryPicked ? ", landed by cherry-pick" : r.merged ? ", merged" : ""}`);
+    const pushed = pushLine(r);
+    if (pushed) parts.push(pushed);
     if (r.dirty !== undefined) parts.push(r.dirty === 0 ? "clean" : `${r.dirty} changed file${r.dirty === 1 ? "" : "s"}`);
     if (r.subject !== undefined && r.committedAt) parts.push(`last «${oneLine(r.subject, 80)}» ${since(r.committedAt, now)} ago`);
     if (r.busy?.length) parts.push(`in use: ${r.busy.join(", ")}`);
   }
   return parts.filter(Boolean).join(" · ");
+}
+
+/** Where a checkout stands against its upstream, only when it says something: commits not pushed, the upstream gone, or none on the main checkout (agents' branches never have one). */
+function pushLine(r: Pick<BranchRow, "main" | "upstream" | "unpushed" | "noUpstream">): string | undefined {
+  if (r.unpushed !== undefined) return r.unpushed > 0 ? `${r.unpushed} not pushed to ${r.upstream}` : undefined;
+  if (r.upstream !== undefined) return `upstream ${r.upstream} gone`;
+  return r.noUpstream && r.main ? "no upstream" : undefined;
 }
 
 /** Joins lines and cuts them at `max` characters, at a line's end, saying so. */

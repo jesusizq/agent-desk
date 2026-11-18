@@ -29,23 +29,45 @@ export function git(dir: string, args: readonly string[], timeoutMs = GIT_TIMEOU
   });
 }
 
-/** Whether `ancestor` is in `head`'s history; git answers "no" with exit code 1. */
-export async function isAncestor(dir: string, ancestor: string, head: string, timeoutMs?: number): Promise<boolean> {
-  try {
-    await git(dir, ["merge-base", "--is-ancestor", ancestor, head], timeoutMs);
-    return true;
-  } catch (error) {
-    if (error instanceof GitError && error.code === 1) return false; // the documented "no" answer
-    throw error;
-  }
-}
-
 /** Where `head` stands against `base`: commits only it has (ahead) and commits only base has (behind). */
 export async function aheadBehind(dir: string, base: string, head: string, timeoutMs?: number): Promise<{ ahead: number; behind: number }> {
   const out = (await git(dir, ["rev-list", "--left-right", "--count", `${base}...${head}`], timeoutMs)).trim();
   const m = /^(\d+)\s+(\d+)$/.exec(out);
   if (!m) throw new GitError(`git rev-list --left-right --count ${base}...${head} in ${dir} answered ${JSON.stringify(out)}, not two counts`, undefined);
   return { behind: Number(m[1]), ahead: Number(m[2]) };
+}
+
+/**
+ * Commits of `head` that `base` lacks and that have no patch-equivalent commit in `base` either
+ * (merges left out): 0 when every change of `head` landed in `base`, by merge or by cherry-pick.
+ */
+export async function unlandedAhead(dir: string, base: string, head: string, timeoutMs?: number): Promise<number> {
+  return count(dir, ["rev-list", "--cherry-pick", "--right-only", "--no-merges", "--count", `${base}...${head}`], timeoutMs);
+}
+
+/** Commits reachable from `head` and not from `from`. */
+export async function commitsSince(dir: string, from: string, head: string, timeoutMs?: number): Promise<number> {
+  return count(dir, ["rev-list", "--count", `${from}..${head}`], timeoutMs);
+}
+
+async function count(dir: string, args: readonly string[], timeoutMs: number | undefined): Promise<number> {
+  const out = (await git(dir, args, timeoutMs)).trim();
+  if (!/^\d+$/.test(out)) throw new GitError(`git ${args.join(" ")} in ${dir} answered ${JSON.stringify(out)}, not a count`, undefined);
+  return Number(out);
+}
+
+/** A local branch's configured upstream: its full ref (`refs/remotes/origin/main`) and short name (`origin/main`). */
+export type Upstream = { ref: string; name: string };
+
+/** Every local branch's upstream, by full branch ref; a branch without one is not in the map. */
+export async function upstreams(dir: string, timeoutMs?: number): Promise<Map<string, Upstream>> {
+  const out = await git(dir, ["for-each-ref", "--format=%(refname)%00%(upstream)%00%(upstream:short)", "refs/heads/"], timeoutMs);
+  const map = new Map<string, Upstream>();
+  for (const line of out.split("\n")) {
+    const [branch = "", ref = "", name = ""] = line.split("\0");
+    if (branch.startsWith("refs/heads/") && ref.startsWith("refs/")) map.set(branch, { ref, name: name || ref });
+  }
+  return map;
 }
 
 /** The subject and commit time (ISO, UTC) of a commit. */
@@ -85,7 +107,7 @@ export function branchRef(name: string): string | undefined {
   return ok ? `refs/heads/${name}` : undefined;
 }
 
-/** The commit a branch points at, or undefined when there is no such branch. */
+/** The commit a ref (a branch, an upstream) points at, or undefined when there is no such ref. */
 export async function branchHead(dir: string, ref: string, timeoutMs?: number): Promise<string | undefined> {
   try {
     return (await git(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], timeoutMs)).trim();

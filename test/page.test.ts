@@ -10,7 +10,8 @@ import { renderOptionsPage } from "../src/cli/review-options.ts";
 import { procInfo } from "../src/core/proc.ts";
 import { Store } from "../src/store/store.ts";
 import { Browser, findChrome, type Page } from "./browser.ts";
-import { PNG, serve, tempHome } from "./helpers.ts";
+import { scanProject } from "../src/project/scan.ts";
+import { gitIn, landedRepo, PNG, serve, tempHome } from "./helpers.ts";
 
 const chrome = findChrome();
 /** Nothing on the page moving any more, but for the marks of work in progress, which turn for as long as the work goes on. */
@@ -378,6 +379,57 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       store.putProjectScan(scan);
       store.updateSession("integrated", (x) => ({ ...x, state: "ended" }));
       store.forgetSession("integrated");
+    }
+  });
+
+  it("says which branches landed by cherry-pick and what is not pushed, and copies commands that remove only what landed", async () => {
+    const { main, wt } = landedRepo();
+    const scan = await scanProject(main, undefined, new Date(), { sizes: false });
+    const demo = store.listProjectScans().find((p) => p.name === "web-shop");
+    assert.ok(demo);
+    store.putProjectScan({ ...scan, id: demo.id });
+    store.upsertSession({ id: "landed", provider: "Test", project: { name: "shop", dir: main }, title: "landed work", state: "waiting" });
+    store.upsertAgent("landed", "picker", { goal: "Pick me", worktree: wt.picked, state: "done" });
+    // The branch moves after the scan: the copied command must not delete what it did not check.
+    gitIn(wt.moved, "commit", "-q", "--allow-empty", "-m", "after the scan");
+    try {
+      await browser.send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
+      const page = await open();
+      await page.click(".scard", "landed work");
+      await page.click("#session .pchips button.chip", "1 agent");
+      const tags = (branch: string) => `[...document.querySelectorAll('#session .brow')].find((r) => r.querySelector('.bname').textContent === ${JSON.stringify(branch)})?.querySelectorAll('.btag')`;
+      await page.waitFor(`${tags("agent/picked")}?.length`);
+      assert.deepEqual(await page.eval<string[]>(`[...${tags("agent/picked")}].map((t) => t.textContent)`), ["clean", "landed by cherry-pick"]);
+      assert.deepEqual(await page.eval<string[]>(`[...${tags("main")}].map((t) => t.textContent)`), ["clean", "no upstream"]);
+      store.putProjectScan({ ...scan, id: demo.id, worktrees: scan.worktrees.map(({ noUpstream: _n, ...w }) => (w.main ? { ...w, upstream: "origin/main", unpushed: 3 } : w)) });
+      await fetchNow(page);
+      await page.waitFor(`[...${tags("main")}].some((t) => t.textContent === '↑3 not pushed' && t.title === '3 commits not pushed to origin/main')`);
+      store.putProjectScan({ ...scan, id: demo.id });
+      await fetchNow(page);
+
+      await page.click("#session .pchips .chip", "More");
+      await page.click("#session .linkish", "already merged");
+      await page.waitFor("document.querySelector('#session .wt-actions button')");
+      assert.match(await page.eval<string>("[...document.querySelectorAll('#session .wt-list .arow')].find((r) => r.textContent.startsWith('agent/picked')).textContent"), /picked · landed by cherry-pick/);
+      await page.click("#session .wt-actions button");
+      const commands = (await page.eval<string>("navigator.clipboard.readText()")).split("\n");
+      assert.equal(commands.length, 4, "merged, picked, dirty and moved; not the one partly picked");
+      const failed = commands.filter((c) => {
+        try {
+          execFileSync("sh", ["-c", c], { stdio: "pipe" });
+          return false;
+        } catch {
+          return true; // expected for the dirty checkout and the moved branch: checked below
+        }
+      });
+      assert.equal(failed.length, 2);
+      assert.deepEqual(gitIn(main, "branch", "--format=%(refname:short)").trim().split("\n").sort(), ["agent/dirty", "agent/moved", "agent/partly", "main"]);
+      assert.deepEqual(gitIn(main, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)).sort(), [main, wt.dirty, wt.partly].sort(), "the dirty checkout is kept; the moved one goes, its branch kept");
+      await page.press("Escape");
+    } finally {
+      store.putProjectScan(demo);
+      store.updateSession("landed", (x) => ({ ...x, state: "ended" }));
+      store.forgetSession("landed");
     }
   });
 

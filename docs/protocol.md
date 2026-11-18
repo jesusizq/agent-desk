@@ -21,7 +21,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `inbox/<session>/.listener.<pid>.json` | a process waiting for that session's answers | the adapter's waiter |
 | `.inbox-pending` | present while any inbox holds an entry, so a hook that runs on every tool call tests one file | the store |
 | `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (marked `step`, when its adapter can tell), each answer of the developer (typed or from the desk), and what another session (`from: "peer"`) or one of the session's agents (`from: "agent"`) sent it, with the `sender`'s name when its adapter knows it: never the developer's words, so they answer no question; the latest 500 per session | hooks, the page |
-| `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, head, size on disk (absent until first measured), whether merged into the main branch, commits ahead and behind, uncommitted files (`dirty`), last commit subject and time, the live processes working in it (`busy`) and what failed reading it (`error`); the branches its agents were said to work on that no checkout has (`branches`: whether each exists, and where it stands); when git was read (`measuredAt`); total and the day's starting total (see Branches) | `agent-desk scan` (started by adapters at the end of a turn and when a sub-agent stops), `agent-desk status`, the `PreCompact` hook |
+| `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, head, size on disk (absent until first measured), whether merged into the main branch (`cherryPicked` when only by patch-equivalent commits), commits ahead and behind, its branch's `upstream` and the commits not pushed to it (`unpushed`), or `noUpstream`, uncommitted files (`dirty`), last commit subject and time, the live processes working in it (`busy`) and what failed reading it (`error`); the branches its agents were said to work on that no checkout has (`branches`: whether each exists, and where it stands); when git was read (`measuredAt`); total and the day's starting total (see Branches) | `agent-desk scan` (started by adapters at the end of a turn and when a sub-agent stops), `agent-desk status`, the `PreCompact` hook |
 | `handoffs/<session>.json` | `Handoff`: where the session's work stood before its context was compacted (`trigger`: `manual`, `auto`), as `agent-desk status` words it, at most 3000 characters, and `at` | the adapter's `PreCompact` hook |
 | `resumes/<project>.json` | `ProjectResumes`: the project's work left for a new conversation (`id` as its `ProjectScan`'s, `name`, `dir`), newest first, as its adapter read it at `at`: each note's `title` (one line, at most 200 characters, absent when it says nothing), `writtenAt`, `expiresAt` and the `command` that loads it (one line, at most 200 characters); at most 20. A project left with none has no file. The page hides a note past its `expiresAt`, so a list read the evening before stays true the next morning with no hook running | adapters (the Claude Code adapter: pending handoffs, see `adapters/claude-code/README.md`) |
 | `reviews/<review>/review.json` | `Review`: title, project, the session that published the latest round, every round (`n`, `at`, `sessionId`, `bytes`), progress parsed from the page's counter, when its saved state last changed and from where (`local`, `remote`), whether the page has handed over the text it copies (`hasSummary`), each send (with the developer's `note`, when one went with it), the last read through the CLI (`collected`), `openedAt`, `closedAt`, `closedReason`, `closedBy` | `agent-desk review`, the page |
@@ -145,10 +145,19 @@ shown until `--stop`.
 
 `src/project/scan.ts` reads each checkout with git (`src/project/git.ts`): `git -C <dir> --no-optional-locks`
 and a fixed argument list, no shell, 10 s per command (5 s in the handoff), never writing in the
-repository. Per checkout: `worktree list --porcelain`, `log -1` of its head, `merge-base --is-ancestor`
-and `rev-list --left-right --count <base>...<head>` against the main checkout's branch, `status
+repository. Per checkout: `worktree list --porcelain`, `log -1` of its head, `rev-list --left-right
+--count <base>...<head>` against the main checkout's branch and, when the head has commits the base
+lacks, `rev-list --cherry-pick --right-only --no-merges --count <base>...<head>`, `status
 --porcelain=v1 -z --untracked-files=normal` for its uncommitted files (the checkouts nested in it
-excluded by pathspec, so a worktree under `.claude/worktrees/` is not one of the main checkout's). An agent's branch
+excluded by pathspec, so a worktree under `.claude/worktrees/` is not one of the main checkout's), and
+for a checkout on a branch, `rev-list --count <upstream>..<head>` against the upstream that one
+`for-each-ref refs/heads/` per scan lists. A head is `merged` when it is an ancestor of the base or
+when each of its commits the base lacks has a patch-equivalent commit there (landed by cherry-pick:
+`cherryPicked`, which `git branch -d` refuses); `ahead` counts only the commits with no such
+equivalent, merges left out, and `behind` every commit of the base the head lacks. A checkout whose
+branch has an upstream carries its short name (`upstream`) and `unpushed`, absent when that ref is
+gone; one without says `noUpstream`. The page and `agent-desk status` say "no upstream" only of the
+main checkout (agents' branches never have one) and nothing when everything is pushed. An agent's branch
 (see Sub-agents) that no checkout has, such as one whose worktree was removed after it merged, is looked up as `refs/heads/<name>` (`rev-parse
 --verify --quiet`), only when the name is a plain ref name. A command that fails or times out leaves
 its message in that checkout's `error` and in `problems`; the others are read all the same.
@@ -174,6 +183,12 @@ the scan ran after the agent last changed, else `unread`. A finished agent (`don
 whose branch or checkout is `missing` was integrated and deleted: it is only counted (`gone`), so
 "branch not found" shows only for an agent still open. The page shows `checkedAt` as the rows'
 age.
+
+The project's worktrees dialog copies, never runs, one line per merged checkout: `git worktree
+remove` (which refuses a checkout with changes), then, only once it succeeded, `git branch -d` for a
+branch merged as an ancestor, or for one landed by cherry-pick `git branch -D` behind a check that
+the branch still points at the head the scan found landed, so commits added since are never
+deleted.
 
 ## Past decisions
 

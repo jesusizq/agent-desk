@@ -5,7 +5,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { slug } from "../core/ids.ts";
 import { BUSY_KEPT, type BranchState, type ProjectScan, type Worktree } from "../core/model.ts";
-import { aheadBehind, branchHead, branchRef, changedFiles, git, isAncestor, lastCommit } from "./git.ts";
+import { aheadBehind, branchHead, branchRef, changedFiles, commitsSince, git, lastCommit, unlandedAhead, upstreams, type Upstream } from "./git.ts";
 import { workingIn } from "./busy.ts";
 
 /** Walking every file is the expensive part (about 2 minutes for 85 GB); branches are cheap. */
@@ -90,6 +90,8 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
   const paths = new Set(listed.map((w) => path.resolve(w.path)));
   const known = new Map((previous?.worktrees ?? []).map((w) => [path.resolve(w.path), w]));
   const busy = workingIn([...paths], options.sessions ?? [], BUSY_KEPT);
+  // A failure is said in each checkout with a branch, as any git command reading it.
+  const tracking = await upstreams(dir, timeoutMs).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
   const worktrees: Worktree[] = [];
   for (const [i, w] of listed.entries()) {
     const isMain = i === 0;
@@ -104,6 +106,10 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
       const own = path.resolve(w.path);
       const nested = [...paths].filter((p) => p.startsWith(`${own}/`)).map((p) => path.relative(own, p));
       entry.dirty = await changedFiles(w.path, nested, timeoutMs);
+      if (w.branch) {
+        if (tracking instanceof Error) throw tracking;
+        Object.assign(entry, await pushState(dir, w.head, tracking.get(`refs/heads/${w.branch}`), timeoutMs));
+      }
     } catch (error) {
       entry.error = (error as Error).message;
       problems.push(entry.error);
@@ -134,11 +140,25 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
   };
 }
 
-/** A head's last commit and, against the main branch when given, whether it is merged and how far ahead and behind it is. */
+/**
+ * A head's last commit and, against the main branch when given, whether its work is merged and how
+ * far ahead and behind it is. Merged: an ancestor of the base, or each of its commits landed there by
+ * cherry-pick (a patch-equivalent commit), which only `ahead`, counted without those, then tells.
+ */
 async function headState(dir: string, head: string, base: string | undefined, timeoutMs: number | undefined) {
   const last = await lastCommit(dir, head, timeoutMs);
   if (base === undefined) return last;
-  return { ...last, merged: await isAncestor(dir, head, base, timeoutMs), ...(await aheadBehind(dir, base, head, timeoutMs)) };
+  const { ahead: own, behind } = await aheadBehind(dir, base, head, timeoutMs);
+  if (own === 0) return { ...last, merged: true, ahead: 0, behind };
+  const ahead = await unlandedAhead(dir, base, head, timeoutMs);
+  return { ...last, merged: ahead === 0, ...(ahead === 0 ? { cherryPicked: true } : {}), ahead, behind };
+}
+
+/** Where a checkout's branch stands against its upstream: commits not pushed, or that it has none or its upstream is gone. */
+async function pushState(dir: string, head: string, upstream: Upstream | undefined, timeoutMs: number | undefined) {
+  if (upstream === undefined) return { noUpstream: true };
+  const tip = await branchHead(dir, upstream.ref, timeoutMs);
+  return tip === undefined ? { upstream: upstream.name } : { upstream: upstream.name, unpushed: await commitsSince(dir, tip, head, timeoutMs) };
 }
 
 /** Where a branch no checkout has stands; one whose name git could not take, or that is gone, does not exist. */

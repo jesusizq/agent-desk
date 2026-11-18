@@ -26,7 +26,8 @@ and step away. When you come back, one browser tab shows:
   servers its commands started (found by themselves, with their link), and which sessions wrote
   something you have not read.
 - **Where each branch stands:** under a session's agents, each agent's branch and worktree read from
-  git (commits ahead and behind, uncommitted files, last commit, what runs in it), with how old the
+  git (commits ahead and behind, merged or landed by cherry-pick, commits not pushed to its
+  upstream, uncommitted files, last commit, what runs in it), with how old the
   reading is; `agent-desk status` prints the same for the session, and before a compaction it is
   kept for the session to get back.
 - **What was said,** so a question makes sense without scrolling back through the terminal.
@@ -35,8 +36,8 @@ and step away. When you come back, one browser tab shows:
   what each is about, how old it is and the command that loads it, copied with a click, in the
   strip and in the summary of what happened while you were away.
 - **Warnings before something breaks:** a context nearly full, a disk nearly full, worktrees piling
-  up (how much each takes, which are already merged into the main branch, and the commands to remove
-  them, copied, never run).
+  up (how much each takes, which are already merged into the main branch or landed there by
+  cherry-pick, and the commands to remove them and their branches, copied, never run).
 - **From your phone,** through your own Tailscale tailnet, behind a PIN.
 
 It costs almost nothing: a short set of instructions per session; everything else is done

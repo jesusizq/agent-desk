@@ -51,7 +51,7 @@ describe("cli", () => {
     assert.match(lines[0] ?? "", /^Where session "checkout" \(me\) stands in shop \(.*\/shop\), \d{4}-\d\d-\d\d \d\d:\d\dZ:$/);
     assert.deepEqual(lines.slice(1, 5), [
       "Branches (git read <1 min ago; compared with main):",
-      "- main checkout, this session's · main · clean · last «first» <1 min ago",
+      "- main checkout, this session's · main · no upstream · clean · last «first» <1 min ago",
       "- agent pay (working) · agent/pay · .claude/worktrees/pay · 1 ahead, 0 behind · clean · last «Pay button» <1 min ago",
       "- agent rebase (blocked) · agent/rebase · branch not found",
     ]);

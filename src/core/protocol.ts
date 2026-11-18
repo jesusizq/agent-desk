@@ -345,12 +345,23 @@ export type Worktree = {
   /** When `bytes` was measured; sizes are re-measured less often than branches. */
   sizedAt?: string;
   main: boolean;
-  /** For non-main worktrees: whether its head is already in the main checkout's branch. */
+  /**
+   * For non-main worktrees: whether its work is already in the main checkout's branch, its head an
+   * ancestor of it or each of its commits matched there by a patch-equivalent one (`cherryPicked`).
+   */
   merged?: boolean;
-  /** Commits on this worktree's head not yet in the main branch. */
+  /** Merged only through patch-equivalent commits (landed by cherry-pick): `git branch -d` refuses it. */
+  cherryPicked?: boolean;
+  /** Commits on this worktree's head with no patch-equivalent commit in the main branch, merges left out. */
   ahead?: number;
   /** Commits of the main branch not yet in this worktree's head. */
   behind?: number;
+  /** Its branch's upstream (`origin/main`); absent when it has none (`noUpstream`) or is detached. */
+  upstream?: string;
+  /** Commits on its head not in its upstream; absent with `upstream` set when that ref is gone. */
+  unpushed?: number;
+  /** Its branch has no upstream configured. */
+  noUpstream?: boolean;
   /** Files changed and not committed (staged, unstaged or untracked); 0 when clean. */
   dirty?: number;
   /** Its head commit's subject and commit time. */
@@ -371,6 +382,7 @@ export type BranchState = {
   exists: boolean;
   head?: string;
   merged?: boolean;
+  cherryPicked?: boolean;
   ahead?: number;
   behind?: number;
   subject?: string;
@@ -411,8 +423,12 @@ export type BranchRow = {
   status: "found" | "missing" | "unread";
   head?: string;
   merged?: boolean;
+  cherryPicked?: boolean;
   ahead?: number;
   behind?: number;
+  upstream?: string;
+  unpushed?: number;
+  noUpstream?: boolean;
   dirty?: number;
   subject?: string;
   committedAt?: string;

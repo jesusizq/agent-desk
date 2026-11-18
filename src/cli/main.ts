@@ -70,7 +70,8 @@ Posting (from a session; the session is found from the calling process, or --ses
                     (one line); already closed, nothing changes. Reading a review never closes it
   agent-desk reviews         this project's reviews: open, sent and not read yet, read, closed
   agent-desk status [--json] where the session's work stands now: each agent's branch and checkout against the
-                    main branch (commits ahead and behind, uncommitted changes, last commit, what runs in it),
+                    main branch (commits ahead and behind, merged or landed by cherry-pick, commits not pushed
+                    to its upstream, uncommitted changes, last commit, what runs in it),
                     git read again; its unfinished agents, open questions, local servers and open reviews
   agent-desk decisions [--search "<words>"] [--project <folder or name>] [--limit N] [--permissions] [--dismissed] [--json]
                     what the session's project already decided, newest first (${DECISIONS_SHOWN} by default): each
