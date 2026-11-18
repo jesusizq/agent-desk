@@ -1,12 +1,12 @@
 // @ts-check
 // The header, the display menu, the phone's tab bar and the strip under the header.
-import { byId, h, icon, patch } from "./dom.js";
+import { byId, dialog, h, icon, patch } from "./dom.js";
 import { reducedMotion } from "./motion.js";
 import { TEXT } from "./text.js";
 import { clockAt, gb } from "./format.js";
 import { awaySummary } from "./away.js";
-import { markCut } from "./layout.js";
-import { projectMark } from "./pieces.js";
+import { markCut, ONE_COLUMN } from "./layout.js";
+import { dialogHead, projectMark } from "./pieces.js";
 import { mergedOf, openProject, openResumes, pendingNotes, projectsInView, resumesInView, sum, worthWarning } from "./projects.js";
 import { markResultsSeen } from "./result.js";
 import { offlineNotice, run } from "./server.js";
@@ -129,8 +129,46 @@ function renderTabbar(needs) {
   );
 }
 
-/** Marks these results seen: in the strip, and on a phone also at the head of To review. @param {readonly Result[]} results */
-export const markAllSeenButton = (results) => h("button", { class: "linkish", onclick: () => run(markResultsSeen(results)) }, TEXT.markSeen);
+/**
+ * A warning of the strip, made once for each place that shows it: a chip in the strip or, on a phone,
+ * a row of the sheet its Alerts chip opens. `phone` is where a phone shows it: in the strip, in Alerts,
+ * or nowhere (it only informs). One with `open` opens what it names, wherever it is shown.
+ * @typedef {{ text: string, warn: boolean, phone: "strip" | "alerts" | "none", cls?: string, title?: string, detail?: string, open?: () => void }} Warning
+ */
+/** @param {string} text @param {boolean} warn @param {Warning["phone"]} phone @param {Omit<Partial<Warning>, "text" | "warn" | "phone">} [more] @returns {Warning} */
+const warning = (text, warn, phone, more = {}) => ({ text, warn, phone, ...more });
+
+/** The strip's warnings, in its order. */
+function warnings() {
+  const t = TEXT.limitForecast;
+  const contexts = data.sessions
+    .filter((s) => isLive(s) && inProject(s.id))
+    .map((s) => ({ s, c: metricsOf(s.id)?.contextPercent }))
+    .filter(/** @returns {x is { s: Session, c: number }} */ (x) => x.c !== undefined && x.c >= CONTEXT_WARN);
+  return [
+    ...(data.problems.length ? [warning(TEXT.problems(data.problems.length), true, "alerts", { cls: "problems", title: data.problems.join("\n"), detail: data.problems.join("\n") })] : []),
+    ...data.disk.map((d) => warning(TEXT.disk(gb(d.freeBytes), d.projects.join(", ")), true, "strip", { title: d.dir })),
+    ...data.machine.map((m) => warning(m.reading === "memory" ? TEXT.machine.memory(gb(m.value), gb(m.limit)) : TEXT.machine[m.reading](m.value, m.limit), true, "alerts")),
+    ...contexts.map(({ s, c }) => warning(TEXT.contextWarn(label(s), c), true, "strip", { open: () => openSession(s.id) })),
+    // A window that runs out before its reset warns; how full one gets by its reset only informs, which a phone leaves out.
+    ...data.planForecasts.map((f) =>
+      f.fullAt !== undefined ? warning(t.out(f.label, t.pace[f.pace], clockAt(f.fullAt), clockAt(f.resetsAt)), true, "strip") : warning(t.high(f.label, t.pace[f.pace], f.atReset, clockAt(f.resetsAt)), false, "none"),
+    ),
+    ...resumesInView().map((p) => warning(TEXT.resumes.chip(p.name, pendingNotes(p).length), false, "alerts", { cls: "resume-chip", open: () => openResumes(p.id) })),
+    ...projectsInView()
+      .filter((p) => worthWarning(p))
+      .map((p) => {
+        const m = mergedOf(p);
+        return warning(TEXT.worktreeChip(p.name, gb(p.totalBytes), m.length, gb(sum(m))), true, "alerts", { open: () => openProject(p.id) });
+      }),
+  ];
+}
+
+/** @param {Warning} w */
+function warningChip(w) {
+  const attrs = { class: ["chip", w.warn ? "warn" : "", w.cls ?? ""].filter(Boolean).join(" "), title: w.title };
+  return w.open ? h("button", { ...attrs, onclick: w.open }, w.text) : h("span", attrs, w.text);
+}
 
 export function renderStrip() {
   const fresh = data.results.filter((r) => inProject(r.sessionId) && isNew(r));
@@ -140,38 +178,51 @@ export function renderStrip() {
     : data.results.some((r) => inProject(r.sessionId))
       ? TEXT.nothingNew
       : TEXT.nothingYet;
-  const contexts = data.sessions
-    .filter((s) => isLive(s) && inProject(s.id))
-    .map((s) => ({ s, c: metricsOf(s.id)?.contextPercent }))
-    .filter(/** @returns {x is { s: Session, c: number }} */ (x) => x.c !== undefined && x.c >= CONTEXT_WARN);
+  // A phone keeps in sight only what wants a look now, the rest behind one chip; its To review tab counts what is new.
+  const phone = ONE_COLUMN.matches;
+  const all = warnings();
+  alertsShown = phone ? all.filter((w) => w.phone === "alerts") : [];
   // Back from a while away, the summary of what happened meanwhile takes the place of the line on what is new.
   const away = awaySummary();
+  // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear.
+  const line = !ui.loaded ? h("span", { class: "skel", "aria-hidden": "true" }) : phone ? null : h("span", { class: "muted" }, summary);
   patch(
     byId("strip"),
     ui.offline ? offlineNotice("strip-offline") : null,
-    // Before the first data, a placeholder: "Nothing has finished yet" would be a false all-clear.
-    away ?? (ui.loaded ? h("span", { class: "muted" }, summary) : h("span", { class: "skel", "aria-hidden": "true" })),
+    away ?? line,
     // Marks exactly what the line counts, failures included: no result of a project out of view.
-    fresh.length ? markAllSeenButton(fresh) : null,
-    h("span", { class: "spacer" }),
-    data.problems.length ? h("span", { class: "chip warn problems", title: data.problems.join("\n") }, TEXT.problems(data.problems.length)) : null,
-    data.disk.map((d) => h("span", { class: "chip warn", title: d.dir }, TEXT.disk(gb(d.freeBytes), d.projects.join(", ")))),
-    data.machine.map((m) => h("span", { class: "chip warn" }, m.reading === "memory" ? TEXT.machine.memory(gb(m.value), gb(m.limit)) : TEXT.machine[m.reading](m.value, m.limit))),
-    contexts.map(({ s, c }) => h("button", { class: "chip warn", onclick: () => openSession(s.id) }, TEXT.contextWarn(label(s), c))),
-    data.planForecasts.map((f) => {
-      const t = TEXT.limitForecast;
-      return f.fullAt !== undefined
-        ? h("span", { class: "chip warn" }, t.out(f.label, t.pace[f.pace], clockAt(f.fullAt), clockAt(f.resetsAt)))
-        : h("span", { class: "chip" }, t.high(f.label, t.pace[f.pace], f.atReset, clockAt(f.resetsAt)));
-    }),
-    resumesInView().map((p) => h("button", { class: "chip resume-chip", onclick: () => openResumes(p.id) }, TEXT.resumes.chip(p.name, pendingNotes(p).length))),
-    projectsInView()
-      .filter((p) => worthWarning(p))
-      .map((p) => {
-        const m = mergedOf(p);
-        return h("button", { class: "chip warn", onclick: () => openProject(p.id) }, TEXT.worktreeChip(p.name, gb(p.totalBytes), m.length, gb(sum(m))));
-      }),
+    !phone && fresh.length ? h("button", { class: "linkish", onclick: () => run(markResultsSeen(fresh)) }, TEXT.markSeen) : null,
+    phone ? null : h("span", { class: "spacer" }),
+    all.filter((w) => !phone || w.phone === "strip").map(warningChip),
+    alertsShown.length
+      ? h("button", { class: `chip alerts-chip${alertsShown.some((w) => w.warn) ? " warn" : ""}`, "aria-haspopup": "dialog", onclick: openAlerts }, TEXT.stripAlerts.chip(alertsShown.length))
+      : null,
   );
+  const sheet = dialog("strip-alerts");
+  if (sheet.open && alertsShown.length) drawAlerts();
+  else if (sheet.open) sheet.close();
+}
+ONE_COLUMN.addEventListener("change", renderStrip);
+
+/** On a phone, the warnings gathered behind the strip's Alerts chip, as last drawn. @type {Warning[]} */
+let alertsShown = [];
+function openAlerts() {
+  drawAlerts();
+  const d = dialog("strip-alerts");
+  if (!d.open) d.showModal();
+}
+/** The sheet of the strip's Alerts: a row for each, which opens what it names as its chip does. */
+function drawAlerts() {
+  const d = dialog("strip-alerts");
+  d.setAttribute("aria-label", TEXT.stripAlerts.title);
+  /** @param {Warning} w */
+  const row = (w) => {
+    const what = h("span", { class: "alert-what" }, h("span", {}, w.text), w.detail ? h("span", { class: "alert-detail" }, w.detail) : null);
+    const cls = `alert-row${w.warn ? " warn" : ""}`;
+    const open = w.open;
+    return open ? h("button", { class: cls, onclick: () => (d.close(), open()) }, what, icon("chev")) : h("div", { class: cls }, what);
+  };
+  patch(d, dialogHead(d, null, TEXT.stripAlerts.title), h("div", { class: "dbody" }, h("div", { class: "alert-list" }, alertsShown.map(row))));
 }
 
 const THEMES = /** @type {const} */ (["auto", "light", "dark"]);

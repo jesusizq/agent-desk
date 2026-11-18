@@ -319,6 +319,12 @@ export const TEXT = {
   },
   /** @param {number} n */
   problems: (n) => plural(n, "unreadable file", "unreadable files"),
+  /** On a phone, the strip's warnings that can wait a moment, behind one chip. */
+  stripAlerts: {
+    title: "Alerts",
+    /** @param {number} n */
+    chip: (n) => plural(n, "alert", "alerts"),
+  },
   /** @param {string} name @param {string} size @param {number} merged @param {string} reclaim */
   worktreeChip: (name, size, merged, reclaim) => `${name}: ${size} in worktrees${merged ? ` · ${merged} merged (${reclaim})` : ""}`,
   /** @param {number} n @param {string} size @param {number} merged */

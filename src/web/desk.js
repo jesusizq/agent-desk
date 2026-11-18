@@ -10,9 +10,8 @@ import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
 import { badge, bar, beacon, dot, emptyState, goLink, kindOf, LOCAL_URL, localLink, planGauge, projectMark, suggestionChip, tagIcon, where } from "./pieces.js";
 import { openResult } from "./result.js";
 import { reviewLine, reviewTile } from "./review.js";
-import { imageUrl, post, run } from "./server.js";
+import { imageUrl, post, postJson, refresh, run } from "./server.js";
 import { baseBranchOf } from "./projects.js";
-import { markAllSeenButton } from "./header.js";
 import { openSession } from "./session.js";
 import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, openReviews, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
 
@@ -203,6 +202,18 @@ function dismissButton(r) {
 }
 
 /**
+ * Marks these results seen, each by its own id, then fetches the desk once. Every mark is tried; the
+ * first refusal is reported after, and marking again only marks what is left.
+ * @param {Result[]} results
+ */
+async function markSeen(results) {
+  const marked = await Promise.allSettled(results.map((r) => postJson(`/api/results/${r.id}/seen`)));
+  await refresh();
+  const refused = marked.find((m) => m.status === "rejected");
+  if (refused) throw refused.reason;
+}
+
+/**
  * The reviews sessions published, at the developer's pace, then finished work not looked at yet;
  * failures wait in the inbox instead, and what was seen is in History.
  */
@@ -212,8 +223,8 @@ function reviewColumn() {
   const earlier = h("button", { class: "linkish", onclick: showEarlierResults }, TEXT.seeHistory);
   if (!list.length && !reviews.length) return column("review", null, emptyState("no-results", TEXT.emptyResults, { action: earlier }), { quiet: true });
   const results = list.length ? h("div", { class: "rtiles", "data-list": true, "data-key": "results" }, list.map(resultTile)) : null;
-  // On a phone the strip's own button sits past its warnings, a sideways scroll away: To review offers it in sight.
-  const aside = list.length && ONE_COLUMN.matches ? markAllSeenButton(list) : null;
+  // On a phone the strip leaves what is new to this tab, which marks seen what it lists: not failures, not other projects.
+  const aside = list.length && ONE_COLUMN.matches ? h("button", { class: "linkish", onclick: () => run(markSeen(list)) }, TEXT.markSeen) : null;
   if (!reviews.length) return column("review", list.length, results, { quiet: true, aside });
   return column(
     "review",

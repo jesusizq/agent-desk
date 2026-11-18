@@ -40,7 +40,10 @@ and step away. When you come back, one browser tab shows:
 - **Warnings before something breaks:** a context nearly full, a disk nearly full, the machine
   loaded past its cores, short of memory or at 95 °C, worktrees piling
   up (how much each takes, which are already merged into the main branch or landed there by
-  cherry-pick, and the commands to remove them and their branches, copied, never run).
+  cherry-pick, and the commands to remove them and their branches, copied, never run). On a
+  phone the strip keeps in sight only a disk or context nearly full and a plan window running out
+  before its reset; the other warnings and the handoffs wait behind one Alerts chip that counts
+  them.
 - **From your phone,** through your own Tailscale tailnet, behind a PIN.
 
 It costs almost nothing: a short set of instructions per session; everything else is done

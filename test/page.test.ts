@@ -2190,35 +2190,75 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     }
     assert.deepEqual(page.errors, [], "the page reports no errors");
   }
-  /** Whether a finger on the element's centre lands on it: in the viewport, and nothing else on top. */
-  const underFinger = (el: string) =>
-    `(() => { const el = ${el}; const r = el.getBoundingClientRect(); const x = r.x + r.width / 2, y = r.y + r.height / 2; const top = x >= 0 && x < innerWidth && y >= 0 && y < innerHeight ? document.elementFromPoint(x, y) : null; return !!top && el.contains(top); })()`;
+  /** Whether a finger lands on the element at its centre, or at the height `y` gives from its box `r`: in the viewport, and nothing else on top. */
+  const underFinger = (el: string, y = "r.y + r.height / 2") =>
+    `(() => { const el = ${el}; const r = el.getBoundingClientRect(); const x = r.x + r.width / 2, y = ${y}; const top = x >= 0 && x < innerWidth && y >= 0 && y < innerHeight ? document.elementFromPoint(x, y) : null; return !!top && el.contains(top); })()`;
+  /** A machine past its cores' load and short of memory: two warnings, its files the test may change. */
+  function sickMachine(): { proc: string; sys: string; cores: number } {
+    const sick = tempHome();
+    fs.writeFileSync(path.join(sick, "loadavg"), "21.37 9.00 4.00 9/900 1234\n");
+    fs.writeFileSync(path.join(sick, "meminfo"), "MemTotal:       32000000 kB\nMemAvailable:    1953125 kB\n");
+    return { proc: sick, sys: sick, cores: 12 };
+  }
+  const LONG_PROJECT = "/home/demo/Projects/a-checkout-project-with-a-long-name";
+  /** A project with a long name whose merged worktrees hold 8 GB (a warning), or none any more. */
+  function worktrees(own: Store, merged = true): void {
+    const dir = LONG_PROJECT;
+    const worktree = (n: number) => ({ path: `${dir}/.claude/worktrees/w${n}`, branch: `agent/w${n}`, head: `abc123${n}`, main: false, merged: true, bytes: 4e9 });
+    const main = { path: dir, branch: "main", head: "abc1234", main: true, bytes: 1e9 };
+    const total = merged ? 9e9 : 1e9;
+    own.putProjectScan({ id: projectId(dir), name: path.basename(dir), dir, worktrees: merged ? [main, worktree(1), worktree(2)] : [main], totalBytes: total, dayStart: { day: "2026-10-28", bytes: total }, measuredAt: new Date().toISOString(), problems: [] });
+  }
+  /** Plan windows: the 5 h one runs out before it resets (a warning); the 7 d one gets to about 90% by its reset, which only informs. */
+  function planWindows(own: Store): void {
+    const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const hour = 3600_000;
+    own.recordPlan([{ label: "5 h", percent: 50, resetsAt: at(3 * hour) }], at(-40 * 60_000));
+    own.recordPlan([{ label: "5 h", percent: 70, resetsAt: at(3 * hour) }], at(-60_000));
+    own.recordPlan([{ label: "7 d", percent: 10, resetsAt: at(120 * hour) }], at(-72 * hour));
+    own.recordPlan([{ label: "7 d", percent: 40, resetsAt: at(120 * hour) }], at(-60_000));
+  }
+  /** The page's state with web-shop's disk short of space, which the test machine's own disk may not be; fetched in full, never as not modified. */
+  const LOW_DISK = `(() => { const real = window.fetch.bind(window); window.fetch = async (url, init) => {
+    if (String(url) !== "/api/state") return real(url, init);
+    const body = await (await real(url, { ...init, headers: {} })).json();
+    body.disk = [{ dir: "/home/demo/Projects/web-shop", projects: ["web-shop"], freeBytes: 12e9, totalBytes: 500e9 }];
+    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  }; })()`;
 
-  it("on a phone, marks every result seen with a tap in sight on To review, not past the strip's warnings", async () => {
-    await ownPhone(async (page) => {
+  it("on a phone, marks seen with a tap in sight on To review only what it lists: no failure, no other project's result", async () => {
+    await ownPhone(async (page, own) => {
+      await page.tap("#projects button", "web-shop");
       await page.tap(".tabbar button", "To review");
-      await page.waitFor(`document.querySelectorAll('.col-review .rtile-wrap').length === 3 && ${STILL}`);
-      // The strip's own button is there too, a sideways scroll past the context warnings.
+      await page.waitFor(`document.querySelectorAll('.col-review .rtile-wrap').length === 2 && ${STILL}`);
+      const needs = "document.querySelector('.tabbar .tcount.accent')?.textContent";
+      const waiting = await page.eval<string>(needs);
       const button = "[...document.querySelectorAll('.col-review .col-head button')].find((b) => b.textContent === 'Mark all as seen')";
       await page.waitFor(button);
-      assert.equal(await page.eval<boolean>(underFinger(button)), true, "in sight, under the finger");
+      for (const [where, y] of [["its top", "r.y + 1"], ["its middle", undefined], ["its bottom", "r.bottom - 1"]] as const) {
+        assert.equal(await page.eval<boolean>(underFinger(button, y)), true, `in sight, ${where} under the finger`);
+      }
       assert.ok((await page.eval<number>(`${button}.getBoundingClientRect().height`)) >= 44, "a finger's height");
       await page.tap(".col-review .col-head button", "Mark all as seen");
       await page.waitFor("!document.querySelector('.col-review .rtile-wrap')");
       assert.equal(await page.eval<boolean>("!!document.querySelector('.col-review .rv-tile')"), true, "the reviews stay: only results are marked seen");
+      assert.deepEqual(
+        own.listResults().filter((r) => !r.seenAt).map((r) => r.title).sort(),
+        ["Checkout e2e: failed, disk full", "Migration 0041 applied locally"],
+        "the failure waits in Needs you, and invoices-api's result was not shown",
+      );
+      assert.equal(own.getSeen(), undefined, "nothing else is marked seen");
+      assert.equal(await page.eval<string>(needs), waiting, "Needs you still counts the failure");
+      await page.tap("#projects button", "All");
+      await page.waitFor("[...document.querySelectorAll('.col-review .rtile-wrap')].map((t) => t.textContent).join(' ').includes('Migration 0041')");
     });
   });
 
-  it("on a phone, draws the strip's chips one height, each whole in its border, and fades the edge that hides more", async () => {
-    const sick = tempHome();
-    fs.writeFileSync(path.join(sick, "loadavg"), "21.37 9.00 4.00 9/900 1234\n");
-    fs.writeFileSync(path.join(sick, "meminfo"), "MemTotal:       32000000 kB\nMemAvailable:    1953125 kB\n");
-    const dir = "/home/demo/Projects/a-checkout-project-with-a-long-name";
-    const worktree = (n: number) => ({ path: `${dir}/.claude/worktrees/w${n}`, branch: `agent/w${n}`, head: `abc123${n}`, main: false, merged: true, bytes: 4e9 });
+  it("on a phone, draws the strip's chips one height, each whole in its border, each button a finger's reach, and fades the edge that hides more", async () => {
     await ownPhone(
       async (page) => {
         const chips = "[...document.querySelectorAll('#strip > .chip')]";
-        await page.waitFor(`${chips}.length >= 4 && document.getElementById('strip').textContent.includes('in worktrees')`);
+        await page.waitFor(`${chips}.length >= 3 && document.querySelector('#strip .alerts-chip') && document.getElementById('strip').textContent.includes('5 h limit')`);
         const shape = await page.eval<{ heights: number[]; spilled: string[]; kinds: string[]; down: boolean; cut: string | undefined }>(`(() => {
           const strip = document.getElementById('strip');
           return {
@@ -2235,12 +2275,101 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         assert.equal(shape.down, false, "the strip scrolls sideways only");
         assert.equal(shape.cut, "end", "its end fades, where more is hidden");
         const first = `${chips}.find((c) => c.tagName === 'BUTTON')`;
-        await page.eval(`${first}.scrollIntoView({ inline: 'start' })`);
-        assert.equal(await page.eval<boolean>(underFinger(first)), true, "a warning that opens something is under the finger");
+        await page.eval(`${first}.scrollIntoView({ inline: 'start', block: 'nearest' })`);
+        // 32 px drawn, 44 px to a finger: its invisible margin takes a tap just above or below it.
+        for (const [where, y] of [["on it", undefined], ["5 px above it", "r.y - 5"], ["5 px below it", "r.bottom + 5"]] as const) {
+          assert.equal(await page.eval<boolean>(underFinger(first, y)), true, `a warning that opens something takes a tap ${where}`);
+        }
       },
-      (own) =>
-        own.putProjectScan({ id: projectId(dir), name: "a-checkout-project-with-a-long-name", dir, worktrees: [{ path: dir, branch: "main", head: "abc1234", main: true, bytes: 1e9 }, worktree(1), worktree(2)], totalBytes: 9e9, dayStart: { day: "2026-10-28", bytes: 9e9 }, measuredAt: new Date().toISOString(), problems: [] }),
-      { proc: sick, sys: sick, cores: 12 },
+      (own) => {
+        worktrees(own);
+        planWindows(own);
+      },
+      sickMachine(),
+    );
+  });
+
+  it("on a touch screen in two columns, gives the strip's chips that open something a finger's whole height, drawn", async () => {
+    const page = await open(1024, 768);
+    // Chrome emulates a coarse pointer only on a touch screen.
+    await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    await page.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
+    const chip = "document.querySelector('#strip > button.chip')";
+    await page.waitFor(`${chip} && matchMedia('(pointer: coarse)').matches`);
+    assert.ok((await page.eval<number>(`${chip}.getBoundingClientRect().height`)) >= 44, "the strip wraps here: no invisible margin, which would cover the row above or below");
+    for (const [where, y] of [["its top", "r.y + 1"], ["its bottom", "r.bottom - 1"]] as const) {
+      assert.equal(await page.eval<boolean>(underFinger(chip, y)), true, `a tap on ${where} is its own`);
+    }
+  });
+
+  it("on a phone, keeps in the strip what wants a look now and gathers the other warnings behind one Alerts chip, which counts them and opens each", async () => {
+    const machine = sickMachine();
+    const iso = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const resumes = { id: "web-shop-0badc0de", name: "web-shop", dir: "/home/demo/Projects/web-shop", source: "test-notes", at: iso(0), notes: [{ title: "Pick up the pay page", writtenAt: iso(-10 * 3600_000), expiresAt: iso(38 * 3600_000), command: "/load" }] };
+    await ownPhone(
+      async (page, own) => {
+        await page.eval(LOW_DISK);
+        await fetchNow(page);
+        const strip = "document.getElementById('strip').textContent";
+        await page.waitFor(`${strip}.includes('Disk: 12.0 GB free') && document.querySelector('#strip .alerts-chip')`);
+        const shown = await page.eval<string[]>("[...document.querySelectorAll('#strip > *')].map((c) => c.textContent)");
+        assert.equal(shown.length, 4, shown.join(" | "));
+        assert.equal(shown[0], "Disk: 12.0 GB free (web-shop)");
+        assert.equal(shown[1], "invoices-api › VAT rounding: Context 86%");
+        assert.match(shown[2] ?? "", /^5 h limit: at this pace, out around /, "a window running out before its reset");
+        assert.equal(shown[3], "5 alerts", "the unreadable file, load, memory, the handoff and the worktrees, counted");
+        assert.equal(await page.eval<boolean>("document.querySelector('#strip .alerts-chip').classList.contains('warn')"), true, "loud: warnings among them");
+        assert.doesNotMatch(await page.eval<string>(strip), /7 d limit/, "how full a window gets by its reset only informs: not on a phone");
+        assert.doesNotMatch(await page.eval<string>(strip), /Not reviewed|Mark all as seen/, "To review counts what is new, and marks it seen");
+        const openAlerts = async () => {
+          await page.eval("document.querySelector('#strip .alerts-chip').scrollIntoView({ inline: 'end', block: 'nearest' })");
+          await page.tap("#strip .alerts-chip");
+          await page.waitFor(arrived("strip-alerts"));
+        };
+        await openAlerts();
+        const rows = await page.eval<string[]>("[...document.querySelectorAll('#strip-alerts .alert-row')].map((r) => r.textContent)");
+        assert.equal(rows.length, 5, rows.join(" | "));
+        assert.match(rows[0] ?? "", /^1 unreadable file.*broken\.json/, "with the file and why, which a finger cannot hover for");
+        assert.deepEqual(rows.slice(1), ["Load: 21.4, above its 12 cores", "Memory: 2.0 GB free, under 3.3 GB", "web-shop: 1 handoff to resume", "a-checkout-project-with-a-long-name: 9.0 GB in worktrees · 2 merged (8.0 GB)"]);
+        assert.ok((await page.eval<number>("Math.min(...[...document.querySelectorAll('#strip-alerts button.alert-row')].map((r) => r.getBoundingClientRect().height))")) >= 44, "each a finger's height");
+        // Each row does what its chip does, in place of the sheet.
+        await page.tap("#strip-alerts .alert-row", "in worktrees");
+        await page.waitFor(`!document.getElementById('strip-alerts').open && ${arrived("session")} && document.querySelector('#session h3')?.textContent === 'Worktrees'`);
+        await page.press("Escape");
+        await page.waitFor("!document.getElementById('session').open");
+        await openAlerts();
+        await page.tap("#strip-alerts .alert-row", "handoff to resume");
+        await page.waitFor(`!document.getElementById('strip-alerts').open && ${arrived("session")} && document.querySelector('#session .resume')?.textContent.includes('/load')`);
+        await page.press("Escape");
+        await page.waitFor("!document.getElementById('session').open");
+        // Beside the columns the strip shows every warning itself, with the line on what is new and its Mark all as seen.
+        await page.resize(1400, 900);
+        await page.waitFor("!document.querySelector('#strip .alerts-chip') && document.querySelector('#strip > .muted')");
+        const wide = await page.eval<string>(strip);
+        for (const part of ["Not reviewed: 3 finished, 1 failure.", "Mark all as seen", "1 unreadable file", "Disk: 12.0 GB free", "Load: 21.4", "Memory: 2.0 GB", "Context 86%", "5 h limit: at this pace", "7 d limit: at its pace so far, about 90% by its reset", "web-shop: 1 handoff to resume", "9.0 GB in worktrees"]) {
+          assert.ok(wide.includes(part), `${part} in ${wide}`);
+        }
+        // Back on a phone, with only the handoff left: one alert, quiet, since a handoff only informs; then none, and no chip.
+        await page.resize(390, 844);
+        await page.waitFor("document.querySelector('#strip .alerts-chip')?.textContent === '5 alerts'");
+        fs.writeFileSync(path.join(machine.proc, "loadavg"), "0.50 0.50 0.50 1/900 1234\n");
+        fs.writeFileSync(path.join(machine.proc, "meminfo"), "MemTotal:       32000000 kB\nMemAvailable:   30000000 kB\n");
+        fs.rmSync(path.join(own.paths.metricsDir, "broken.json"));
+        worktrees(own, false);
+        await fetchNow(page);
+        await page.waitFor("document.querySelector('#strip .alerts-chip')?.textContent === '1 alert'");
+        assert.equal(await page.eval<boolean>("document.querySelector('#strip .alerts-chip').classList.contains('warn')"), false, "quiet: a handoff to resume is no warning");
+        own.putResumes({ ...resumes, notes: [] });
+        await fetchNow(page);
+        await page.waitFor("!document.querySelector('#strip .alerts-chip')");
+      },
+      (own) => {
+        worktrees(own);
+        planWindows(own);
+        own.putResumes(resumes);
+        fs.writeFileSync(path.join(own.paths.metricsDir, "broken.json"), "{ not json");
+      },
+      machine,
     );
   });
 

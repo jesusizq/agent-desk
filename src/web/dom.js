@@ -378,7 +378,7 @@ export const DRAFTS_KEY = "agent-desk:drafts";
 export const REVIEWS_KEY = "agent-desk:reviews";
 
 /** The page's windows (index.html): a backdrop click, going back to Needs you and the arrival bubble treat them alike. */
-export const WINDOWS = /** @type {const} */ (["result", "session", "zoom", "review", "review-send"]);
+export const WINDOWS = /** @type {const} */ (["result", "session", "zoom", "review", "review-send", "strip-alerts"]);
 
 /** @param {string} id @returns {HTMLDialogElement} */
 export function dialog(id) {
