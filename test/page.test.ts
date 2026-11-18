@@ -1944,6 +1944,39 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    it("shows each agent's cost beside its tokens and their sum on the agents chip, and over a large context's cold cache what resuming costs, with the command that starts afresh", async () => {
+      const project = { name: "web-shop", dir: "/home/demo/Projects/web-shop" };
+      store.upsertSession({ id: "cold", provider: "Test", project, title: "cold cache session", state: "waiting" });
+      store.upsertAgent("cold", "pay", { goal: "Fix pay", state: "done", tokens: 1_200_000, costUsd: 1.5 });
+      store.upsertAgent("cold", "cart", { goal: "Fix cart", state: "done", tokens: 40_000, costUsd: 0.25 });
+      store.mergeMetrics({ sessionId: "cold", contextTokens: 180_000, contextPercent: 18, cacheExpiresAt: new Date(Date.now() - 60_000).toISOString(), coldResume: { command: "/ahorro:handoff", costUsd: 1.44 } });
+      try {
+        const page = await open();
+        const card = cardOf("cold cache session");
+        await page.waitFor(`${card}?.querySelector('.chip.warn')`);
+        const chip = await page.eval<{ text: string; title: string }>(`(() => { const c = ${card}.querySelector('.chip.warn'); return { text: c.textContent, title: c.title }; })()`);
+        assert.equal(chip.text, "Cold cache ≈ $1.44 · /ahorro:handoff");
+        assert.match(chip.title, /prompt cache has expired.*≈ \$1\.44/);
+        await page.click(".scard", "cold cache session");
+        await page.waitFor("document.querySelector('#session .pchips .chip.warn')");
+        assert.equal(await page.eval<string>("document.querySelector('#session .pchips .chip.warn').textContent"), "/ahorro:handoff");
+        const agents = await page.eval<string>("[...document.querySelectorAll('#session .pchips > .chip')].find((c) => c.textContent.includes('agents')).textContent");
+        assert.equal(agents.replace("▾", ""), "2 agents · $1.75");
+        await page.click("#session .pchips button.chip", "agents");
+        await page.waitFor("document.querySelectorAll('#session .ppart .arow[data-key^=agent-]').length === 2");
+        assert.deepEqual((await page.eval<string[]>("[...document.querySelectorAll('#session .ppart .arow[data-key^=agent-]')].map((r) => r.title)")).sort(), ["1.2M tokens · $1.50", "40k tokens · $0.25"]);
+        await page.click("#session .pchips .chip", "More");
+        await page.waitFor("[...document.querySelectorAll('#session .faint')].some((d) => d.textContent.includes('cache expired'))");
+        assert.match(await page.eval<string>("[...document.querySelectorAll('#session .faint')].find((d) => d.textContent.includes('cache expired')).textContent"), /cache expired, resuming ≈ \$1\.44/);
+        // A small context resumes cheaply: nothing to suggest.
+        store.mergeMetrics({ sessionId: "cold", contextTokens: 40_000, contextPercent: 4 });
+        await page.waitFor("!document.querySelector('#session .pchips .chip.warn')");
+        await page.press("Escape");
+      } finally {
+        store.updateSession("cold", (s) => ({ ...s, state: "ended" }));
+      }
+    });
+
     it("shows placeholders while the first data arrives, not an all-clear", async () => {
       const page = await browser.newPage(1400, 900);
       pages.push(page);

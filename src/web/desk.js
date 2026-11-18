@@ -302,7 +302,7 @@ function sessionCard(s, rich) {
     openReviews().filter((r) => r.sessionId === s.id).map(reviewLine),
     matters.length > shown.length ? h("div", { class: "s-more" }, TEXT.sessionLine.more(matters.length - shown.length)) : null,
     rich ? agentLines(as) : working || done ? h("div", { class: "s-l3" }, TEXT.sessionLine.agents(working, done)) : null,
-    rich ? workLine(s, m) : m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : null,
+    rich ? workLine(s, m) : suggestionChip(m),
     // Its own click: not the card's, which opens the session.
     isLive(s) ? null : h("div", { class: "s-actions", onclick: stopClick }, forgetButton(s, () => page.renderView(), "secondary")),
   );
@@ -360,10 +360,9 @@ function workLine(s, m) {
   const ctx = m?.contextPercent;
   const services = data.services.filter((v) => v.sessionId === s.id);
   const branch = m?.branch !== undefined && m.branch !== baseBranchOf(s) ? m.branch : undefined;
+  const chip = suggestionChip(m);
   const parts = [
-    ctx !== undefined || m?.suggestion
-      ? h("span", { class: "s-gauge" }, ctx !== undefined ? bar(ctx) : null, m?.suggestion ? suggestionChip(m.suggestion, ctx ?? 0, TEXT.suggestChip(ctx ?? 0, m.suggestion.command)) : TEXT.context(ctx ?? 0))
-      : null,
+    ctx !== undefined || chip ? h("span", { class: "s-gauge" }, ctx !== undefined ? bar(ctx) : null, chip ?? TEXT.context(ctx ?? 0)) : null,
     // A preview opens in its own tab, not the session.
     ...services.map((v) => h("span", { class: "s-live", title: TEXT.svcSince(ago(v.startedAt)), onclick: stopClick }, h("span", { class: "up" }), localLink(v.url, `${v.name} ${v.url.replace(LOCAL_URL, "")}`))),
     branch ? h("span", { class: "s-where", title: branch }, branch) : null,

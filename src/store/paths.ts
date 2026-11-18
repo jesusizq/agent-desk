@@ -39,6 +39,10 @@ export class StorePaths {
   get resumesDir() { return path.join(this.home, "resumes"); }
   resumes(projectId: string) { return this.inside(this.resumesDir, `${id(projectId, "project id")}.json`); }
   handoff(sessionId: string) { return this.inside(this.handoffsDir, `${id(sessionId, "session id")}.json`); }
+  /** What adapters note for themselves per session (src/store/store.ts updateNote). */
+  get notesDir() { return path.join(this.home, "notes"); }
+  notesOf(sessionId: string) { return this.inside(this.notesDir, id(sessionId, "session id")); }
+  note(sessionId: string, key: string) { return this.inside(this.notesOf(sessionId), `${id(key, "note key")}.json`); }
   get messagesDir() { return path.join(this.home, "messages"); }
   messageDir(sessionId: string) { return this.inside(this.messagesDir, id(sessionId, "session id")); }
   message(sessionId: string, messageId: string) { return this.inside(this.messageDir(sessionId), `${id(messageId, "message id")}.json`); }

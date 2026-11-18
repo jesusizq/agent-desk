@@ -236,7 +236,10 @@ export type Agent = {
   startedAt: string;
   updatedAt: string;
   endedAt?: string;
+  /** The tokens its requests used, every kind together (input, cache writes and reads, output). */
   tokens?: number;
+  /** What those requests cost, when its adapter knows its model's prices. */
+  costUsd?: number;
 };
 
 export type Check = { criterion: string; verification: string };
@@ -273,8 +276,19 @@ export type Service = {
   detected?: boolean;
 };
 
-export const SUGGESTION_REASONS = ["context-full"] as const;
+/**
+ * Why a command is suggested: the context is nearly full (`context-full`), or the prompt cache has
+ * expired on a large context, so resuming rewrites all of it to the cache (`cache-cold`, decided by
+ * the page as time passes, from `Metrics.coldResume`).
+ */
+export const SUGGESTION_REASONS = ["context-full", "cache-cold"] as const;
 export type Suggestion = { reason: (typeof SUGGESTION_REASONS)[number]; command: string };
+/**
+ * What resuming a session costs once its prompt cache has expired: the command that starts its work
+ * afresh instead, and what writing its whole context back to the cache costs at its model's price,
+ * when its adapter knows that price.
+ */
+export type ColdResume = { command: string; costUsd?: number };
 
 export type PlanWindow = { label: string; percent: number; resetsAt?: string };
 /**
@@ -304,6 +318,7 @@ export type Metrics = {
   backgroundShells?: number;
   /** A terminal command worth running now, chosen by the provider's adapter; the page words the reason. */
   suggestion?: Suggestion;
+  coldResume?: ColdResume;
 };
 
 /**

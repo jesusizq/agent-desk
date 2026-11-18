@@ -112,8 +112,8 @@ export const sessionAgents = (sid) => data.agents.filter((a) => a.sessionId === 
 
 /**
  * One row per agent on a common time axis: its goal, the sentence saying what it must deliver, what it
- * does now (or how it ended) and a bar from its start to now or its end. Branch, commit and tokens
- * wait in the tooltip. @param {Session} s
+ * does now (or how it ended) and a bar from its start to now or its end. Branch, commit, tokens and
+ * cost wait in the tooltip. @param {Session} s
  */
 function agentList(s) {
   const rows = sessionAgents(s.id);
@@ -205,7 +205,7 @@ export function agentRows(rows, axis) {
     return note ? h("span", { class: "astuck", title: note.tip }, note.text) : null;
   };
   /** @param {Agent} a */
-  const tip = (a) => [a.branch && `${a.branch}${a.commit ? ` @ ${a.commit}` : ""}`, a.tokens !== undefined && TEXT.tokens(a.tokens)].filter(Boolean).join(" · ");
+  const tip = (a) => [a.branch && `${a.branch}${a.commit ? ` @ ${a.commit}` : ""}`, a.tokens !== undefined && TEXT.tokens(a.tokens), a.costUsd !== undefined && TEXT.cost(a.costUsd)].filter(Boolean).join(" · ");
   return h(
     "div",
     { class: `alist${axis ? " atimeline" : ""}` },

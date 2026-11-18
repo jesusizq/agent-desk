@@ -1,12 +1,13 @@
 // Entry point for Claude Code: `agent-desk-claude hook|wait|statusline`. See adapters/claude-code/README.md.
 import { spawn } from "node:child_process";
+import * as os from "node:os";
 import * as path from "node:path";
 import { sessionProcess } from "../../src/core/proc.ts";
 import { tmuxLocation } from "../../src/core/tmux.ts";
 import { storeHome } from "../../src/store/paths.ts";
 import { Store } from "../../src/store/store.ts";
 import { deliverWhileWorking, handleHook, type HookOutput, readHookInput, recordHandoff, transcriptOf, waitForAnswer, waitForDialog, waitForPermission } from "./hooks.ts";
-import { metricsFromStatusLine, sessionNameFromStatusLine } from "./statusline.ts";
+import { freshCommand, metricsFromStatusLine, sessionNameFromStatusLine, settingsFile } from "./statusline.ts";
 
 const WAIT_POLL_MS = 500;
 const WAIT_ARM_MS = 10_000;
@@ -81,7 +82,7 @@ async function main(argv: string[]): Promise<void> {
     const original = separator < 0 ? [] : rest.slice(separator + 1);
     try {
       const status = JSON.parse(input) as unknown;
-      const metrics = store.mergeMetrics(metricsFromStatusLine(status));
+      const metrics = store.mergeMetrics(metricsFromStatusLine(status, freshCommand(settingsFile(process.env, os.homedir()))));
       const name = sessionNameFromStatusLine(status);
       const session = name ? store.getSession(metrics.sessionId) : undefined;
       if (name && session && session.title !== name) store.updateSession(session.id, (s) => ({ ...s, title: name }));

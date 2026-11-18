@@ -1454,6 +1454,23 @@ export class Store {
     return raw === undefined ? undefined : readHandoff(raw, file);
   }
 
+  // ── Adapter notes ───────────────────────────────────────────────────────
+
+  /**
+   * An adapter's own note on a session (how far it read a file, and what it summed there), opaque to
+   * the desk: `change` gets what was noted (undefined at first), validates it, and returns what to note
+   * now, or undefined to leave it. It runs under the note's lock, so what it does there is not raced
+   * by another hook of the same session. The note is archived with its session.
+   */
+  updateNote<T>(sessionId: string, key: string, change: (before: unknown) => T | undefined): T | undefined {
+    const file = this.paths.note(sessionId, key);
+    return withLock(file, () => {
+      const next = change(readJson(file));
+      if (next !== undefined) writeJson(file, next);
+      return next;
+    });
+  }
+
   // ── Archive ─────────────────────────────────────────────────────────────
 
   /**
@@ -1487,6 +1504,7 @@ export class Store {
       this.moveToArchive(this.paths.metrics(s.id));
       this.moveToArchive(this.paths.handoff(s.id));
       this.moveToArchive(this.paths.messageDir(s.id));
+      this.moveToArchive(this.paths.notesOf(s.id));
       fs.rmSync(this.paths.sessionInbox(s.id), { recursive: true, force: true }); // listener marks only; answers were withdrawn at the end
       this.moveToArchive(this.paths.session(s.id));
       counts.sessions++;

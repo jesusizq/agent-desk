@@ -24,6 +24,7 @@ import {
   type Answer,
   type Check,
   type CheckReopened,
+  type ColdResume,
   type ConversationEntry,
   type InboxEntry,
   type BranchState,
@@ -226,6 +227,7 @@ export function readAgent(value: unknown, where = "agent"): Agent {
     updatedAt: isoTime(f.updatedAt, `${where}.updatedAt`),
     endedAt: optional(f.endedAt, `${where}.endedAt`, isoTime),
     tokens: optional(f.tokens, `${where}.tokens`, (v, w) => int(v, w)),
+    costUsd: optional(f.costUsd, `${where}.costUsd`, (v, w) => num(v, w, 0)),
   });
 }
 
@@ -299,7 +301,13 @@ export function readMetrics(value: unknown, where = "metrics"): Metrics {
     cacheExpiresAt: optional(f.cacheExpiresAt, `${where}.cacheExpiresAt`, isoTime),
     backgroundShells: optional(f.backgroundShells, `${where}.backgroundShells`, (v, w) => int(v, w)),
     suggestion: optional(f.suggestion, `${where}.suggestion`, readSuggestion),
+    coldResume: optional(f.coldResume, `${where}.coldResume`, readColdResume),
   });
+}
+
+function readColdResume(value: unknown, where: string): ColdResume {
+  const f = fields(value, where);
+  return compact({ command: label(f.command, `${where}.command`), costUsd: optional(f.costUsd, `${where}.costUsd`, (v, w) => num(v, w, 0)) });
 }
 
 function readSuggestion(value: unknown, where: string): Suggestion {

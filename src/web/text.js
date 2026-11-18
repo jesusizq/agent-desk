@@ -13,6 +13,14 @@ const NOW = "now";
 const COLS = { needs: "Needs you", sessions: "Sessions", review: "To review" };
 /** @param {number} c */
 const contextAt = (c) => `Context ${Math.round(c)}%`;
+/** @param {number} v */
+const usd = (v) => `$${v.toFixed(2)}`;
+/** @param {number} n */
+const tokens = (n) => `${n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : n} tokens`;
+/** @typedef {import("../core/protocol.ts").Metrics} Metrics */
+/** @typedef {import("../core/protocol.ts").Suggestion} Suggestion */
+/** What resuming over a cold cache costs: its price when known, else the tokens it rewrites. @param {Metrics} m */
+const resuming = (m) => (m.coldResume?.costUsd !== undefined ? `≈ ${usd(m.coldResume.costUsd)}` : `rewrites ${tokens(m.contextTokens ?? 0)}`);
 const CLEAR = "All clear";
 /** @param {boolean} resultsToo @param {number} [reviews] reviews open, at the developer's pace */
 const clearRest = (resultsToo, reviews = 0) =>
@@ -73,10 +81,11 @@ export const TEXT = {
   /** @param {string} what @param {string} where */
   failedAlert: (what, where) => `Failed in ${where}: ${what}`,
   /** @param {number} c @param {string} command */
-  suggestChip: (c, command) => `${contextAt(c)} · ${command}`,
+  /** @param {Suggestion} s @param {Metrics} m */
+  suggestChip: (s, m) => `${s.reason === "cache-cold" ? `Cold cache ${resuming(m)}` : contextAt(m.contextPercent ?? 0)} · ${s.command}`,
   chips: {
-    /** @param {number} n @param {number} failed */
-    agents: (n, failed) => `${plural(n, "agent", "agents")}${failed ? ` · ${failed} failed` : ""}`,
+    /** @param {number} n @param {number} failed @param {number} [cost] what they cost together, when known */
+    agents: (n, failed, cost) => `${plural(n, "agent", "agents")}${failed ? ` · ${failed} failed` : ""}${cost === undefined ? "" : ` · ${usd(cost)}`}`,
     /** @param {number} n */
     results: (n) => plural(n, "result", "results"),
     /** @param {number} n */
@@ -417,8 +426,10 @@ export const TEXT = {
   copied: (t) => `Copied: ${t}`,
   copy: "Copy",
   suggest: {
-    /** @param {number} c */
-    "context-full": (c) => `Context at ${Math.round(c)}%. A good moment to compact, between two tasks:`,
+    /** @param {Metrics} m */
+    "context-full": (m) => `Context at ${Math.round(m.contextPercent ?? 0)}%. A good moment to compact, between two tasks:`,
+    /** @param {Metrics} m */
+    "cache-cold": (m) => `Its prompt cache has expired: resuming writes its whole context to the cache again (${resuming(m)}). Starting afresh costs less:`,
   },
   openLive: "Open live",
   /** @param {string} where */
@@ -442,15 +453,15 @@ export const TEXT = {
   /** @param {string} t */
   cacheLeft: (t) => `${t} left`,
   cacheExpired: "expired",
+  /** @param {Metrics} m */
+  cacheCold: (m) => `expired, resuming ${resuming(m)}`,
   underMinute: "< 1 min",
   /** @param {string} m */
   mode: (m) => `permission mode: ${m}`,
   /** @param {number} n */
   shells: (n) => plural(n, "background shell", "background shells"),
-  /** @param {number} v */
-  cost: (v) => `$${v.toFixed(2)}`,
-  /** @param {number} n */
-  tokens: (n) => `${n >= 1000 ? `${Math.round(n / 1000)}k` : n} tokens`,
+  cost: usd,
+  tokens,
   noAgents: "No agents recorded.",
   /** @param {string} t */
   svcSince: (t) => `up for ${t}`,

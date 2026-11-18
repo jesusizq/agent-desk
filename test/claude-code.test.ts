@@ -1744,6 +1744,7 @@ describe("status line", () => {
       planWindows: [{ label: "5 h", percent: 42, resetsAt: new Date(1_800_000_000_000).toISOString() }, { label: "7 d", percent: 61 }],
       cacheExpiresAt: "2026-10-28T11:03:00.000Z",
       suggestion: { reason: "context-full", command: "/compact" },
+      coldResume: { command: "/compact", costUsd: 172_000 * 5 / 1e6 },
     });
   });
 

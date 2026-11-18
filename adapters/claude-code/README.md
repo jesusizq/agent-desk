@@ -21,6 +21,7 @@ answers given on the page back to the session that asked.
 | `PostToolUse` (`deliver`) | while `.inbox-pending` exists in the store, hands the session the messages written to it on the desk while it works, as context it reads before its next step; a sub-agent's tool call leaves them |
 | `Notification` (`elicitation_dialog`, `agent_needs_input`) | a question with the notification's text |
 | `PreToolUse` (`Agent`, `Task`), `SubagentStart`, `SubagentStop` | one agent per launch, named after the description given to the Agent tool (for agents launched otherwise, such as a workflow's, the label Claude Code notes in `<session>/subagents/…/agent-<id>.meta.json`), with the prompt's opening sentence as its summary when it reads as one (a sentence of its own line, 4 words to 160 characters, no code, path, link, markup, label or role), and the sub-agent that launched it when one did; done when it stops, or when a turn starts or ends and its transcript ends interrupted (an interrupted agent gets no `SubagentStop`). A workflow's agent hands its result to the workflow, not to the session: at its `SubagentStop`, the result of its last turn's `StructuredOutput` call, read from the end of its transcript (`agent_transcript_path`), joins the conversation as that agent's report, one `key: value` line per field and a list as its items, and its activity becomes "Handed back its result". The session never registers one: `agent-desk agent` only adds to these records |
+| `PostToolUse`, `PostToolUseFailure` (a sub-agent's), `SubagentStop` | the sub-agent's `tokens` and `costUsd` so far, summed from its transcript (see Cost) |
 | `PreToolUse` (`SendMessage`) | a message to one of the session's sub-agents (`to` its id) works its record again, its activity the message's `summary` (else its first line), whether it resumes a stopped agent or redirects a running one; its `SubagentStart` and `SubagentStop` follow under the same id. Recorded before the message goes, so a resumed agent's stop always comes after it |
 | `PostToolUse` (`Bash`) | a local HTML page the call opens in a browser (`xdg-open`, `open`, `python -m webbrowser`, a browser with its path or `file:` URL, not headless) is published as a review titled after its `<title>`, as `agent-desk review --page` publishes one, unless it lies outside the project, its worktrees and the temporary folder or under a folder of generated pages (`node_modules`, coverage and test reports, build output), loads scripts or styles from beside it, was published this turn already, or is unchanged since its review's latest round (see `docs/protocol.md`, Reviews); `PostToolUse` always starts the adapter for a `Bash` call that names an `.htm…` file, a `file:` URL or `webbrowser` |
 | `PostToolUse` (`TaskStop`) | stopping a sub-agent (`task_type: local_agent`) ends its record, done with "Stopped by the session"; `PostToolUse` always starts the adapter for it |
@@ -62,7 +63,22 @@ settings, wrapping the current status-line command:
 
 The status line's session name, when Claude Code has one, becomes the session's title on the desk.
 When the context passes 80 %, the metrics carry a suggestion to run `/compact`, shown with a copy
-button in the session panel.
+button in the session panel. They also carry what resuming costs once the prompt cache has expired
+(`coldResume`): the context's tokens at the model's cache-write price for the cache's lifetime
+(`prompt_cache.ttl`), and the command that starts afresh: `/ahorro:handoff` when the `ahorro` plugin
+is on in `enabledPlugins` of Claude Code's user settings (`settings.json` in `CLAUDE_CONFIG_DIR`,
+else in the home folder's `.claude`, read only), else `/compact`. The page suggests it once the
+cache has expired on a large context.
+
+## Cost
+
+Prices live in one table, `prices.ts`: the Claude API's first-party list prices per million tokens
+(input, 5-minute and 1-hour cache writes, cache reads, output), with the date they were read and
+their source. A model not in the table, fast mode, a service tier other than `standard` or a region
+other than global or US (1.1x, Claude 4.6 and later) gets no cost, only tokens. Each sub-agent's
+tokens and cost are summed from the usage of its own transcript's replies (one request per message
+id), at its tool calls and its `SubagentStop`; each hook reads only the lines written since the
+last one, from where the adapter's note on the session (`notes/<session>/usage-<agent>.json`) says.
 
 ## Limits
 

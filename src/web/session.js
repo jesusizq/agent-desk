@@ -13,6 +13,7 @@ import { badge, bar, dialogHead, dot, goLink, kindOf, LOCAL_URL, localLink, plan
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
 import { imageUrl, offlineNotice, offlineText, post, run } from "./server.js";
+import { coldResume } from "./suggest.js";
 import { asksOf, data, isLive, isNew, itemsOf, label, metricsOf, midTurn, S, sessionName, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
@@ -36,7 +37,6 @@ function panelChips(s, m) {
   const loud = as.some(failedUnseen);
   const results = data.results.filter((r) => r.sessionId === s.id).length;
   const services = data.services.filter((v) => v.sessionId === s.id).length;
-  const command = m?.suggestion?.command;
   /** @param {PanelPart} part @param {Child} content @param {string} [cls] */
   const unfold = (part, content, cls = "") =>
     h(
@@ -45,12 +45,12 @@ function panelChips(s, m) {
       content,
       part === "more" ? null : h("span", { class: "caret", "aria-hidden": "true" }, "▾"),
     );
-  const agents = as.length ? unfold("agents", [loud ? dot("failed") : null, TEXT.chips.agents(as.length, failed)], loud ? "bad" : "") : null;
+  const agents = as.length ? unfold("agents", [loud ? dot("failed") : null, TEXT.chips.agents(as.length, failed, agentsCost(as))], loud ? "bad" : "") : null;
   // What asks for action leads: on a phone the row scrolls sideways and its end starts off-screen.
   return h(
     "div",
     { class: "pchips" },
-    m?.suggestion && command ? suggestionChip(m.suggestion, m.contextPercent ?? 0, command) : null,
+    suggestionChip(m, { bare: true }),
     !isLive(s) ? [h("span", { class: "chip quiet" }, s.state === "ended" ? TEXT.ended : TEXT.gone), forgetButton(s, () => redrawPanel(s.id), "chip")] : null,
     loud ? agents : null,
     m?.contextPercent !== undefined ? h("span", { class: "chip" }, bar(m.contextPercent), TEXT.context(m.contextPercent)) : null,
@@ -60,6 +60,16 @@ function panelChips(s, m) {
     services ? unfold("services", TEXT.chips.live(services)) : null,
     unfold("more", TEXT.chips.more),
   );
+}
+
+/**
+ * What a session's agents cost together; undefined while none is priced, or while one used tokens
+ * at a price its adapter does not know, so the sum is never short. @param {import("../core/protocol.ts").Agent[]} as
+ */
+function agentsCost(as) {
+  if (as.some((a) => a.tokens !== undefined && a.costUsd === undefined)) return undefined;
+  const priced = as.filter((a) => a.costUsd !== undefined);
+  return priced.length ? priced.reduce((sum, a) => sum + (a.costUsd ?? 0), 0) : undefined;
 }
 
 /** What a chip unfolds. @param {Session} s @param {Metrics | undefined} m @param {HTMLDialogElement} d */
@@ -78,7 +88,8 @@ export function panelPart(s, m, d) {
 /** @param {Session} s @param {Metrics | undefined} m */
 function sessionDetails(s, m) {
   const cacheMs = m?.cacheExpiresAt ? Date.parse(m.cacheExpiresAt) - Date.now() : undefined;
-  const cache = cacheMs === undefined ? null : TEXT.cache(cacheMs <= 0 ? TEXT.cacheExpired : TEXT.cacheLeft(cacheMs < 60_000 ? TEXT.underMinute : duration(Math.floor(cacheMs / 60_000))));
+  const cold = m && coldResume(m) ? TEXT.cacheCold(m) : TEXT.cacheExpired;
+  const cache = cacheMs === undefined ? null : TEXT.cache(cacheMs <= 0 ? cold : TEXT.cacheLeft(cacheMs < 60_000 ? TEXT.underMinute : duration(Math.floor(cacheMs / 60_000))));
   const parts = [
     m?.model && [m.model, m.effort].filter(Boolean).join(" · "),
     m?.branch,
