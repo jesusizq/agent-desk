@@ -87,6 +87,9 @@ export type Snapshot = {
  * refused the turn (`unrefused`, with what a check said at its end, if anything), which does not tell
  * a check that passed from one that never ran, or from one that gave up at once.
  */
+/** A process listening for a session's answers (Store.listeners). */
+export type Listening = { pid: number; since: string; checks?: true; turn?: true };
+
 export type TurnCheck =
   | { outcome: "reopened"; reopened: CheckReopened }
   | { outcome: "failing"; reopened: CheckReopened; said?: string }
@@ -241,13 +244,20 @@ export class Store {
   }
 
   updateSession(sessionId: string, change: (s: Session) => Session): Session {
+    return this.withSession(sessionId, (current, write) => write(change(current)));
+  }
+
+  /** Runs `fn` under the session's lock with its record, and `write` to save a changed one. */
+  private withSession<T>(sessionId: string, fn: (current: Session, write: (next: Session) => Session) => T): T {
     const file = this.paths.session(sessionId);
     return withLock(file, () => {
       const current = this.getSession(sessionId);
       if (!current) throw new InputError(`no session ${sessionId} in the store; it registers when its first hook runs`);
-      const next = readSession({ ...change(current), updatedAt: this.stamp() }, file);
-      writeJson(file, next);
-      return next;
+      return fn(current, (next) => {
+        const saved = readSession({ ...next, updatedAt: this.stamp() }, file);
+        writeJson(file, saved);
+        return saved;
+      });
     });
   }
 
@@ -353,7 +363,8 @@ export class Store {
   /**
    * Questions not to be shown yet: those still being written (a session that died, or a turn that
    * never ends, must not hide what it asked: past a few minutes it shows as it is), and those a later
-   * end of the turn replaces once it stands (`replacedAt`), which show again if a check refuses it.
+   * end of the turn replaces once it stands (`replacedAt`), which show again if a check refuses it or
+   * the session dies.
    */
   heldQuestions(now = this.now().getTime(), problems?: string[]): Set<string> {
     return heldOf(this.listSessions(problems), this.openQuestions(undefined, problems), now);
@@ -373,9 +384,10 @@ export class Store {
   /**
    * Settles the replacement an end of the session's turn left waiting (replaceOnceStands): the end
    * stood, and the items it replaced are dismissed; or a check refused it, and they stay open, shown again.
+   * `marked`: only the items marked in that span (one end's marks), else every one marked.
    */
-  settleReplacement(sessionId: string, stands: boolean, problems?: string[]): Question[] {
-    const replaced = (q: Question) => q.replacedAt !== undefined;
+  settleReplacement(sessionId: string, stands: boolean, problems?: string[], marked?: { from: string; to?: string }): Question[] {
+    const replaced = (q: Question) => q.replacedAt !== undefined && (marked === undefined || (q.replacedAt >= marked.from && (marked.to === undefined || q.replacedAt <= marked.to)));
     if (stands) return this.closeOpen(sessionId, compact({ which: replaced, status: "dismissed" as const, problems }));
     const kept = this.openQuestions(sessionId, problems).filter(replaced);
     return kept.map((q) => this.changeQuestion(q.id, ({ replacedAt: _replaced, ...rest }) => rest));
@@ -462,25 +474,26 @@ export class Store {
    */
   recordTurnCheck(sessionId: string, check: TurnCheck, how: { checkedAt?: string; problems?: string[] } = {}): Question | undefined {
     const { checkedAt, problems } = how;
-    let newer = false;
-    const session = this.updateSession(sessionId, (s) => {
-      if (checkedAt !== undefined && s.turnEndedAt !== undefined && s.turnEndedAt > checkedAt) {
-        newer = true;
-        return s;
-      }
+    // Under the session's lock: no newer end is recorded between telling this end is the latest and
+    // settling what it replaced, and only its own marks are settled (a newer end marks after its checks).
+    const session = this.withSession(sessionId, (s, write) => {
+      if (checkedAt !== undefined && s.turnEndedAt !== undefined && s.turnEndedAt > checkedAt) return undefined;
       const { checkReopened: _reopened, ...rest } = s;
-      return check.outcome === "reopened" && s.state !== "ended" ? { ...rest, state: "working", checkReopened: check.reopened } : rest;
+      const next = write(check.outcome === "reopened" && s.state !== "ended" ? { ...rest, state: "working", checkReopened: check.reopened } : rest);
+      const ended = next.turnEndedAt ?? next.updatedAt;
+      const own = compact({ from: ended, to: checkedAt });
+      if (check.outcome !== "reopened") {
+        this.settleReplacement(sessionId, true, problems, own);
+        return next;
+      }
+      // What the end asked: after the turn ended and before its checks finished (a newer end asks later).
+      const asked = (q: Question) => q.kind === "waiting" && !q.checkFailing && q.setAside === undefined && q.askedAt >= ended && (checkedAt === undefined || q.askedAt <= checkedAt);
+      if (next.state !== "ended") this.closeOpen(sessionId, compact({ which: asked, status: "dismissed" as const, problems }));
+      this.settleReplacement(sessionId, false, problems, own);
+      return next;
     });
-    if (newer) return undefined;
+    if (session === undefined || check.outcome === "reopened") return undefined;
     const ended = session.turnEndedAt ?? session.updatedAt;
-    // What the end asked: after the turn ended and before its checks finished (a newer end asks later).
-    const asked = (q: Question) => q.kind === "waiting" && !q.checkFailing && q.setAside === undefined && q.askedAt >= ended && (checkedAt === undefined || q.askedAt <= checkedAt);
-    if (check.outcome === "reopened") {
-      if (session.state !== "ended") this.closeOpen(sessionId, compact({ which: asked, status: "dismissed" as const, problems }));
-      this.settleReplacement(sessionId, false, problems);
-      return undefined;
-    }
-    this.settleReplacement(sessionId, true, problems);
     if (check.outcome === "unrefused") {
       const said = check.said?.trim();
       if (said) for (const q of this.openQuestions(sessionId, problems)) if (q.checkFailing) this.changeQuestion(q.id, (cur) => (cur.status === "open" ? { ...cur, context: withLater(cur.context, said) } : cur));
@@ -580,7 +593,8 @@ export class Store {
    * Closes an open question with the developer's answer and puts it in the session's inbox,
    * exactly as typed. Refused unless the session takes it now (`acceptsMessages`), so an answer
    * never waits in an inbox to reach a later, unrelated turn. If the inbox write fails the question
-   * is reopened. An answer to what the session waits on settles its latest end's replacement as standing.
+   * is reopened. It settles nothing of what the session's latest end replaced: it reaches the session
+   * also while a check refuses that end, so the next end or prompt tells how that end went.
    */
   answerFromDesk(questionId: string, text: string, images: string[] = []): Question {
     if (text.trim() === "" && images.length === 0) throw new InputError("the answer is empty");
@@ -605,15 +619,6 @@ export class Store {
         throw new AggregateError([error, rollback], `could not deliver the answer to session ${answered.sessionId}, nor reopen question ${questionId}`);
       }
       throw new Error(`could not deliver the answer to session ${answered.sessionId}; the question is open again`, { cause: error });
-    }
-    // The developer answered what the session waits on: its end stands, and what that end replaced goes.
-    // A permission prompt or a dialog comes mid-turn, which says nothing about the turn's end.
-    if (answered.kind !== "permission" && !answered.dialog) {
-      try {
-        this.settleReplacement(answered.sessionId, true);
-      } catch (error) {
-        throw new Error(`the answer reached session ${answered.sessionId}, but the questions its latest end replaced could not be dismissed; they go at its next end or prompt`, { cause: error });
-      }
     }
     return answered;
   }
@@ -738,9 +743,9 @@ export class Store {
    * Marks the session as taking answers from the desk while this process waits for them.
    * Returns the function that withdraws the mark.
    */
-  listen(sessionId: string, me = process.pid, how: { checks?: boolean } = {}): () => void {
+  listen(sessionId: string, me = process.pid, how: { checks?: boolean; turn?: boolean } = {}): () => void {
     const file = this.listenerFile(sessionId, me);
-    writeJson(file, compact({ pid: me, start: procInfo(me)?.start, since: this.stamp(), checks: how.checks || undefined }));
+    writeJson(file, compact({ pid: me, start: procInfo(me)?.start, since: this.stamp(), checks: how.checks || undefined, turn: how.turn || undefined }));
     return () => fs.rmSync(file, { force: true });
   }
 
@@ -757,8 +762,11 @@ export class Store {
     return path.join(this.paths.sessionInbox(sessionId), `.listener.${me}.json`);
   }
 
-  /** Live processes listening for this session's answers, oldest first; `checks` while one reads how the checks of the turn's end ended. */
-  listeners(sessionId: string, problems?: string[]): { pid: number; since: string; checks?: true }[] {
+  /**
+   * Live processes listening for this session's answers, oldest first; `checks` while one reads how the
+   * checks of the turn's end ended; `turn` for one waiting on the turn's answers, not on a prompt or dialog.
+   */
+  listeners(sessionId: string, problems?: string[]): Listening[] {
     const dir = this.paths.sessionInbox(sessionId);
     let names: string[];
     try {
@@ -769,7 +777,7 @@ export class Store {
       problems.push(`listeners of session ${sessionId} (${dir}): ${(error as Error).message}`);
       return [];
     }
-    const live: { pid: number; since: string; checks?: true }[] = [];
+    const live: Listening[] = [];
     for (const name of names.filter((n) => /^\.listener\.\d+\.json$/.test(n))) {
       const file = path.join(dir, name);
       try {
@@ -778,7 +786,8 @@ export class Store {
         const f = fields(raw, file);
         const pid = int(f.pid, `${file}.pid`, 1);
         const checks = optional(f.checks, `${file}.checks`, bool) === true;
-        if (isAlive(pid, f.start === undefined ? undefined : text(f.start, `${file}.start`, 100))) live.push(compact({ pid, since: isoTime(f.since, `${file}.since`), checks: checks || undefined }));
+        const turn = optional(f.turn, `${file}.turn`, bool) === true;
+        if (isAlive(pid, f.start === undefined ? undefined : text(f.start, `${file}.start`, 100))) live.push(compact({ pid, since: isoTime(f.since, `${file}.since`), checks: checks || undefined, turn: turn || undefined }));
       } catch (error) {
         if (!problems) throw error;
         problems.push((error as Error).message);

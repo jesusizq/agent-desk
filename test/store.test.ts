@@ -1108,20 +1108,37 @@ describe("checks at a turn's end", () => {
     assert.equal(other.getQuestion(kept.id)?.status, "open");
   });
 
-  it("holds what an end replaces from Needs you, and dismisses it once the developer answers on the desk", () => {
+  it("holds what an end replaces from Needs you, also once the developer answers on the desk what that end asked", () => {
     const { store, a, b } = askedAtTwoEnds();
     assert.deepEqual([...store.heldQuestions()], [a.id]);
     const stop = store.listen("s1");
     try {
-      // A permission prompt comes mid-turn: answering it says nothing of the turn's end.
       const p = store.ask({ sessionId: "s1", kind: "permission", text: "Bash: rm -rf dist", options: ["Allow", "Deny"] });
       store.answerFromDesk(p.id, "Allow");
-      assert.equal(store.getQuestion(a.id)?.status, "open");
+      // The answer reaches the session also while a check refuses that end: it tells nothing of how the end went.
       store.answerFromDesk(b.id, "only two");
     } finally {
       stop();
     }
-    assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(a.id)?.answer], ["dismissed", undefined]);
+    assert.deepEqual([store.getQuestion(a.id)?.status, store.heldQuestions().has(a.id)], ["open", true]);
+  });
+
+  it("shows again what an end replaced once its session died without ending", () => {
+    const { store, a } = askedAtTwoEnds();
+    assert.equal(store.heldQuestions().has(a.id), true);
+    store.updateSession("s1", (s) => ({ ...s, process: { pid: process.pid, start: "0", ancestors: [] } }));
+    assert.equal(store.heldQuestions().has(a.id), false, "no next end or prompt will settle it");
+  });
+
+  it("settles only what the end whose checks it read replaced, not what a newer end marked meanwhile", () => {
+    const { store, set, a, b } = askedAtTwoEnds();
+    // The checks of the end at 20 finished at 24. Its waiter found no newer end recorded, and before
+    // it settled, a newer end at 30 marked B to replace (its check may refuse it).
+    set(31);
+    store.replaceOnceStands("s1", (q) => q.id === b.id);
+    store.recordTurnCheck("s1", { outcome: "unrefused" }, { checkedAt: at(24) });
+    assert.equal(store.getQuestion(a.id)?.status, "dismissed");
+    assert.deepEqual([store.getQuestion(b.id)?.status, store.heldQuestions().has(b.id)], ["open", true], "the newer end settles it");
   });
 
   it("tells a listener that reads the turn's checks from one that only listens, keeping when it started", () => {

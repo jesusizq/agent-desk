@@ -201,9 +201,14 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         // Its waiter cannot read them (an unreadable transcript) and listens on for answers: nothing says they run.
         store.checksRead("checked");
         await page.waitFor("!document.querySelector('#session .working-now')");
+        // A later end's waiter reads them again.
+        store.listen("checked", process.pid, { checks: true });
+        await page.waitFor("document.querySelector('#session .working-now')?.textContent.includes('Its checks run again')");
       } finally {
         stop();
       }
+      // No waiter reads them any more (it gave up, or delivered an answer): nothing says they run.
+      await page.waitFor("!document.querySelector('#session .working-now')");
       await page.press("Escape");
     } finally {
       store.dismiss(q.id);

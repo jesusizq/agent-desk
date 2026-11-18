@@ -136,14 +136,16 @@ same line, the reason told once per hook.
   transcript's last 1 MB, or one when `stop_hook_active` is the only trace left. The `wait` it starts
   reads the first summary written after the waiter started, and only that round, adding the earlier
   refusals counted on the session, and records nothing once a newer end of the turn has been
-  recorded (that end has counted this one's refusal), and reads none once a newer waiter listens (a
-  prompt typed mid-turn cuts its own round from the turn, so a round it found then could be a newer
-  end's): a refusal there marks the session working again, dismisses
-  a waiting item that end asked and shows again what it was to replace; any other ending lets the end
-  stand, and what it asked then replaces the items still open from before it. Every end that asks is
-  settled: when no waiter reads its round (no `transcript_path`, a transcript that cannot be read, a
-  waiter not armed in time), by the developer's answer on the desk or in the terminal (the end
-  stands), or by the next `Stop` (refused with `stop_hook_active`, else it stood); while its waiter
+  recorded (that end has counted this one's refusal), and reads none once a newer turn waiter listens
+  (`turn` on its listener; a permission prompt's or a dialog's hook does not count; a prompt typed
+  mid-turn cuts its own round from the turn, so a round it found then could be a newer end's): a
+  refusal there marks the session working again, dismisses a waiting item that end asked and shows again what it was to replace; any other ending lets the end
+  stand, and what it asked then replaces the items still open from before it (only what that end
+  marked, not what a newer end marked since). Every end that asks is settled: when no waiter reads
+  its round (no `transcript_path`, a transcript that cannot be read, a waiter not armed in time), by
+  the developer's prompt in the terminal (the end stands) or by the next `Stop` (refused with
+  `stop_hook_active`, else it stood), never by an answer on the desk, which the waiter delivers also
+  before the round is read or while a refused end goes on; while its waiter
   reads the round its listener says so (`checks`), and the page says the checks run again only then;
   a turn refused
   earlier that now ends with a Stop hook's message to the developer has a check still failing, and

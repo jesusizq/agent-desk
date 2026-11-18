@@ -2136,16 +2136,51 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
       assert.deepEqual(store.openQuestions("cc-1").map((x) => x.id), [a.id, q.id]);
     });
 
-    it("dismisses what the end replaced once the developer answers on the desk, the round of its checks still unread", async () => {
-      const file = transcript([rows.prompt(wake, at(30)), rows.said("Build done. Shall I fix only two?", at(31))]);
-      const { store, a, b } = await askedTwice(file);
-      // A slow Stop hook still runs: the waiter delivers the answer before it reads the round.
-      const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+    it("keeps what the end replaced held when the developer answers on the desk before its checks are read, until the next end tells how it went", async () => {
+      // An answer delivered says nothing of how the end went: the slow check may still refuse it.
+      for (const refused of [true, false]) {
+        const file = transcript([rows.prompt(wake, at(30)), rows.said("Build done. Shall I fix only two?", at(31))]);
+        const { store, a, b } = await askedTwice(file);
+        // A slow Stop hook still runs: the waiter delivers the answer before it reads the round.
+        const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+        await new Promise((r) => setTimeout(r, 50));
+        store.answerFromDesk(b.id, "only two");
+        assert.equal((await waiting).code, 2);
+        assert.deepEqual([store.getQuestion(a.id)?.status, store.heldQuestions().has(a.id), store.getQuestion(b.id)?.status], ["open", true, "answered"]);
+        // The check refused that end (the next Stop comes with stop_hook_active), or it stood.
+        handleHook(event("Stop", { last_assistant_message: "Fixed only two.", ...(refused ? { stop_hook_active: true } : {}) }), ctx(store));
+        assert.deepEqual([store.getQuestion(a.id)?.status, store.heldQuestions().has(a.id)], [refused ? "open" : "dismissed", false], refused ? "a refused end loses no question" : "an end that stood replaced it");
+      }
+    });
+
+    it("keeps what the end replaced when it is answered on the desk and no waiter can read the checks that refused it", async () => {
+      const { store, a, b } = await askedTwice();
+      // No transcript: the waiter listens for answers only, and the refused end leaves the session waiting.
+      const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 });
       await new Promise((r) => setTimeout(r, 50));
       store.answerFromDesk(b.id, "only two");
       assert.equal((await waiting).code, 2);
-      assert.deepEqual([store.getQuestion(a.id)?.status, store.getQuestion(b.id)?.status], ["dismissed", "answered"]);
-      assert.deepEqual(store.openQuestions("cc-1"), []);
+      assert.equal(store.heldQuestions().has(a.id), true);
+      handleHook(event("Stop", { last_assistant_message: "Fixed only two.", stop_hook_active: true }), ctx(store));
+      assert.deepEqual([store.getQuestion(a.id)?.status, store.heldQuestions().has(a.id)], ["open", false]);
+    });
+
+    it("a permission prompt of the turn a check sent back to work does not stop the waiter reading the refusal", async () => {
+      const file = transcript([rows.prompt(wake, at(30)), rows.said("Build done. Shall I fix only two?", at(31))]);
+      const { store, a, b } = await askedTwice(file);
+      const waiting = waitForAnswer("cc-1", store, { pollMs: 300, armWithinMs: 1000, deadline: Date.now() + 5000 }, { transcript: file, since: new Date(Date.now() - 1).toISOString() });
+      await new Promise((r) => setTimeout(r, 50));
+      // The check refuses the end, and before the waiter's next poll the turn it sent back to work asks a permission, whose hook listens.
+      const now = new Date().toISOString();
+      write(file, [...rows.refusal(REASON, now), rows.summary([REASON], now)]);
+      const permission = store.listen("cc-1", process.ppid);
+      try {
+        assert.deepEqual(await waiting, { code: 0 });
+        assert.equal(store.getSession("cc-1")?.state, "working");
+        assert.deepEqual([store.getQuestion(a.id)?.status, store.heldQuestions().has(a.id), store.getQuestion(b.id)?.status], ["open", false, "dismissed"]);
+      } finally {
+        permission();
+      }
     });
 
     it("dismisses what the end replaced, answering nothing, once the developer types in the terminal, also with no transcript to read", async () => {
@@ -2182,7 +2217,7 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
       handleHook(event("UserPromptSubmit", { prompt: "and the title too" }), ctx(store));
       write(file, [rows.said("Done, title too.", new Date().toISOString())]);
       handleHook(event("Stop", { last_assistant_message: "Done, title too.", transcript_path: file, stop_hook_active: true }), ctx(store));
-      const newer = store.listen("cc-1", process.ppid);
+      const newer = store.listen("cc-1", process.ppid, { turn: true });
       try {
         await new Promise((r) => setTimeout(r, 5));
         const second = new Date().toISOString();

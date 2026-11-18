@@ -1883,9 +1883,9 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
     if (session.state === "waiting") armed = true;
     else if (armed || now() > armBy) return { code: 0 };
     if (!armed) return undefined;
-    // A newer waiter takes over before this one reads a round: one read now may be a newer end's (a
-    // prompt typed mid-turn cuts this end's own from the turn), and the answers are the newer one's.
-    if (store.listeners(sessionId).some((l) => l.pid !== process.pid && l.since > (mine ?? ""))) return { code: 0 };
+    // A newer turn waiter (not a permission or dialog hook) takes over before this one reads a round: one
+    // read now may be a newer end's (a prompt typed mid-turn cuts this end's own), and the answers are its.
+    if (store.listeners(sessionId).some((l) => l.turn && l.pid !== process.pid && l.since > (mine ?? ""))) return { code: 0 };
     if (settle?.() === "reopened") return { code: 0 }; // a Stop hook sent it back to work: the turn goes on
     const answers = store.takeInbox(sessionId, forTheTurn(store));
     if (answers.length > 0) {
@@ -1899,7 +1899,7 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
       return { code: 2, stderr: message };
     }
     return undefined;
-  }, { checks: settle !== undefined });
+  }, { checks: settle !== undefined, turn: true });
   // What went wrong reading the turn's checks is told only where it cannot reach Claude as the developer's answer.
   const problems = settle?.problems ?? [];
   return out.code === 2 || problems.length === 0 ? out : { ...out, stderr: [out.stderr, ...problems.map((p) => `agent-desk: ${p}`)].filter(Boolean).join("\n") };
@@ -1960,9 +1960,10 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
 /**
  * Listens for the session's answers while `step` finds none: each poll it returns the hook's output,
  * or undefined to wait on. Past the deadline, or aborted, the wait ends deciding nothing. `checks`:
- * the listener also reads how the checks of the turn's end ended, until it calls `checksRead`.
+ * the listener also reads how the checks of the turn's end ended, until it calls `checksRead`; `turn`:
+ * it waits on the turn's answers (waitForAnswer), not on a permission prompt or a dialog.
  */
-async function whileListening(sessionId: string, store: Store, options: WaitOptions, step: () => HookOutput | undefined, how: { checks?: boolean } = {}): Promise<HookOutput> {
+async function whileListening(sessionId: string, store: Store, options: WaitOptions, step: () => HookOutput | undefined, how: { checks?: boolean; turn?: boolean } = {}): Promise<HookOutput> {
   const now = options.now ?? Date.now;
   const release = store.listen(sessionId, process.pid, how);
   try {

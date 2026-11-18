@@ -19,7 +19,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `metrics/<session>.json` | what the session's status line shows; every field optional. `suggestion` is a command its adapter suggests now (`reason` `context-full`, its context nearly full); `coldResume` is what its adapter offers for a cold cache: the `command` that starts the work afresh and, when it knows the model's price, `costUsd`, what writing the whole context back to the cache costs. Once `cacheExpiresAt` has passed on a context of 150 000 tokens or half its window, the page suggests that command instead (`reason` `cache-cold`), with that cost, decided as time passes since an idle session's status line is not refreshed. A session that ended or whose process is gone is suggested no command | status-line wrapper, hooks |
 | `notes/<session>/<key>.json` | an adapter's own note on the session, opaque to the desk and validated by the adapter that reads it, under a lock (`Store.updateNote`); archived with the session. The Claude Code adapter notes, per sub-agent (`usage-<agent id>`), how far it read the agent's transcript and what it summed there, so each hook reads only what was written since | adapter hooks |
 | `inbox/<session>/<question>.json` | an answer given on the page, waiting for the session; an unreadable one is set aside as `.<name>.rejected` | the page |
-| `inbox/<session>/.listener.<pid>.json` | a process waiting for that session's answers: `pid`, `start`, `since`, and `checks` while it also reads how the checks of the turn's end ended | the adapter's waiter |
+| `inbox/<session>/.listener.<pid>.json` | a process waiting for that session's answers: `pid`, `start`, `since`, `checks` while it also reads how the checks of the turn's end ended, and `turn` for the waiter of the turn's answers (not a permission prompt's or a dialog's hook) | the adapter's waiter |
 | `.inbox-pending` | present while any inbox holds an entry, so a hook that runs on every tool call tests one file | the store |
 | `messages/<session>/<message>.json` | `ConversationEntry`: each turn's last message, what the session wrote between its tool calls (marked `step`, when its adapter can tell), each answer of the developer (typed or from the desk), and what another session (`from: "peer"`) or one of the session's agents (`from: "agent"`) sent it, with the `sender`'s name when its adapter knows it: never the developer's words, so they answer no question; the latest 500 per session | hooks, the page |
 | `projects/<project>.json` | `ProjectScan`: the project's checkouts (main and git worktrees) with branch, head, size on disk (absent until first measured), whether merged into the main branch (`cherryPicked` when only by patch-equivalent commits), commits ahead and behind, its branch's `upstream` and the commits not pushed to it (`unpushed`), or `noUpstream`, uncommitted files (`dirty`), last commit subject and time, the live processes working in it (`busy`) and what failed reading it (`error`); the branches its agents were said to work on that no checkout has (`branches`: whether each exists, and where it stands); when git was read (`measuredAt`); total and the day's starting total (see Branches) | `agent-desk scan` (started by adapters at the end of a turn and when a sub-agent stops), `agent-desk status`, the `PreCompact` hook |
@@ -296,13 +296,16 @@ that end: the turn went on. An end that asks (a new question, one the session op
 asked with `agent-desk ask`) replaces the items still open from before it only once it stands: until
 then they are marked `replacedAt` and held from Needs you, and they show again if a check refuses
 that end, so a refused end loses none. The end stands when its waiter reads that no check refused
-it, when the developer answers on the desk what the session waits on (a permission prompt or a
-dialog comes mid-turn and settles nothing) or writes in the terminal, or when a new turn ends; it was
-refused when its waiter reads a refusal, or when the next end comes with `stop_hook_active`, which
-also dismisses what the refused end asked. So an end whose checks no waiter reads (no transcript,
+it, when the developer writes in the terminal, or when a new turn ends; it was refused when its
+waiter reads a refusal, or when the next end comes with `stop_hook_active`, which also dismisses
+what the refused end asked. An answer on the desk settles nothing: it reaches the session also while
+a check refuses that end (its waiter delivers it before reading the round, or no waiter can read it),
+and the end that follows tells how it went. So an end whose checks no waiter reads (no transcript,
 one that cannot be read, a waiter not started in time) is settled by the next of those, never left
-with no end. A reading of an end's checks that a newer end of the turn has overtaken records
-nothing, and a waiter reads none once a newer one listens. When a check that refused the turn lets it end without
+with no end, and what it replaced shows again if its session dies without ending. A reading of an
+end's checks settles only what that end replaced, a reading that a newer end of the turn has
+overtaken records nothing, and a waiter reads none once a newer turn waiter listens (a permission
+prompt's or a dialog's hook listening does not count). When a check that refused the turn lets it end without
 passing, the turn's end gets a `waiting` item marked `checkFailing` ("Check failing" on the desk),
 titled with what the check said at that end and with the latest refusal as its context; it is
 answered like any waiting session. A newer failing check replaces it, a question the next end asks
@@ -610,7 +613,7 @@ Tailscale host and login (`SECURITY.md`).
 | Request | Purpose |
 | --- | --- |
 | `GET /` and `/app.js` with the modules it imports (`src/web/*.js`, each listed in `STATIC`), `/theme.js`, `/style.css`, `/favicon.svg` | the page; the secret is in a `<meta>` of `/` |
-| `GET /api/state` | `DeskState`: every record (a closed question without its context; reviews without their saved state), plus `gone`, `listening`, `disk`, `machine` (see Machine health), `planForecasts` (see Plan limits), `branches` (see Branches), `resumes` and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
+| `GET /api/state` | `DeskState`: every record (a closed question without its context; reviews without their saved state), plus `gone`, `listening`, `checking` (sessions whose waiter reads how the checks of their turn's end ended), `disk`, `machine` (see Machine health), `planForecasts` (see Plan limits), `branches` (see Branches), `resumes` and `problems`; gzip-compressed when the browser accepts it; answers 304 while nothing changed |
 | `GET /api/events` | server-sent events: `changed` with the state's version (the ETag of `/api/state`) on opening and at each change, never the state itself; a `: ping` comment every 20 s; 32 streams at most (503 past them); a remote device's stream ends when its unlock does |
 | `GET /api/sessions/<id>/messages` | the session's conversation, oldest first |
 | `POST /api/sessions/<id>/read` | the developer read the session's conversation; its last message stops being new on every device |
