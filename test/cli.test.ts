@@ -283,6 +283,18 @@ describe("cli decisions", () => {
     assert.match(named.stdout, /Answer: Markdown/);
   });
 
+  it("lists what needs the developer with a session file unreadable, and names that file once", async () => {
+    const store = new Store(tempHome());
+    store.upsertSession({ id: "s1", provider: "Test", project: { name: "notes", dir: "/work/notes" }, title: "docs" });
+    store.ask({ sessionId: "s1", kind: "question", text: "Markdown or HTML?" });
+    fs.writeFileSync(store.paths.session("cut"), '{"id":"cut"');
+    const out = await cli(store.paths.home, "needs");
+    assert.equal(out.code, 0, out.stderr);
+    assert.match(out.stdout, /^\d\d:\d\d  notes · docs\n  Markdown or HTML\?\n$/);
+    assert.equal(out.stderr.match(/cut\.json/g)?.length, 1, out.stderr);
+    assert.match(out.stderr, /^agent-desk needs: skipped an unreadable record: /);
+  });
+
   it("explains what is wrong with its arguments and exits 2", async () => {
     const store = sessionOfThisProcess();
     const cases: [string[], RegExp][] = [

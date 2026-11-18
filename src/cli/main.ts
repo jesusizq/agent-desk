@@ -14,7 +14,7 @@ import { sessionListeners, urlPort } from "../core/ports.ts";
 import { ancestors, sessionFinished } from "../core/proc.ts";
 import { locateProject } from "../project/locate.ts";
 import { storeHome } from "../store/paths.ts";
-import { type Decision, type DecisionQuery, Store } from "../store/store.ts";
+import { type Decision, type DecisionQuery, heldOf, Store } from "../store/store.ts";
 import { OPTIONS_LIMITS, readOptionsFile, renderOptionsPage } from "./review-options.ts";
 import { inlinePage } from "./review-page.ts";
 
@@ -269,9 +269,13 @@ const COMMANDS: Record<string, Command> = {
 
   needs(args, store) {
     parse(args, {}, 0);
-    const sessions = new Map(store.listSessions().map((s) => [s.id, s]));
-    const held = store.heldQuestions();
-    const open = store.openQuestions().filter((q) => !held.has(q.id));
+    const problems: string[] = [];
+    const listed = store.listSessions(problems);
+    const asked = store.openQuestions(undefined, problems);
+    for (const problem of problems) process.stderr.write(`agent-desk needs: skipped an unreadable record: ${problem}\n`);
+    const sessions = new Map(listed.map((s) => [s.id, s]));
+    const held = heldOf(listed, asked, Date.now());
+    const open = asked.filter((q) => !held.has(q.id));
     if (open.length === 0) return print("Nothing needs you.");
     for (const q of open) {
       const s = sessions.get(q.sessionId);

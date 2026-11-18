@@ -477,14 +477,18 @@ export function startServer(store: Store, port: number): Promise<Server> {
   const server = createDeskServer(store, port);
   const push = new Push(store.paths.push);
   const checkPush = pushNewQuestions(store, push);
+  let planFailure = "";
   setInterval(() => {
     const failed = (what: string) => (error: unknown) => process.stderr.write(`agent-desk: ${what} failed: ${(error as Error).stack ?? String(error)}\n`);
     checkPush().catch(failed("push"));
     pushEndedUnlocks(push).catch(failed("push of the ended PIN"));
     try {
       recordPlanUsage(store);
+      planFailure = "";
     } catch (error) {
-      failed("recording plan usage")(error);
+      // An unreadable history fails the same way every 5 s until it is fixed: said once, and counted on the page.
+      if ((error as Error).message !== planFailure) failed("recording plan usage")(error);
+      planFailure = (error as Error).message;
     }
   }, PUSH_EVERY_MS).unref();
   archiveOld(store);

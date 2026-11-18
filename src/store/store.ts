@@ -1313,20 +1313,30 @@ export class Store {
     });
   }
 
-  /** How the plan windows have filled, the current one and the last few; an unreadable file only costs the forecast. */
+  /** How the plan windows have filled, the current one and the last few; read for the forecast, an unreadable file only costs it. */
   planHistory(problems?: string[]): PlanHistory {
     try {
-      const raw = readJson(this.paths.plan);
-      return raw === undefined ? {} : readPlanHistory(raw, this.paths.plan);
+      return this.readPlan();
     } catch (error) {
       problems?.push(`${this.paths.plan}: ${(error as Error).message}`);
       return {};
     }
   }
 
+  private readPlan(): PlanHistory {
+    const raw = readJson(this.paths.plan);
+    return raw === undefined ? {} : readPlanHistory(raw, this.paths.plan);
+  }
+
+  /** Throws, and keeps the file as it is, when the history kept so far cannot be read: never overwrites it. */
   recordPlan(windows: PlanWindow[], at: string): void {
     withLock(this.paths.plan, () => {
-      const before = this.planHistory();
+      let before: PlanHistory;
+      try {
+        before = this.readPlan();
+      } catch (error) {
+        throw new Error(`plan usage not recorded: ${(error as Error).message}; the file is kept as it is, fix or remove it`, { cause: error });
+      }
       const after = addSamples(before, windows, at);
       if (JSON.stringify(after) !== JSON.stringify(before)) writeJson(this.paths.plan, after);
     });
@@ -1795,7 +1805,8 @@ export function heldOf(sessions: readonly Session[], questions: readonly Questio
   const held = questions.filter((q) => {
     const s = byId.get(q.sessionId);
     const live = s !== undefined && !sessionFinished(s);
-    return q.status === "open" && q.writing === true && live && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
+    if (q.status !== "open" || !live) return false;
+    return q.writing === true && now - Date.parse(q.askedAt) < WRITING_MAX_MS;
   });
   return new Set(held.map((q) => q.id));
 }

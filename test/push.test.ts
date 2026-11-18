@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createECDH, createPublicKey, verify } from "node:crypto";
+import { createDecipheriv, createECDH, createPublicKey, type ECDH, hkdfSync, verify } from "node:crypto";
 import * as fs from "node:fs";
 import { describe, it } from "node:test";
 import { encrypt, Push, subscription } from "../src/server/push.ts";
@@ -9,10 +9,22 @@ import { addSession, testStore } from "./helpers.ts";
 const b64 = (s: string) => Buffer.from(s, "base64url");
 const APPLE = "https://web.push.apple.com/QGuQyavXutnMHjI_aA";
 
-/** A phone's push keys, as PushSubscription.toJSON() gives them. */
-function phone(endpoint = APPLE) {
-  const ua = createECDH("prime256v1");
+/** A phone's push keys, as PushSubscription.toJSON() gives them; `ua` holds its private key. */
+function phone(endpoint = APPLE, ua = createECDH("prime256v1")) {
   return { endpoint, keys: { p256dh: ua.generateKeys().toString("base64url"), auth: Buffer.alloc(16, 7).toString("base64url") } };
+}
+
+/** What the phone reads of a push: RFC 8291 decryption with its own keys, one aes128gcm record. */
+function opened(body: Buffer, ua: ECDH, auth: Buffer): unknown {
+  const salt = body.subarray(0, 16);
+  const asPublic = body.subarray(21, 21 + body.readUInt8(20));
+  const ikm = Buffer.from(hkdfSync("sha256", ua.computeSecret(asPublic), auth, Buffer.concat([Buffer.from("WebPush: info\0"), ua.getPublicKey(), asPublic]), 32));
+  const key = (info: string, n: number) => Buffer.from(hkdfSync("sha256", ikm, salt, Buffer.from(`Content-Encoding: ${info}\0`), n));
+  const decipher = createDecipheriv("aes-128-gcm", key("aes128gcm", 16), key("nonce", 12));
+  const sealed = body.subarray(21 + asPublic.length);
+  decipher.setAuthTag(sealed.subarray(-16));
+  const plain = Buffer.concat([decipher.update(sealed.subarray(0, -16)), decipher.final()]);
+  return JSON.parse(plain.subarray(0, plain.lastIndexOf(2)).toString());
 }
 
 describe("push", () => {
@@ -145,5 +157,24 @@ describe("push", () => {
     await check();
     assert.equal(bodies.length, 2, "told once it is complete");
     assert.equal(store.heldQuestions().has(writing.id), false);
+  });
+
+  it("starts, and keeps telling the phones how many questions wait, while a session file is unreadable", async () => {
+    const store = testStore();
+    addSession(store);
+    fs.writeFileSync(store.paths.session("cut"), '{"id":"cut"');
+    const push = new Push(store.paths.push);
+    const ua = createECDH("prime256v1");
+    const device = phone(APPLE, ua);
+    push.subscribe(subscription(device), Date.now() + 3600_000);
+    const payloads: unknown[] = [];
+    const post = (async (_url: string, init: RequestInit) => {
+      payloads.push(opened(init.body as Buffer, ua, b64(device.keys.auth)));
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+    const check = pushNewQuestions(store, push, post);
+    store.ask({ sessionId: "s1", kind: "question", text: "Ready?" });
+    await check();
+    assert.deepEqual(payloads, [{ count: 1 }]);
   });
 });

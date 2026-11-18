@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { procInfo } from "../src/core/proc.ts";
 import { Push } from "../src/server/push.ts";
-import { createDeskServer, deskState, diskWarnings, pushNewQuestions, recordPlanUsage } from "../src/server/server.ts";
+import { createDeskServer, deskState, diskWarnings, recordPlanUsage } from "../src/server/server.ts";
 import type { Session } from "../src/core/model.ts";
 import type { Store } from "../src/store/store.ts";
 import { projectId } from "../src/project/scan.ts";
@@ -549,14 +549,24 @@ describe("unreadable session files", () => {
     }
   });
 
-  it("keeps telling the phones about new questions while a session file is unreadable", async () => {
+  it("answers the state with a session's inbox that cannot be listed named in the problems", async () => {
     const own = testStore();
     addSession(own, "s1");
-    const push = new Push(own.paths.push);
-    const check = pushNewQuestions(own, push, () => Promise.reject(new Error("no subscription, no send")));
-    fs.writeFileSync(own.paths.session("cut"), '{"id":"cut"');
-    own.ask({ sessionId: "s1", kind: "question", text: "Ready?" });
-    await check();
+    addSession(own, "s2");
+    fs.mkdirSync(own.paths.inboxDir, { recursive: true });
+    fs.writeFileSync(own.paths.sessionInbox("s1"), "not a folder");
+    const desk = await serve(own);
+    try {
+      const res = await fetch(desk.base + "/api/state");
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as { sessions: { id: string }[]; problems: string[] };
+      assert.deepEqual(data.sessions.map((s) => s.id).sort(), ["s1", "s2"]);
+      assert.ok(data.problems.some((p) => /listeners of session s1 .*ENOTDIR/.test(p)), data.problems.join(" | "));
+    } finally {
+      await desk.close();
+    }
+    assert.throws(() => own.listeners("s1"), /ENOTDIR/, "without problems to collect into, the caller is told");
+    assert.deepEqual(own.listeners("s2"), [], "a session without an inbox has no listener");
   });
 
   it("keeps recording the plan's usage while a metrics file is unreadable", () => {
@@ -566,6 +576,18 @@ describe("unreadable session files", () => {
     fs.writeFileSync(own.paths.metrics("cut"), '{"sessionId":"cut","planW');
     recordPlanUsage(own);
     assert.deepEqual(Object.keys(own.planHistory()), ["5 h"], "the readable report is recorded");
+  });
+
+  it("keeps a plan history it cannot read as it is, instead of overwriting it with the new samples", () => {
+    const own = testStore();
+    addSession(own, "s1");
+    own.mergeMetrics({ sessionId: "s1", planWindows: [{ label: "5 h", percent: 42 }] });
+    for (const broken of ['{"5 h":[{"samples":[{"at":"2026-01-01T00:00:00Z","percent":', JSON.stringify({ "5 h": [{ samples: "none" }] })]) {
+      fs.writeFileSync(own.paths.plan, broken);
+      assert.throws(() => recordPlanUsage(own), /plan usage not recorded: .*plan\.json.*; the file is kept as it is, fix or remove it/);
+      assert.equal(fs.readFileSync(own.paths.plan, "utf8"), broken, "the history is never overwritten");
+      assert.ok(deskState(own, new Date(), QUIET_MACHINE).problems.some((p) => p.includes("plan.json")), "the page counts it");
+    }
   });
 });
 
