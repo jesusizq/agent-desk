@@ -4,7 +4,7 @@ import { dialog, h, icon, md } from "./dom.js";
 import { TEXT } from "./text.js";
 import { stamp } from "./format.js";
 import { badge, dialogHead, dot, goLink, localLink, where } from "./pieces.js";
-import { imageUrl, post, postJson, refresh, run } from "./server.js";
+import { imageUrl, postJson, refresh, run } from "./server.js";
 import { isNew, S } from "./state.js";
 import { zoom } from "./zoom.js";
 
@@ -58,7 +58,7 @@ export function openResult(r, { markSeen = true } = {}) {
   const d = dialog("result");
   const s = S(r.sessionId);
   // Only a click marks a result seen: a link from elsewhere (#r=…) must not write anything.
-  if (markSeen && isNew(r)) run(post(`/api/results/${r.id}/seen`));
+  if (markSeen && isNew(r)) run(markResultsSeen([r])); // one the store no longer holds is as good as seen
   const imgs = r.images.map((i) => ({ src: imageUrl(i.id), cap: i.caption ?? "" }));
   const before = r.compare && imgs[r.images.findIndex((i) => i.id === r.compare?.before)];
   const after = r.compare && imgs[r.images.findIndex((i) => i.id === r.compare?.after)];

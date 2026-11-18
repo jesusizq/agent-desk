@@ -198,7 +198,7 @@ function resultTile(r) {
 /** The × that marks a result seen without opening it, beside what opens it (style.css shows it on hover, always on touch). @param {Result} r */
 function dismissButton(r) {
   const label = TEXT.dismissResult;
-  return h("button", { class: "rdismiss icon-btn", "aria-label": label, title: label, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(post(`/api/results/${r.id}/seen`))) }, icon("x"));
+  return h("button", { class: "rdismiss icon-btn", "aria-label": label, title: label, onclick: (/** @type {Event} */ e) => (e.stopPropagation(), run(markResultsSeen([r]))) }, icon("x"));
 }
 
 /**

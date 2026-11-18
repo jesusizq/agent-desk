@@ -1163,6 +1163,30 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.deepEqual(page.errors, [], "the page reports no errors");
   });
 
+  it("takes the × of a result the store no longer holds as done, with no error", async () => {
+    const own = new Store(path.join(tempHome(), "store"));
+    own.upsertSession({ id: "gone-result", provider: "Test", project: { name: "alpha", dir: "/home/demo/Projects/alpha" }, title: "work in alpha", state: "working" });
+    const r = own.addResult({ sessionId: "gone-result", title: "alpha finished" });
+    const served = await serve(own);
+    const page = await browser.newPage(1400, 900);
+    try {
+      await page.goto(served.base + "/");
+      const tile = `document.querySelector('[data-key="r-${r.id}"]')`;
+      await page.waitFor(`!!${tile}?.querySelector('.rdismiss')`);
+      // Held before the store loses it: the click comes from a tile still drawn when it went.
+      await page.eval(`window.dismiss = ${tile}.querySelector('.rdismiss')`);
+      fs.rmSync(own.paths.result(r.id));
+      await page.eval("window.dismiss.click()");
+      await page.waitFor(`!${tile}`);
+      await new Promise((done) => setTimeout(done, 300));
+      assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.toast')].map((t) => t.textContent)"), [], "no toast says it is missing");
+    } finally {
+      await page.close();
+      await served.close();
+    }
+    assert.deepEqual(page.errors, [], "the page reports no errors");
+  });
+
   it("marks a session unread back to the list, and opening it reads it again", async () => {
     store.upsertSession({ id: "come-back", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "come back later" });
     store.updateSession("come-back", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Here is the long report", at: new Date().toISOString() } }));
