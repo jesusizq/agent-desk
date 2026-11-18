@@ -432,15 +432,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
   });
 
   it("says which branches landed by cherry-pick and what is not pushed, and copies commands that remove only what landed", async () => {
-    const { main, wt } = landedRepo();
+    const { root, main, wt } = landedRepo();
+    const detached = path.join(root, "shop-detached");
+    gitIn(main, "worktree", "add", "-q", "--detach", detached, "agent/merged");
     const scan = await scanProject(main, undefined, new Date(), { sizes: false });
     const demo = store.listProjectScans().find((p) => p.name === "web-shop");
     assert.ok(demo);
     store.putProjectScan({ ...scan, id: demo.id });
     store.upsertSession({ id: "landed", provider: "Test", project: { name: "shop", dir: main }, title: "landed work", state: "waiting" });
     store.upsertAgent("landed", "picker", { goal: "Pick me", worktree: wt.picked, state: "done" });
-    // The branch moves after the scan: the copied command must not delete what it did not check.
-    gitIn(wt.moved, "commit", "-q", "--allow-empty", "-m", "after the scan");
+    // Checkouts move after the scan: the copied commands must remove nothing they did not check.
+    for (const moved of [wt.moved, wt.merged, detached]) gitIn(moved, "commit", "-q", "--allow-empty", "-m", "after the scan");
     try {
       await browser.send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
       const page = await open();
@@ -462,18 +464,22 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.match(await page.eval<string>("[...document.querySelectorAll('#session .wt-list .arow')].find((r) => r.textContent.startsWith('agent/picked')).textContent"), /picked · landed by cherry-pick/);
       await page.click("#session .wt-actions button");
       const commands = (await page.eval<string>("navigator.clipboard.readText()")).split("\n");
-      assert.equal(commands.length, 4, "merged, picked, dirty and moved; not the one partly picked");
+      assert.equal(commands.length, 5, "merged, picked, dirty, moved and detached; not the one partly picked");
       const failed = commands.filter((c) => {
         try {
           execFileSync("sh", ["-c", c], { stdio: "pipe" });
           return false;
         } catch {
-          return true; // expected for the dirty checkout and the moved branch: checked below
+          return true; // expected for the dirty checkout and the three that moved: checked below
         }
       });
-      assert.equal(failed.length, 2);
-      assert.deepEqual(gitIn(main, "branch", "--format=%(refname:short)").trim().split("\n").sort(), ["agent/dirty", "agent/moved", "agent/partly", "main"]);
-      assert.deepEqual(gitIn(main, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)).sort(), [main, wt.dirty, wt.partly].sort(), "the dirty checkout is kept; the moved one goes, its branch kept");
+      assert.equal(failed.length, 4);
+      assert.deepEqual(gitIn(main, "branch", "--format=%(refname:short)").trim().split("\n").sort(), ["agent/dirty", "agent/merged", "agent/moved", "agent/partly", "main"]);
+      assert.deepEqual(
+        gitIn(main, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice(9)).sort(),
+        [main, wt.dirty, wt.partly, wt.moved, wt.merged, detached].sort(),
+        "only the picked checkout goes: the dirty one is kept, and so are those that moved since the scan, with their branches",
+      );
       await page.press("Escape");
     } finally {
       store.putProjectScan(demo);

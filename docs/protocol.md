@@ -201,11 +201,11 @@ whose branch or checkout is `missing` was integrated and deleted: it is only cou
 "branch not found" shows only for an agent still open. The page shows `checkedAt` as the rows'
 age.
 
-The project's worktrees dialog copies, never runs, one line per merged checkout: `git worktree
-remove` (which refuses a checkout with changes), then, only once it succeeded, `git branch -d` for a
-branch merged as an ancestor, or for one landed by cherry-pick `git branch -D` behind a check that
-the branch still points at the head the scan found landed, so commits added since are never
-deleted.
+The project's worktrees dialog copies, never runs, one line per merged checkout: first a check that
+its branch (a detached checkout: its own `HEAD`) still points at the head the scan found merged,
+then `git worktree remove` (which refuses a checkout with changes), then `git branch -d` for a
+branch merged as an ancestor, or `git branch -D` for one landed by cherry-pick, each step only once
+the one before succeeded: a checkout or branch that moved since the scan is left whole.
 
 ## Machine health
 
