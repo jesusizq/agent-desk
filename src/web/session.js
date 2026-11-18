@@ -326,7 +326,9 @@ export function chat(s) {
 function workingNow(s, list) {
   const agents = sessionAgents(s.id).filter((a) => a.state !== "done");
   const turn = s.state === "working";
-  if (!turn && !agents.some((a) => a.state === "working" || a.state === "waiting")) return null;
+  // A turn's end a check refused before waits while its checks run again: the turn is not over.
+  const checking = !turn && !!s.checkReopened && isLive(s);
+  if (!turn && !checking && !agents.some((a) => a.state === "working" || a.state === "waiting")) return null;
   const since = list.findLast((m) => m.from === "developer")?.at;
   return h(
     "div",
@@ -336,11 +338,11 @@ function workingNow(s, list) {
       { class: "msg-meta" },
       h("span", { class: "live" }, dot("working")),
       " ",
-      turn ? TEXT.conversation.workingFor(since ? ago(since) : "") : TEXT.conversation.agentsAtWork(agents.length),
+      turn ? TEXT.conversation.workingFor(since ? ago(since) : "") : checking ? TEXT.conversation.checking : TEXT.conversation.agentsAtWork(agents.length),
       sessionQuiet(s) ? h("span", { class: "astuck" }, ` · ${TEXT.quietFor(sessionQuiet(s))}`) : null,
     ),
     turn && s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
-    turn && s.checkReopened ? h("div", { class: "adoing", title: s.checkReopened.reason }, [TEXT.checkReopened(s.checkReopened.times), firstLine(s.checkReopened.reason)].filter(Boolean).join(" · ")) : null,
+    (turn || checking) && s.checkReopened ? h("div", { class: "adoing", title: s.checkReopened.reason }, [TEXT.checkReopened(s.checkReopened.times), firstLine(s.checkReopened.reason)].filter(Boolean).join(" · ")) : null,
     agents.length
       ? h(
           "details",

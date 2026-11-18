@@ -84,13 +84,14 @@ export type Snapshot = {
  * and send it back to work) ended it, as its adapter read it: one refused it (`reopened`); one that
  * had refused it let the turn end without passing (`failing`, with what it said at that end, if
  * anything); one that had refused it let the turn end silently, as when it passes (`passed`); or none
- * refused the turn (`unrefused`), which does not tell a check that passed from one that never ran.
+ * refused the turn (`unrefused`, with what a check said at its end, if anything), which does not tell
+ * a check that passed from one that never ran, or from one that gave up at once.
  */
 export type TurnCheck =
   | { outcome: "reopened"; reopened: CheckReopened }
   | { outcome: "failing"; reopened: CheckReopened; said?: string }
   | { outcome: "passed" }
-  | { outcome: "unrefused" };
+  | { outcome: "unrefused"; said?: string };
 
 /** A change to a review's saved state from its page: localStorage operations, in order, as the page made them. */
 export type ReviewOp = { op: "set"; key: string; value: string } | { op: "remove"; key: string } | { op: "clear" };
@@ -425,19 +426,28 @@ export class Store {
 
   /**
    * Records how the checks ended the session's latest turn (TurnCheck). Reopened, the session works
-   * again with the refusals counted on it. Failing, the turn is over: the count goes, and the
-   * developer gets a waiting item saying the check still fails (replacing one still open), answered
-   * like any waiting session. Passed, what a failing check left is gone: the count, and an item asked
-   * before this turn ended. Unrefused, only the count goes: a turn no check refused may be one where
-   * the check never ran, so an item stays until the developer answers or a newer failure replaces it.
-   * Returns the item asked, if any.
+   * again with the refusals counted on it, and a waiting item that end asked goes: the turn goes on.
+   * Failing, the turn is over: the count goes, and the developer gets a waiting item saying the check
+   * still fails (replacing one still open), answered like any waiting session. Passed, what a failing
+   * check left is gone: the count, and an item asked before this turn ended. Unrefused, only the count
+   * goes: a turn no check refused may be one where the check never ran, so an item stays until the
+   * developer answers or a newer failure replaces it, with what a check said at this end, if anything,
+   * as its text. Returns the item asked, if any.
    */
   recordTurnCheck(sessionId: string, check: TurnCheck, problems?: string[]): Question | undefined {
     const session = this.updateSession(sessionId, ({ checkReopened: _reopened, ...s }) =>
       check.outcome === "reopened" && s.state !== "ended" ? { ...s, state: "working", checkReopened: check.reopened } : s,
     );
-    if (check.outcome === "reopened" || check.outcome === "unrefused") return undefined;
     const ended = session.turnEndedAt ?? session.updatedAt;
+    if (check.outcome === "reopened") {
+      if (session.state !== "ended") this.closeOpen(sessionId, compact({ kinds: ["waiting"] as const, which: (q: Question) => !q.checkFailing && q.setAside === undefined && q.askedAt >= ended, status: "dismissed" as const, problems }));
+      return undefined;
+    }
+    if (check.outcome === "unrefused") {
+      const said = check.said?.trim();
+      if (said) for (const q of this.openQuestions(sessionId, problems)) if (q.checkFailing) this.changeQuestion(q.id, (cur) => (cur.status === "open" ? { ...cur, text: said } : cur));
+      return undefined;
+    }
     const stale = (q: Question) => q.checkFailing === true && (check.outcome === "failing" || q.askedAt < ended);
     this.closeOpen(sessionId, compact({ which: stale, status: "dismissed" as const, problems }));
     if (check.outcome === "passed" || session.state === "ended") return undefined;

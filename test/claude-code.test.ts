@@ -1856,7 +1856,12 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     const failing = turnCheck([refused, { refusals: [], said: [GAVE_UP], finishedAt: at(30) }], at(25));
     assert.deepEqual(failing, { outcome: "failing", reopened: { times: 1, reason: checkExcerpt(REASON), at: at(12) }, said: GAVE_UP });
     assert.deepEqual(turnCheck([refused, { refusals: [], said: [], finishedAt: at(30) }], at(25)), { outcome: "passed" }, "a silent end reads as passing");
-    assert.deepEqual(turnCheck([{ refusals: [], said: ["Formatted 3 files."], finishedAt: at(30) }], at(25)), { outcome: "unrefused" }, "a message from a check that never refused is no failure");
+    assert.deepEqual(turnCheck([{ refusals: [], said: ["Formatted 3 files."], finishedAt: at(30) }], at(25)), { outcome: "unrefused", said: "Formatted 3 files." }, "a message from a check that never refused is no failure");
+    // The earlier refusals out of the transcript's tail: the count the session kept stands for them.
+    const counted = { times: 3, reason: "tests failed", at: at(12) };
+    assert.deepEqual(turnCheck([{ refusals: [], said: [GAVE_UP], finishedAt: at(30) }], at(25), counted), { outcome: "failing", reopened: counted, said: GAVE_UP });
+    assert.deepEqual(turnCheck([{ refusals: [REASON], said: [], finishedAt: at(30) }], at(25), counted), { outcome: "reopened", reopened: { times: 4, reason: checkExcerpt(REASON), at: at(30) } });
+    assert.deepEqual(turnCheck([{ refusals: [], said: [], finishedAt: at(30) }], at(25), counted), { outcome: "passed" });
     assert.deepEqual(turnCheck([{ refusals: [], said: [], finishedAt: at(30) }], at(25)), { outcome: "unrefused" }, "an end no check refused may be one it skipped, not a pass");
     const long = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
     assert.equal(checkExcerpt(long).split("\n").length, 12, "only the refusal's first lines are kept");
@@ -1871,6 +1876,43 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
     assert.equal(store.getSession("cc-1")?.checkReopened, undefined);
     handleHook(event("Stop", { last_assistant_message: "Left it.", transcript_path: file, stop_hook_active: false }), ctx(store));
     assert.equal(store.getSession("cc-1")?.checkReopened, undefined, "an end no Stop hook continued has no refusals to count");
+    // A background task's notification starts a new turn too.
+    store.updateSession("cc-1", (s) => ({ ...s, checkReopened: { times: 3, reason: REASON, at: at(12) } }));
+    handleHook(event("UserPromptSubmit", { prompt: "<task-notification>build done</task-notification>" }), ctx(store));
+    assert.deepEqual([store.getSession("cc-1")?.state, store.getSession("cc-1")?.checkReopened], ["working", undefined]);
+  });
+
+  it("keeps the count of a turn's refusals the transcript's tail no longer holds", () => {
+    const store = testStore();
+    // A long fix loop: the tail read starts after the earlier refusals.
+    const file = transcript([rows.said("Fixed the type.", at(40))]);
+    handleHook(event("UserPromptSubmit", { prompt: "fix the table" }), ctx(store));
+    store.recordTurnCheck("cc-1", { outcome: "reopened", reopened: { times: 2, reason: checkExcerpt(REASON), at: at(30) } });
+    handleHook(event("Stop", { last_assistant_message: "Fixed the type.", transcript_path: file, stop_hook_active: true }), ctx(store));
+    assert.deepEqual(store.getSession("cc-1")?.checkReopened, { times: 2, reason: checkExcerpt(REASON), at: at(30) });
+    // Neither the session nor the tail holds it: Claude Code's word that a Stop hook refused stands for one.
+    store.updateSession("cc-1", ({ checkReopened: _gone, ...s }) => s);
+    handleHook(event("Stop", { last_assistant_message: "Fixed the type.", transcript_path: file, stop_hook_active: true }), ctx(store));
+    assert.equal(store.getSession("cc-1")?.checkReopened?.times, 1);
+    assert.match(store.getSession("cc-1")?.checkReopened?.reason ?? "", /no longer in the part of the transcript read/);
+  });
+
+  it("a waiting item an end asked goes when a check refuses that end, and a later message of a check renames the failing one", async () => {
+    // On the real clock: the hook stamps the end of the turn with it, the store the item it asks.
+    const { Store } = await import("../src/store/store.ts");
+    const store = new Store(tempHome());
+    handleHook(event("Stop", { last_assistant_message: "Done." }), ctx(store));
+    const failing = store.recordTurnCheck("cc-1", { outcome: "failing", reopened: { times: 3, reason: REASON, at: at(12) }, said: GAVE_UP });
+    handleHook(event("Stop", { last_assistant_message: "Fixed. Shall I also migrate the old rows?" }), ctx(store));
+    const asked = store.openQuestions("cc-1").find((q) => !q.checkFailing);
+    assert.ok(asked);
+    store.recordTurnCheck("cc-1", { outcome: "reopened", reopened: { times: 1, reason: REASON, at: at(40) } });
+    assert.equal(store.getQuestion(asked.id)?.status, "dismissed", "the turn went on: its end asked nothing yet");
+    assert.equal(store.getQuestion(failing?.id ?? "")?.status, "open");
+    store.recordTurnCheck("cc-1", { outcome: "unrefused", said: "ahorro: verify failed again; I am not blocking." });
+    assert.equal(store.getQuestion(failing?.id ?? "")?.text, "ahorro: verify failed again; I am not blocking.");
+    store.recordTurnCheck("cc-1", { outcome: "unrefused" });
+    assert.equal(store.getQuestion(failing?.id ?? "")?.text, "ahorro: verify failed again; I am not blocking.", "a silent end leaves it as it was");
   });
 
   it("the waiter sees a Stop hook refuse the end and marks the session working again", async () => {

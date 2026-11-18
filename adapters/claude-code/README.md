@@ -130,12 +130,18 @@ last one, from where the adapter's note on the session (`notes/<session>/usage-<
   from 2.1.327's code: no Stop hook on this machine has shown one yet), and, once every synchronous
   one has finished, one `stop_hook_summary` row; a refused end goes on in the same turn, with
   `stop_hook_active: true` at its next `Stop`. The `Stop` hook then counts the turn's refusals
-  (`checkReopened`), and the `wait` it starts reads the first summary written after the waiter
-  started: a refusal there marks the session working again; a turn refused earlier that now ends
-  with a Stop hook's message to the developer has a check still failing, and gets the `checkFailing`
-  item; a turn refused earlier that now ends silently has passed and clears both; a turn no Stop
-  hook refused clears only the count, since it may be one the check skipped (no edits). A check that
-  gives up without a message cannot be told from one that passed.
+  (`checkReopened`): the larger of the count already on the session and the refused rounds in the
+  transcript's last 1 MB, or one when `stop_hook_active` is the only trace left. The `wait` it starts
+  reads the first summary written after the waiter started, and only that round, adding the earlier
+  refusals counted on the session: a refusal there marks the session working again (and dismisses a
+  waiting item that end asked); a turn refused earlier that now ends with a Stop hook's message to
+  the developer has a check still failing, and gets the `checkFailing` item; a turn refused earlier
+  that now ends silently has passed and clears both; a turn no Stop hook refused clears only the
+  count, since it may be one the check skipped (no edits), and a message a Stop hook showed at its
+  end becomes the open `checkFailing` item's title. A check that gives up without a message cannot be
+  told from one that passed. Nor can a message from the check that refused be told from another Stop
+  hook's: a `hook_system_message` names no command, so a Stop hook that shows a routine message at
+  every end makes any end after a refusal read as failing.
 - Finding the session's process and its terminal reads `/proc`, so it works on Linux only.
 - A session in a worktree of a bare repository, or of one whose git folder lives elsewhere
   (`--separate-git-dir`), stays a project of its own: there is no main checkout to group it under.

@@ -86,8 +86,9 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       if (sent || fromClaudeCode(prompt)) {
         // A background task's notification, another session's message or an agent's report wakes the
         // session like a prompt: it works again, but nothing was said by the developer and nothing they
-        // were asked is answered. Only messages join the conversation, as their sender's.
-        store.updateSession(sid, (s) => ({ ...s, state: "working", activityAt: new Date().toISOString() }));
+        // were asked is answered. Only messages join the conversation, as their sender's. A new turn
+        // starts, with no refusals of its end yet.
+        store.updateSession(sid, ({ checkReopened: _reopened, ...s }) => ({ ...s, state: "working", activityAt: new Date().toISOString() }));
         if (sent) store.addMessage(compact({ sessionId: sid, from: sent.from, sender: senderOf(store, sid, sent), text: sent.text }));
         settleAgents(input, ctx, problems);
         return { code: 0 };
@@ -287,12 +288,15 @@ function endTurn(input: Common, ctx: HookContext, problems: string[]): void {
   syncPermissionMarker(store, problems);
   const message = text(input.raw.last_assistant_message ?? "", "hook input.last_assistant_message", 1_000_000).trim();
   const at = new Date().toISOString();
-  const checkReopened = optional(input.raw.stop_hook_active, "hook input.stop_hook_active", bool) === true ? reopenedBy(stopRounds(transcriptOf(input))) : undefined;
+  // Continued by a Stop hook's refusal: the refusals so far are those counted on the session, or read
+  // from the transcript's tail, whichever saw more (a long fix loop pushes the early ones out of it).
+  const continued = optional(input.raw.stop_hook_active, "hook input.stop_hook_active", bool) === true;
+  const seen = continued ? reopenedBy(stopRounds(transcriptOf(input))) : undefined;
   // The turn is over: what its calls were doing, failing in a row or waiting on, ends with it.
-  store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, checkReopened: _reopened, ...s }) =>
+  store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, checkReopened: counted, ...s }) =>
     compact({
       ...s,
-      checkReopened,
+      checkReopened: continued ? (latestOf(seen, counted) ?? { times: 1, reason: REASON_UNSEEN, at }) : undefined,
       state: "waiting" as const,
       activity: undefined,
       activityIsCall: undefined,
@@ -409,20 +413,33 @@ function reopenedBy(rounds: StopRound[]): CheckReopened | undefined {
   return last ? { times: refused.length, reason: checkExcerpt(last.refusals.join("\n\n")), at: last.finishedAt } : undefined;
 }
 
+/** A turn's refusals as two readings of them saw them: the larger count, with the later refusal. */
+function latestOf(a: CheckReopened | undefined, b: CheckReopened | undefined): CheckReopened | undefined {
+  if (!a || !b) return a ?? b;
+  const later = b.at > a.at ? b : a;
+  return { ...later, times: Math.max(a.times, b.times) };
+}
+
+/** The reason kept for a refusal known only from `stop_hook_active`, its rows past the transcript's tail read. */
+const REASON_UNSEEN = "A Stop hook refused an earlier end of this turn; its reason is no longer in the part of the transcript read.";
+
 /**
  * How the Stop hooks of the turn's end that started after `since` ended it; undefined while they
- * still run. A Stop hook that refused an earlier end of the turn and now lets it end with a message to
- * the developer has given up on it: the check still fails. Letting it end silently reads as passing
- * (a check that gives up without a word cannot be told from one that passed). A turn no Stop hook
- * refused says nothing either way: a check that skips a turn (nothing edited) ends it the same way.
+ * still run. `before` is what the session counted of the turn's earlier refusals, which the
+ * transcript's tail may have lost. A Stop hook that refused an earlier end of the turn and now lets it
+ * end with a message to the developer has given up on it: the check still fails. Letting it end
+ * silently reads as passing (a check that gives up without a word cannot be told from one that
+ * passed). A turn no Stop hook refused says nothing either way: a check that skips a turn (nothing
+ * edited) ends it the same way. Which Stop hook wrote a message is not recorded, so any one's counts.
  */
-export function turnCheck(rounds: StopRound[], since: string): TurnCheck | undefined {
+export function turnCheck(rounds: StopRound[], since: string, before?: CheckReopened): TurnCheck | undefined {
   const last = rounds.at(-1);
   if (!last || last.finishedAt <= since) return undefined;
-  const reopened = reopenedBy(rounds);
-  if (!reopened) return { outcome: "unrefused" };
-  if (last.refusals.length > 0) return { outcome: "reopened", reopened };
-  return last.said.length > 0 ? { outcome: "failing", reopened, said: last.said.join("\n") } : { outcome: "passed" };
+  const earlier = latestOf(reopenedBy(rounds.slice(0, -1)), before);
+  if (last.refusals.length > 0) return { outcome: "reopened", reopened: { times: (earlier?.times ?? 0) + 1, reason: checkExcerpt(last.refusals.join("\n\n")), at: last.finishedAt } };
+  const said = last.said.length > 0 ? last.said.join("\n") : undefined;
+  if (!earlier) return compact({ outcome: "unrefused" as const, said });
+  return said ? { outcome: "failing", reopened: earlier, said } : { outcome: "passed" };
 }
 
 /** A question without options: the sentences that ask; what the paragraph says around them reads first under it. */
@@ -1854,24 +1871,29 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
   let done = false;
   const step = () => {
     if (done) return undefined;
-    let check: TurnCheck | undefined;
+    let rounds: StopRound[];
     try {
       const now = fs.statSync(end.transcript).size;
       if (now === size) return undefined;
       size = now;
-      check = turnCheck(stopRounds(end.transcript), end.since);
+      rounds = stopRounds(end.transcript);
     } catch (error) {
       if (isCode(error, "ENOENT")) return undefined; // not written yet
       done = true;
       problems.push(`could not read how the checks ended the turn from ${end.transcript}: ${(error as Error).message}`);
       return undefined;
     }
-    if (!check) return undefined;
+    if (turnCheck(rounds, end.since) === undefined) return undefined;
     done = true;
+    let check: TurnCheck | undefined;
     try {
+      // This end's Stop hooks have finished, the desk's own among them: the session holds the
+      // turn's earlier refusals it counted.
+      check = turnCheck(rounds, end.since, store.getSession(sessionId)?.checkReopened);
+      if (!check) return undefined;
       store.recordTurnCheck(sessionId, check, problems);
     } catch (error) {
-      problems.push(`could not record that the checks ${check.outcome === "reopened" ? "reopened" : "ended"} the turn: ${(error as Error).message}`);
+      problems.push(`could not record how the checks ended the turn${check ? ` (${check.outcome})` : ""}: ${(error as Error).message}`);
       return undefined;
     }
     return check.outcome;

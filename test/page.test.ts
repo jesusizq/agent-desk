@@ -191,6 +191,12 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       const row = "[...document.querySelectorAll('.qrow')].find((r) => r.textContent.includes('verify keeps failing'))";
       await page.waitFor(row);
       assert.equal(await page.eval<string>(`${row}.querySelector('.badge').textContent`), "Check failing");
+      // Its next end waits while the checks run on it again: the panel still says the turn goes on.
+      store.updateSession("checked", (s) => ({ ...s, state: "waiting", turnEndedAt: new Date().toISOString() }));
+      await page.click(".scard", "reopened by its check");
+      await page.waitFor("document.querySelector('#session .working-now')?.textContent.includes('Its checks run again')");
+      assert.match(await page.eval<string>("document.querySelector('#session .working-now').textContent"), /Its checks run again.*A check sent it back to work 2 times · verify failed/);
+      await page.press("Escape");
     } finally {
       store.dismiss(q.id);
       for (const id of ["checked", "gave-up"]) {

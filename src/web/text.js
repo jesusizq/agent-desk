@@ -211,6 +211,7 @@ export const TEXT = {
     workingFor: (t) => (t && t !== NOW ? `Working for ${t}` : "Working"),
     /** @param {number} n */
     agentsAtWork: (n) => `Its turn ended; ${n === 1 ? "1 agent is" : `${n} agents are`} still at work`,
+    checking: "Its checks run again on the end of its turn",
     /** Its agents not finished, of which `failed` failed. @param {number} n @param {number} failed */
     agentsLeft: (n, failed) => [n - failed && `${n - failed} still running`, failed && `${failed} failed`].filter(Boolean).join(" · "),
     you: "You",
