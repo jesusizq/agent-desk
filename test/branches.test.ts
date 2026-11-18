@@ -120,6 +120,30 @@ describe("git state of a project's checkouts", () => {
     assert.match(line(wt.partly), / · 1 ahead, 8 behind · clean · /);
   });
 
+  it("takes neither an empty commit, which matches any other empty one, nor a merge as landed by cherry-pick", async () => {
+    const { main } = landedRepo();
+    gitIn(main, "commit", "-q", "--allow-empty", "-m", "an empty one on main");
+    gitIn(main, "branch", "agent/empty", "main~1");
+    gitIn(main, "branch", "agent/mixed", "agent/picked");
+    gitIn(main, "branch", "agent/merges", "main~2");
+    const made: [string, string[]][] = [["agent/empty", []], ["agent/mixed", []], ["agent/merges", ["merge", "-q", "--no-ff", "-m", "Merge main~1", "main~1"]]];
+    for (const [branch, args] of made) {
+      const at = path.join(main, ".claude", "worktrees", branch.replace("/", "-"));
+      gitIn(main, "worktree", "add", "-q", at, branch);
+      if (args.length) gitIn(at, ...args);
+      else gitIn(at, "commit", "-q", "--allow-empty", "-m", `an empty one on ${branch}`);
+    }
+    const scan = await scanProject(main, undefined, new Date(), { sizes: false });
+    const state = (b: string) => {
+      const w = scan.worktrees.find((x) => x.branch === b);
+      return [w?.merged, w?.cherryPicked, w?.ahead];
+    };
+    assert.deepEqual(state("agent/empty"), [false, undefined, 1], "its empty commit could be anything's");
+    assert.deepEqual(state("agent/mixed"), [false, undefined, 1], "picked commits and an empty one: the empty one is still ahead");
+    assert.deepEqual(state("agent/merges"), [false, undefined, 1], "only a merge of its own: nothing was cherry-picked");
+    assert.deepEqual(state("agent/picked"), [true, true, 0], "picked commits alone still landed");
+  });
+
   it("tells how many commits each checkout has not pushed to its upstream, and when it has none or it is gone", async () => {
     const { root, main, wt } = landedRepo();
     const remote = path.join(root, "remote.git");
@@ -271,6 +295,27 @@ describe("git state of a project's checkouts", () => {
         assert.equal(w.subject !== undefined, true, "what was read before the timeout is kept");
       }
       assert.equal(scan.problems.length, scan.worktrees.length, "every failure is reported");
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+
+  it("says once that the upstreams could not be read, and keeps where each checkout stands", async () => {
+    const { main, wip, done } = repo();
+    const bin = path.join(tempHome(), "bin");
+    fs.mkdirSync(bin);
+    const real = execFileSync("sh", ["-c", "command -v git"]).toString().trim();
+    fs.writeFileSync(path.join(bin, "git"), `#!/bin/sh\ncase " $* " in *" for-each-ref "*) echo "fatal: broken refs" >&2; exit 128;; esac\nexec "${real}" "$@"\n`, { mode: 0o755 });
+    const saved = process.env.PATH;
+    process.env.PATH = `${bin}:${saved}`;
+    try {
+      const scan = await scanProject(main, undefined, new Date(), { sizes: false });
+      const by = new Map(scan.worktrees.map((w) => [w.path, w]));
+      assert.deepEqual(pick(by.get(wip)), { branch: "agent/wip", main: false, merged: false, ahead: 2, behind: 1, dirty: 2, subject: "Wip two, the last" }, "its head state kept, nothing said of its upstream");
+      assert.deepEqual(pick(by.get(done)), { branch: "agent/done", main: false, merged: true, ahead: 0, behind: 1, dirty: 0, subject: "first" });
+      assert.ok(scan.worktrees.every((w) => w.error === undefined));
+      assert.equal(scan.problems.length, 1, scan.problems.join("\n"));
+      assert.match(scan.problems[0] ?? "", /upstreams were not read.*for-each-ref.*fatal: broken refs/);
     } finally {
       process.env.PATH = saved;
     }

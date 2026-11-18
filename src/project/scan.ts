@@ -5,7 +5,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { slug } from "../core/ids.ts";
 import { BUSY_KEPT, type BranchState, type ProjectScan, type Worktree } from "../core/model.ts";
-import { aheadBehind, branchHead, branchRef, changedFiles, commitsSince, git, lastCommit, unlandedAhead, upstreams, type Upstream } from "./git.ts";
+import { aheadBehind, branchHead, branchRef, changedFiles, commitsSince, git, lastCommit, ownCommits, unlandedAhead, upstreams, type Upstream } from "./git.ts";
 import { workingIn } from "./busy.ts";
 
 /** Walking every file is the expensive part (about 2 minutes for 85 GB); branches are cheap. */
@@ -90,8 +90,12 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
   const paths = new Set(listed.map((w) => path.resolve(w.path)));
   const known = new Map((previous?.worktrees ?? []).map((w) => [path.resolve(w.path), w]));
   const busy = workingIn([...paths], options.sessions ?? [], BUSY_KEPT);
-  // A failure is said in each checkout with a branch, as any git command reading it.
-  const tracking = await upstreams(dir, timeoutMs).catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
+  // Where each branch pushes is apart from where its head stands: a failure reading it is said once,
+  // and every checkout keeps the rest of its state, with nothing said of its upstream.
+  const tracking = await upstreams(dir, timeoutMs).catch((error: unknown) => {
+    problems.push(`the branches' upstreams were not read, so no checkout says what it has not pushed: ${(error as Error).message}`);
+    return undefined;
+  });
   const worktrees: Worktree[] = [];
   for (const [i, w] of listed.entries()) {
     const isMain = i === 0;
@@ -106,13 +110,16 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
       const own = path.resolve(w.path);
       const nested = [...paths].filter((p) => p.startsWith(`${own}/`)).map((p) => path.relative(own, p));
       entry.dirty = await changedFiles(w.path, nested, timeoutMs);
-      if (w.branch) {
-        if (tracking instanceof Error) throw tracking;
-        Object.assign(entry, await pushState(dir, w.head, tracking.get(`refs/heads/${w.branch}`), timeoutMs));
-      }
     } catch (error) {
       entry.error = (error as Error).message;
       problems.push(entry.error);
+    }
+    if (w.branch && tracking) {
+      try {
+        Object.assign(entry, await pushState(dir, w.head, tracking.get(`refs/heads/${w.branch}`), timeoutMs));
+      } catch (error) {
+        problems.push(`${w.path}: what is not pushed was not read: ${(error as Error).message}`);
+      }
     }
     const working = busy.get(path.resolve(w.path)) ?? [];
     if (working.length) entry.busy = working;
@@ -144,13 +151,18 @@ export async function scanProject(dir: string, previous: ProjectScan | undefined
  * A head's last commit and, against the main branch when given, whether its work is merged and how
  * far ahead and behind it is. Merged: an ancestor of the base, or each of its commits landed there by
  * cherry-pick (a patch-equivalent commit), which only `ahead`, counted without those, then tells.
+ * An empty commit matches any other empty one and a merge none, so neither is taken as landed: a
+ * branch with an empty commit of its own, or with only merges of its own, is ahead by those.
  */
 async function headState(dir: string, head: string, base: string | undefined, timeoutMs: number | undefined) {
   const last = await lastCommit(dir, head, timeoutMs);
   if (base === undefined) return last;
   const { ahead: own, behind } = await aheadBehind(dir, base, head, timeoutMs);
   if (own === 0) return { ...last, merged: true, ahead: 0, behind };
-  const ahead = await unlandedAhead(dir, base, head, timeoutMs);
+  const unlanded = await unlandedAhead(dir, base, head, timeoutMs);
+  if (unlanded > 0) return { ...last, merged: false, ahead: unlanded, behind };
+  const { commits, empty } = await ownCommits(dir, base, head, timeoutMs);
+  const ahead = commits === 0 ? own : empty;
   return { ...last, merged: ahead === 0, ...(ahead === 0 ? { cherryPicked: true } : {}), ahead, behind };
 }
 

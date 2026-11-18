@@ -45,6 +45,14 @@ export async function unlandedAhead(dir: string, base: string, head: string, tim
   return count(dir, ["rev-list", "--cherry-pick", "--right-only", "--no-merges", "--count", `${base}...${head}`], timeoutMs);
 }
 
+/** Of the commits of `head` that `base` lacks, merges left out: how many there are, and how many change no file. */
+export async function ownCommits(dir: string, base: string, head: string, timeoutMs?: number): Promise<{ commits: number; empty: number }> {
+  const out = await git(dir, ["log", "--no-show-signature", "--right-only", "--no-merges", "--name-only", "--format=%x00", `${base}...${head}`, "--"], timeoutMs);
+  // Each commit starts with a NUL, which no file name holds; one with no name after it changes nothing.
+  const commits = out.split("\0").slice(1);
+  return { commits: commits.length, empty: commits.filter((c) => c.trim() === "").length };
+}
+
 /** Commits reachable from `head` and not from `from`. */
 export async function commitsSince(dir: string, from: string, head: string, timeoutMs?: number): Promise<number> {
   return count(dir, ["rev-list", "--count", `${from}..${head}`], timeoutMs);

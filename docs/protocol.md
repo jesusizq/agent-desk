@@ -148,20 +148,27 @@ shown until `--stop`.
 and a fixed argument list, no shell, 10 s per command (5 s in the handoff), never writing in the
 repository. Per checkout: `worktree list --porcelain`, `log -1` of its head, `rev-list --left-right
 --count <base>...<head>` against the main checkout's branch and, when the head has commits the base
-lacks, `rev-list --cherry-pick --right-only --no-merges --count <base>...<head>`, `status
---porcelain=v1 -z --untracked-files=normal` for its uncommitted files (the checkouts nested in it
-excluded by pathspec, so a worktree under `.claude/worktrees/` is not one of the main checkout's), and
-for a checkout on a branch, `rev-list --count <upstream>..<head>` against the upstream that one
-`for-each-ref refs/heads/` per scan lists. A head is `merged` when it is an ancestor of the base or
-when each of its commits the base lacks has a patch-equivalent commit there (landed by cherry-pick:
-`cherryPicked`, which `git branch -d` refuses); `ahead` counts only the commits with no such
-equivalent, merges left out, and `behind` every commit of the base the head lacks. A checkout whose
+lacks, `rev-list --cherry-pick --right-only --no-merges --count <base>...<head>` (and, when that is
+0, `log --right-only --no-merges --name-only <base>...<head>` for which of those commits change no
+file), `status --porcelain=v1 -z --untracked-files=normal` for its uncommitted files (the checkouts
+nested in it excluded by pathspec, so a worktree under `.claude/worktrees/` is not one of the main
+checkout's), and for a checkout on a branch, `rev-list --count <upstream>..<head>` against the
+upstream that one `for-each-ref refs/heads/` per scan lists. A head is `merged` when it is an
+ancestor of the base or when each of its commits the base lacks has a patch-equivalent commit there
+(landed by cherry-pick: `cherryPicked`, which `git branch -d` refuses); `ahead` counts only the
+commits with no such equivalent, merges left out, and `behind` every commit of the base the head
+lacks. An empty commit is equivalent to any other empty one and a merge to none, so neither counts
+as landed: a head with empty commits of its own is ahead by them, and one whose own commits are all
+merges is ahead by those merges, never `cherryPicked`. A checkout whose
 branch has an upstream carries its short name (`upstream`) and `unpushed`, absent when that ref is
 gone; one without says `noUpstream`. The page and `agent-desk status` say "no upstream" only of the
 main checkout (agents' branches never have one) and nothing when everything is pushed. An agent's branch
 (see Sub-agents) that no checkout has, such as one whose worktree was removed after it merged, is looked up as `refs/heads/<name>` (`rev-parse
 --verify --quiet`), only when the name is a plain ref name. A command that fails or times out leaves
-its message in that checkout's `error` and in `problems`; the others are read all the same.
+its message in that checkout's `error` and in `problems`; the others are read all the same. Reading
+the upstreams is apart: a failing `for-each-ref` is said once in `problems`, and a failing
+`<upstream>..<head>` once per checkout there, each checkout keeping its other state with no
+upstream fields.
 
 `busy` names, by command, the processes a live session started through a shell (its commands and
 its agents', the rule Local servers follows: not the tool servers its provider runs as its direct
