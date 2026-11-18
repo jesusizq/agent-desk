@@ -3358,11 +3358,14 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    // On a desk of its own: with what earlier tests leave in Needs you, the row asked here may be the one that
+    // overflows its column, which then scrolls its rows on its own, out of the document's scroll the redraw measures.
     it("measures how far the board scrolls only for a redraw that changes a column", async () => {
       const id = "measured-redraw";
-      const done = asking(id, "measured only on a change");
-      try {
-        const page = await open(1400, 900);
+      const prepare = (own: Store) => {
+        own.upsertSession({ id, provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "measured only on a change", state: "waiting" });
+      };
+      await ownDesk(async (page, own) => {
         await page.waitFor(STILL);
         // Each measure takes the board's motions off their elements: a motion of a row counts the measures.
         await page.eval(`(() => {
@@ -3377,15 +3380,15 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
           window.listings = 0;
           document.getAnimations = () => (listings++, list());
         })()`);
+        // Needs you scrolls with the document before and after the row, so the measure of the document takes its motions off.
+        const ownScroll = "(() => { const e = document.querySelector('.col-needs .col-body'); return e.scrollHeight > e.clientHeight; })()";
         await page.eval("import('/state.js').then((m) => m.page.renderView())");
-        assert.deepEqual(await page.eval("({ measures, listings })"), { measures: 0, listings: 0 }, "a redraw that changes no list forces no layout to measure, nor lists the page's animations");
-        store.ask({ sessionId: id, kind: "question", text: "Asked to change a column?", options: ["Yes", "No"] });
+        assert.deepEqual(await page.eval(`({ measures, listings, ownScroll: ${ownScroll} })`), { measures: 0, listings: 0, ownScroll: false }, "a redraw that changes no list forces no layout to measure, nor lists the page's animations");
+        own.ask({ sessionId: id, kind: "question", text: "Asked to change a column?", options: ["Yes", "No"] });
         await page.waitFor("[...document.querySelectorAll('.col-needs .qrow')].some((r) => r.textContent.includes('Asked to change a column?'))");
-        assert.deepEqual(await page.eval("({ measures, listings })"), { measures: 1, listings: 1 }, "a row added to Needs you is measured, once");
+        assert.deepEqual(await page.eval(`({ measures, listings, ownScroll: ${ownScroll} })`), { measures: 1, listings: 1, ownScroll: false }, "a row added to Needs you is measured, once");
         await page.eval("boardMotion.cancel(); delete document.getAnimations");
-      } finally {
-        done();
-      }
+      }, prepare);
     });
 
     // Needs you not overflowing scrolls with the document, which holds every column: one with a scroll of its
