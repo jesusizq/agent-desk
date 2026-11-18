@@ -26,6 +26,7 @@ const STILL = "document.getAnimations().every((a) => a.effect?.getComputedTiming
  */
 function smooth<K extends string>(frames: ({ t: number } & Record<K, number | null>)[], part: K, log: string) {
   const seen = frames.filter((f) => f[part] !== null) as ({ t: number } & Record<K, number>)[];
+  assert.ok(seen.length >= 2, `the ${part} shows in at least two frames, to compare: ${log}`);
   const travel = Math.max(...seen.map((f) => f[part])) - Math.min(...seen.map((f) => f[part]));
   seen.forEach((f, i) => {
     const prev = seen[i - 1];
@@ -3290,7 +3291,13 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       assert.ok(frames.every((f, i) => i === 0 || f.scroll <= frames[i - 1]!.scroll + 0.5), `the scroll never goes back up: ${log}`);
       // It moves only as a redraw starts: pulled down mid-way, in whole pixels while the cards shrink by fractions, it would shake all below.
       assert.ok(frames.every((f, i) => i === 0 || f.redraw || f.scroll === frames[i - 1]!.scroll), `the scroll goes where it ends at once: ${log}`);
-      for (const part of parts) smooth(frames, part, log);
+      // Each part is followed across the motion, from the frame before it starts: seen only before, it could not jump.
+      const start = frames.findIndex((f) => f.redraw);
+      assert.ok(start > 0, `a redraw started moving the page: ${log}`);
+      for (const part of parts) {
+        assert.ok(frames[start - 1]![part] !== null && frames.slice(start).filter((f) => f[part] !== null).length >= 2, `the ${part} shows as the page moves: ${log}`);
+        smooth(frames, part, log);
+      }
       return log;
     }
 
@@ -3308,11 +3315,13 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         try {
           const page = await open(width, height);
           const answer = "[...card.querySelectorAll('.opts button')].find((b) => b.textContent.includes('Yes')).click()";
-          for (const [text, act] of [["Answered while scrolled?", answer], ["Dismissed while scrolled?", DISMISS]] as const) {
+          // Answered, the card shows its answer at once where its box was: only the rows below are followed.
+          const acts = [["Answered while scrolled?", answer, ["row"]], ["Dismissed while scrolled?", DISMISS, ["box", "row"]]] as const;
+          for (const [text, act, parts] of acts) {
             await page.click(".qrow", text);
             await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes(${JSON.stringify(text)}) && ${STILL}`);
             const frames = await recordFrames(page, phone, act);
-            const log = nothingJumps(frames);
+            const log = nothingJumps(frames, [...parts]);
             const staying = frames.filter((f) => !f.leaving && f.row !== null).map((f) => f.row!);
             assert.ok(staying.every((top, i) => i === 0 || top <= staying[i - 1]! + 0.5), `the rows below the answered card only rise: ${log}`);
             for (const f of frames.filter((f) => f.resolved && f.card !== null)) assert.ok(f.card! >= -1, `the answered card shows from its top: ${log}`);
@@ -3324,6 +3333,29 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         }
       });
     }
+
+    it("dismisses a large card scrolled past its top with little below it, on a desktop, nothing below jumping", async () => {
+      const id = "scrolled-short-desk";
+      const done = asking(id, "little below on a desktop");
+      // A project of its own, shown alone: what earlier tests left on the desk would fill the column below the card.
+      store.upsertSession({ id, provider: "Test", project: { name: "short-desk", dir: "/home/demo/Projects/short-desk" }, title: "little below on a desktop", state: "waiting" });
+      // One paragraph a line: a desktop's wide card would run them together into a few lines, too short to scroll.
+      const context = Array.from({ length: 28 }, (_, i) => `Line ${i + 1}: what the session found before asking.`).join("\n\n");
+      store.ask({ sessionId: id, kind: "question", text: "Dismissed with little below?", context, options: ["Yes", "No"] });
+      // Two rows below: the first becomes the large card, the second stays a row to follow.
+      store.ask({ sessionId: id, kind: "question", text: "Waiting below the dismissed one?", options: ["Yes", "No"] });
+      store.ask({ sessionId: id, kind: "question", text: "Last row below the dismissed one?", options: ["Yes", "No"] });
+      try {
+        const page = await open(1400, 900);
+        await page.click("#projects button", "short-desk");
+        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('Dismissed with little below?') && document.querySelectorAll('.col-needs .qrow').length === 2 && ${STILL}`);
+        const frames = await recordFrames(page, false, DISMISS);
+        const log = nothingJumps(frames);
+        assert.ok(frames.at(-1)!.scroll < frames[0]!.scroll - 50, `what is left ends above the column's bottom, so the scroll comes down: ${log}`);
+      } finally {
+        done();
+      }
+    });
 
     it("on a phone, dismisses a scrolled large card and the next one while the first still folds, nothing jumping", async () => {
       const id = "scrolled-twice";
