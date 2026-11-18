@@ -157,6 +157,7 @@ export function animateLists(scope, update) {
   /** @type {Map<Element, DOMRect>} */
   const glides = new Map([...scope.querySelectorAll("[data-glide]")].map((el) => [el, el.getBoundingClientRect()]));
   update();
+  const earlier = document.getAnimations();
   /** @type {Map<string, Seen & { list: Element }>} cards no longer in their list, by what they show */
   const gone = new Map();
   for (const { list, items } of before) for (const it of items) if (it.el.parentElement !== list) gone.set(flipId(it.el), { ...it, list });
@@ -201,6 +202,7 @@ export function animateLists(scope, update) {
       scrolling.add(change.scroller);
     }
   }
+  for (const scroller of scrolling) retime(earlier, scroller, t);
   // With every card at its start the content is as tall as before the redraw, less the cuts: each scroll goes
   // back where it stood (the redraw may have clamped it), less the cuts, and what showed stays put.
   for (const scroller of scrolling) {
@@ -210,6 +212,34 @@ export function animateLists(scope, update) {
   for (const slide of slidesOf) slide();
   glide(scope, glides, t);
   for (const scroller of scrolling) shift(scope, scroller, reaches?.get(scroller) ?? Infinity, t);
+}
+
+const TIMING = new Set(["offset", "computedOffset", "easing", "composite"]);
+/**
+ * Every change of height an earlier redraw started in a scroll area (a card still folding away) starts again
+ * from where it is, with this redraw's: on one curve from one start, the area's content grows or shrinks
+ * steadily to its end, where one ending first while another just starts would dip below the scroll, and
+ * the browser would pull it down mid-way.
+ * @param {Animation[]} earlier the animations running before this redraw's @param {Element} scroller @param {Tokens} t
+ */
+function retime(earlier, scroller, t) {
+  for (const a of earlier) {
+    if (a.id !== MOTION || (a.playState !== "running" && a.playState !== "paused") || !(a.effect instanceof KeyframeEffect)) continue;
+    const { effect } = a;
+    const el = effect.target;
+    const last = effect.getKeyframes().at(-1);
+    if (!el || !last || !("height" in last) || !carries(scroller, el)) continue;
+    const props = Object.keys(last).filter((k) => !TIMING.has(k));
+    const now = getComputedStyle(el);
+    /** @param {string} prop */
+    const value = (prop) => now.getPropertyValue(prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`));
+    const from = Object.fromEntries(props.map((p) => [p, value(p)]));
+    const to = Object.fromEntries(props.map((p) => [p, last[p]]));
+    const next = el.animate([from, to], { duration: t.move, easing: t.easing, fill: effect.getTiming().fill, id: MOTION });
+    Object.assign(next, { onfinish: a.onfinish, oncancel: a.oncancel });
+    Object.assign(a, { onfinish: null, oncancel: null });
+    a.cancel();
+  }
 }
 
 /**

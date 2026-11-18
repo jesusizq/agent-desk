@@ -3479,26 +3479,35 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       });
     }
 
-    it("on a phone, dismisses a scrolled large card and the next one while the first still folds, nothing jumping", async () => {
-      const id = "scrolled-twice";
-      const done = asking(id, "dismissed in a row");
-      const context = Array.from({ length: 16 }, (_, i) => `Line ${i + 1}: what the session found before asking.`).join("\n");
-      store.ask({ sessionId: id, kind: "question", text: "First of two in a row?", context, options: ["Yes", "No"] });
-      store.ask({ sessionId: id, kind: "question", text: "Second of two in a row?", context, options: ["Yes", "No"] });
-      try {
-        const page = await open(390, 1000);
-        await page.click(".qrow", "First of two in a row?");
-        await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('First of two in a row?') && ${STILL}`);
-        const frames = await recordFrames(page, true, DISMISS, DISMISS);
-        // The rows below change pace there, as the card growing above them stops to fold: only the first card's content keeps one.
-        const log = nothingJumps(frames, ["box"]);
-        assert.ok(frames.some((f) => f.heights), `the second card left while the first still folded: ${log}`);
-        // Out of the page for a moment as the redraw drops it, it must still lose the growth it had, and fold from where it shows.
-        assert.ok(frames.every((f) => f.heights <= 1), `the second card only folds once it leaves: ${log}`);
-      } finally {
-        done();
-      }
-    });
+    // A loaded machine draws few frames: the second card may go as the first ends its fold, and the card growing
+    // in their place must not let the content dip below the scroll mid-way; rows below keep the scroll off the top.
+    for (const slow of [false, true]) {
+      const how = slow ? ", with rows below and a slow renderer," : "";
+      it(`on a phone, dismisses a scrolled large card and the next one while the first still folds${how} nothing jumping`, async () => {
+        const id = `scrolled-twice${slow ? "-slow" : ""}`;
+        const done = asking(id, "dismissed in a row");
+        const context = Array.from({ length: 16 }, (_, i) => `Line ${i + 1}: what the session found before asking.`).join("\n");
+        store.ask({ sessionId: id, kind: "question", text: "First of two in a row?", context, options: ["Yes", "No"] });
+        store.ask({ sessionId: id, kind: "question", text: "Second of two in a row?", context, options: ["Yes", "No"] });
+        if (slow) for (let i = 1; i <= 4; i++) store.ask({ sessionId: id, kind: "question", text: `Below the two in a row, ${i}?`, options: ["Yes", "No"] });
+        try {
+          const page = await open(390, 1000);
+          await page.click(".qrow", "First of two in a row?");
+          await page.waitFor(`document.querySelector('.next:not([data-leaving])')?.textContent.includes('First of two in a row?') && ${STILL}`);
+          // 20 ms of work in every frame, as on a machine busy with other work.
+          if (slow) await page.eval("(() => { const busy = () => { const end = performance.now() + 20; while (performance.now() < end); if (!window.rested) requestAnimationFrame(busy); }; requestAnimationFrame(busy); })()");
+          const frames = await recordFrames(page, true, DISMISS, DISMISS);
+          await page.eval("window.rested = true");
+          // The rows below change pace there, as the card growing above them stops to fold: only the first card's content keeps one.
+          const log = nothingJumps(frames, ["box"]);
+          assert.ok(frames.some((f) => f.heights), `the second card left while the first still folded: ${log}`);
+          // Out of the page for a moment as the redraw drops it, it must still lose the growth it had, and fold from where it shows.
+          assert.ok(frames.every((f) => f.heights <= 1), `the second card only folds once it leaves: ${log}`);
+        } finally {
+          done();
+        }
+      });
+    }
 
     it("on a phone, a redraw that changes the view at once mid-way stops the header and the strip with the cards", async () => {
       const id = "scrolled-instant";
