@@ -93,6 +93,8 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
       run(uploadImage(file).then((id) => (ui.draftImages.set(key, [...(ui.draftImages.get(key) ?? []), id]), saveDrafts())), () => ui.uploading.set(key, (ui.uploading.get(key) ?? 1) - 1));
     }
     if (files.length > ATTACHED_IMAGES_MAX - attached.length) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
+    // run() redraws only once an upload settles: "Attaching…" must show while it is on its way.
+    page.render();
   };
   /**
    * @param {Event} e @param {string} [text] what to send: the box's text unless a decision says otherwise

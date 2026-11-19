@@ -4153,6 +4153,8 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     const asks = "(() => { const e = new Event('beforeunload', { cancelable: true }); dispatchEvent(e); return e.defaultPrevented; })()";
     assert.equal(await page.eval<boolean>(asks), false, "nothing on its way: leaving is free");
     await page.click(".scard", "leaving mid-upload");
+    // Pasted once the conversation is in, with no redraw of its own to come after the paste.
+    await page.waitFor(`${arrived("session")} && document.querySelector('#session .session-body')?.dataset.fetched === 'yes'`);
     await page.eval(`(() => {
       const data = new DataTransfer();
       data.items.add(new File([new Uint8Array(8)], "shot.png", { type: "image/png" }));
