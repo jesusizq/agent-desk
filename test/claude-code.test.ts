@@ -12,8 +12,10 @@ import { PNG, tempHome, testStore } from "./helpers.ts";
 const MAIN = path.join(import.meta.dirname, "..", "adapters", "claude-code", "main.ts");
 const CLI = path.join(import.meta.dirname, "..", "src", "cli", "main.ts");
 
+// A live pid: a session whose process is gone is finished, and Needs you holds none of its questions.
+const SESSION_PROCESS = { pid: process.pid, ancestors: [4241, 100] };
 function ctx(store: Store, env: NodeJS.ProcessEnv = {}): HookContext {
-  return { store, env: { TERM_PROGRAM: "vscode", CLAUDE_PROJECT_DIR: "/work/shop", ...env }, sessionProcess: () => ({ pid: 4242, ancestors: [4241, 100] }) };
+  return { store, env: { TERM_PROGRAM: "vscode", CLAUDE_PROJECT_DIR: "/work/shop", ...env }, sessionProcess: () => SESSION_PROCESS };
 }
 /** A session transcript and a workflow run beside it, where Claude Code writes its notes on the run's agents. */
 function workflowRun() {
@@ -66,7 +68,7 @@ describe("Claude Code hooks", () => {
     assert.deepEqual(s?.project, { name: "shop", dir: "/work/shop" });
     assert.equal(s?.terminal, "vscode");
     assert.equal(s?.title, "checkout");
-    assert.deepEqual(s?.process, { pid: 4242, ancestors: [4241, 100] });
+    assert.deepEqual(s?.process, SESSION_PROCESS);
     assert.equal(s?.state, "waiting");
     const context = JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
     assert.match(context, /agent-desk result/);
