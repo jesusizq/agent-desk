@@ -62,7 +62,7 @@ with `AGENT_DESK_HOME`). Product specification in [AGENTS.md](AGENTS.md); protoc
 ## Requirements
 
 - Linux: a session's process and terminal are found through `/proc`.
-- Node.js 22.18 or later. It runs the TypeScript sources directly: no build step and no runtime
+- Node.js 24 or later. It runs the TypeScript sources directly: no build step and no runtime
   dependencies; Node's compile cache, in the store, keeps them stripped between runs. The commands use the `node` on `PATH` when it is recent enough, else the newest one
   installed with nvm, so a project that pins an older Node does not break the hooks.
 - An AI tool with an adapter (today: Claude Code), for sessions to report to the desk.

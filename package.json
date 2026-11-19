@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=22.18"
+    "node": ">=24"
   },
   "bin": {
     "agent-desk": "bin/agent-desk",
