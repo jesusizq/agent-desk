@@ -31,6 +31,9 @@ See @AGENTS.md for the product specification and @BRIEF.md for where the work st
   relies on them.
 - Commit messages, code and comments in English; comments only for non-obvious technical
   constraints, 1-2 lines.
+- A commit message is a subject of at most 72 characters saying what changed, a blank line, and a
+  body with why, the root cause and how it was verified (runs, counts, what failed without the fix):
+  the body keeps every detail needed to trace the change.
 - Root cause always, never a workaround; no test is weakened to pass.
 - Rules files (this file, AGENTS.md, `.claude/rules`, skills) change only with the owner's explicit approval.
 - Commit finished work without asking.
