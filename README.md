@@ -213,7 +213,12 @@ and a link to anywhere else is not opened. Details in [docs/protocol.md](docs/pr
 
 Sessions that run inside tmux get a **Terminal** section in their window, under **More**. Its buttons
 send `/compact`, Escape, Enter and 1–5 to the session's terminal, which answers the dialogs that only
-the terminal can answer. Each button asks for a second click before it sends anything.
+the terminal can answer. Each button asks for a second click before it sends anything. When the
+session suggested instructions for its compaction (a code block of its reply that starts with
+`/compact `), the `/compact` button shows their start and types them after `/compact`, as one line
+without control characters, in pieces of at most 400 characters (a prompt takes a longer burst as a
+paste, which Enter would send to the model instead of running `/compact`) and with a space last (it
+closes a file menu a last `@word` opens); with none, it types `/compact` alone.
 
 To make every VS Code terminal a tmux session that ends when its tab closes, add to VS Code's user
 settings:

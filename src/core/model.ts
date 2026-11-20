@@ -91,7 +91,48 @@ export function readSession(value: unknown, where = "session"): Session {
     endedAsking: optional(f.endedAsking, `${where}.endedAsking`, bool),
     sentWhileWorking: optional(f.sentWhileWorking, `${where}.sentWhileWorking`, (v, w) => list(v, w, readSent, 20)),
     checkReopened: optional(f.checkReopened, `${where}.checkReopened`, readCheckReopened),
+    compactInstructions: optional(f.compactInstructions, `${where}.compactInstructions`, readCompactInstructions),
   });
+}
+
+function readCompactInstructions(value: unknown, where: string): { text: string; at: string } {
+  const f = fields(value, where);
+  const t = nonEmpty(f.text, `${where}.text`, COMPACT_INSTRUCTIONS_MAX);
+  // Made one line again on reading, so text kept before a rule was tightened is shown as it would be typed.
+  const line = compactInstructionsLine(t);
+  if (line === "") throw new InputError(`${where}.text: nothing is left of ${JSON.stringify(t.slice(0, 200))} once made one line; expected instructions with words`);
+  return { text: line, at: isoTime(f.at, `${where}.at`) };
+}
+
+/** The most instructions a compaction is given, in characters. */
+export const COMPACT_INSTRUCTIONS_MAX = 10_000;
+/** And in UTF-8 bytes: tmux refuses a command of more than about 16 KiB ("command too long"). */
+const COMPACT_INSTRUCTIONS_BYTES = 12_000;
+
+/**
+ * Instructions for a compaction as one line that types nothing but itself: line breaks become spaces,
+ * other control, bidi and invisible characters go, spaces are collapsed, and a trailing `;` goes (tmux
+ * reads one ending an argument as the end of its command and drops it), as does a trailing `\` (a
+ * terminal prompt may read `\` and Enter as a new line, not as sending it); at most `max` characters
+ * and COMPACT_INSTRUCTIONS_BYTES bytes, never half a character.
+ */
+export function compactInstructionsLine(value: string, max = COMPACT_INSTRUCTIONS_MAX): string {
+  const one = value
+    .replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/g, " ")
+    .replace(new RegExp(CONTROL.source, "gu"), "")
+    .replace(/[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069]/g, "") // the page would show other words than those sent
+    .replace(/\s+/g, " ")
+    .trim();
+  let chars = 0;
+  let bytes = 0;
+  for (const c of one) {
+    const code = c.codePointAt(0) ?? 0;
+    const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    if (chars + c.length > max || bytes + size > COMPACT_INSTRUCTIONS_BYTES) break;
+    chars += c.length;
+    bytes += size;
+  }
+  return one.slice(0, chars).replace(/[\s;\\]+$/, "");
 }
 
 export function readCheckReopened(value: unknown, where: string): CheckReopened {

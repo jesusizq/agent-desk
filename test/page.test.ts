@@ -2192,6 +2192,49 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
       }
     });
 
+    it("shows on the /compact button the start of the instructions the session suggested, as plain text, and disarms it when they change", async () => {
+      const own = procInfo(process.pid);
+      assert.ok(own?.start);
+      const at = new Date().toISOString();
+      const long = `keep the plan, <b>the decisions</b> and the next steps ${"and every reason behind them ".repeat(20)}`.trim();
+      store.upsertSession({ id: "suggests", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "suggests a compaction", process: { pid: process.pid, start: own.start, ancestors: [] }, tmux: { socket: "/tmp/tmux-1000/default", pane: "%1", clients: [] } });
+      try {
+        const page = await open();
+        await page.click(".scard", "suggests a compaction");
+        await page.click("#session .pchips .chip", "More");
+        const button = "document.querySelector('#session [data-key=compact]')";
+        await page.waitFor(button);
+        assert.equal(await page.eval<string>(`${button}.innerText`), "/compact", "no suggestion: /compact alone");
+
+        store.updateSession("suggests", (s) => ({ ...s, compactInstructions: { text: long, at } }));
+        await page.waitFor(`${button}.querySelector('.compact-preview')`);
+        assert.equal(await page.eval<string>(`${button}.querySelector('.compact-preview').textContent`), long, "as text, its markup shown, never drawn");
+        assert.equal(await page.eval<number>(`${button}.querySelectorAll('b').length`), 0);
+        assert.equal(await page.eval<string>(`${button}.title`), `/compact ${long}`, "all of it on hover");
+        const clipped = await page.eval<{ shown: number; whole: number; width: number }>(`(() => { const p = ${button}.querySelector('.compact-preview'); return { shown: p.clientWidth, whole: p.scrollWidth, width: ${button}.getBoundingClientRect().width }; })()`);
+        assert.ok(clipped.whole > clipped.shown && clipped.width < 400, `only its start, in a button of ${clipped.width}px`);
+
+        // What the second click sends, kept here: this session's pane is no real one.
+        await page.eval(`(() => { window.sentKeys = []; const real = window.fetch; window.fetch = (route, init) => String(route).endsWith('/keys') ? (window.sentKeys.push(JSON.parse(init.body)), Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))) : real(route, init); })()`);
+        await page.click("#session [data-key=compact]");
+        const armedAt = Date.now();
+        assert.equal(await page.eval<string>(`${button}.getAttribute('aria-label')`), "Send /compact?", "the first click asks for a second");
+        store.updateSession("suggests", (s) => ({ ...s, compactInstructions: { text: "keep only the next steps", at: new Date(Date.parse(at) + 1000).toISOString() } }));
+        await page.waitFor(`${button}.querySelector('.compact-preview')?.textContent === 'keep only the next steps'`);
+        assert.equal(await page.eval<boolean>(`${button}.classList.contains('armed')`), false, "new instructions need their own two clicks");
+        assert.ok(Date.now() - armedAt < 3000, "disarmed by the change, before its 3 s ran out");
+
+        await page.click("#session [data-key=compact]");
+        // Within the 3 s it asks: page.click would first wait for its countdown bar to stop moving.
+        await page.eval(`${button}.click()`);
+        await page.waitFor("window.sentKeys.length > 0");
+        assert.deepEqual(await page.eval<unknown>("window.sentKeys"), [{ action: "compact", instructions: "keep only the next steps" }], "the instructions it showed, for the server to check");
+        await page.press("Escape");
+      } finally {
+        store.updateSession("suggests", (s) => ({ ...s, state: "ended" }));
+      }
+    });
+
     it("shows each agent's cost beside its tokens and their sum on the agents chip, and over a large context's cold cache what resuming costs, with the command that starts afresh", async () => {
       const project = { name: "web-shop", dir: "/home/demo/Projects/web-shop" };
       store.upsertSession({ id: "cold", provider: "Test", project, title: "cold cache session", state: "waiting" });

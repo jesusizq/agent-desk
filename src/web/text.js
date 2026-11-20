@@ -236,6 +236,9 @@ export const TEXT = {
     attach: "Open this terminal over SSH (e.g. Termius):",
     /** @param {string} what */
     confirm: (what) => `Send ${what}?`,
+    /** The accessible name of /compact with the session's suggested instructions. @param {string} instructions */
+    compactWith: (instructions) => `/compact with the session's suggested instructions: ${instructions.length > 200 ? `${instructions.slice(0, 199).replace(/[\ud800-\udbff]$/, "")}…` : instructions}`,
+    compactSent: "/compact with its suggested instructions",
     /** A key short enough that "Send" would double its button. @param {string} what */
     confirmShort: (what) => `${what}?`,
     /** @param {string} what @param {string} where */

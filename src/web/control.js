@@ -70,6 +70,21 @@ export function controlSection(s, redraw) {
   const confirmed = (id, text, ask, act, cls) => armedButton({ key: `${s.id} ${id}`, id, text, ask, act, redraw, cls });
   /** @param {string} action @param {string} text @param {string} [ask] */
   const key = (action, text, ask = TEXT.control.confirm(text)) => confirmed(action, text, ask, () => post(`/api/sessions/${s.id}/keys`, { action }).then(() => toast(TEXT.control.sent(text, label(s)))));
+  // With the instructions the session suggested, the button shows the start of what it types; the
+  // server types them only while they are still these.
+  const instructions = s.compactInstructions?.text ?? "";
+  const compactKey = instructions
+    ? armedButton({
+        key: `${s.id} compact ${s.compactInstructions?.at}`,
+        id: "compact",
+        text: TEXT.control.compactWith(instructions),
+        ask: TEXT.control.confirm("/compact"),
+        title: `/compact ${instructions}`,
+        idle: h("span", { class: "compact-with" }, h("span", {}, "/compact"), h("span", { class: "compact-preview" }, instructions)),
+        act: () => post(`/api/sessions/${s.id}/keys`, { action: "compact", instructions }).then(() => toast(TEXT.control.sent(TEXT.control.compactSent, label(s)))),
+        redraw,
+      })
+    : key("compact", "/compact");
   // The terminal shows a dialog (a permission prompt, a question with options) only while the
   // session has one open; the keys that answer it are offered only then.
   const asksInDialog = asksOf(s.id).some((q) => q.kind === "permission" || q.kind === "question");
@@ -82,7 +97,7 @@ export function controlSection(s, redraw) {
           h(
             "div",
             { class: "row wt-actions" },
-            key("compact", "/compact"),
+            compactKey,
             key("interrupt", TEXT.control.interrupt),
             asksInDialog ? [h("span", { class: "faint" }, TEXT.control.dialog), ...[1, 2, 3, 4, 5].map((n) => key(`option-${n}`, String(n), TEXT.control.confirmShort(String(n)))), key("enter", "Enter", TEXT.control.confirmShort("Enter"))] : null,
           ),

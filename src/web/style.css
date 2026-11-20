@@ -766,6 +766,8 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 /* A control that asks for a second click: both labels in one cell, so its width never changes; armed, it is
    filled and a line runs out over the 3 s it waits (ARM_MS in control.js). */
 .arm { position: relative; overflow: hidden; }
+.compact-with { display: inline-flex; gap: 6px; max-width: min(34ch, 62vw); }
+.compact-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-weight: 400; }
 .arm-lbl { display: inline-grid; }
 .arm-lbl > * { grid-area: 1 / 1; justify-self: center; }
 .arm .arm-ask, .arm.armed .arm-idle { visibility: hidden; }

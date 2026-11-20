@@ -88,6 +88,12 @@ export type Session = {
    * refusal, or the developer writes to the session.
    */
   checkReopened?: CheckReopened;
+  /**
+   * The instructions the session last suggested compacting its context with, and when its adapter
+   * read them: one line (`compactInstructionsLine`). Gone once a compaction has been done, so an
+   * older suggestion never compacts the context that followed it.
+   */
+  compactInstructions?: { text: string; at: string };
 };
 
 export type CheckReopened = { times: number; reason: string; at: string };

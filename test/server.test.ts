@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import * as fs from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -8,7 +9,7 @@ import { after, before, describe, it } from "node:test";
 import { procInfo } from "../src/core/proc.ts";
 import { Push } from "../src/server/push.ts";
 import { createDeskServer, deskState, diskWarnings, recordPlanUsage, SEEN_BODY_LIMIT, SEEN_IDS_MAX } from "../src/server/server.ts";
-import type { Session } from "../src/core/model.ts";
+import { compactInstructionsLine, type Session } from "../src/core/model.ts";
 import type { Store } from "../src/store/store.ts";
 import { projectId } from "../src/project/scan.ts";
 import { addSession, PNG, QUIET_MACHINE, runScript, serve, shellListener, tempHome, testStore, waitingScript } from "./helpers.ts";
@@ -28,6 +29,15 @@ before(async () => {
 after(() => close());
 /** A write that changes nothing, to test who may write. */
 const NO_IDS = JSON.stringify({ ids: [] });
+
+function hasTmux(): boolean {
+  try {
+    execFileSync("tmux", ["-V"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false; // not installed: the test that types into a real pane is skipped, saying why
+  }
+}
 
 const post = (route: string, body: unknown, headers: Record<string, string> = {}) =>
   fetch(base + route, {
@@ -239,6 +249,59 @@ describe("server", () => {
     assert.match(((await noTmux.json()) as { error: string }).error, /does not run in a live tmux pane/);
     const cross = await post("/api/sessions/s1/keys", { action: "compact" }, { Origin: "http://evil.example" });
     assert.equal(cross.status, 403);
+  });
+
+  it("types /compact with the session's suggested instructions as one line, only those the page showed", { skip: !hasTmux() && "tmux is not installed" }, async () => {
+    const socket = path.join(tempHome(), "tmux.sock");
+    const tmux = (...args: string[]) => execFileSync("tmux", ["-S", socket, ...args], { encoding: "utf8" });
+    // A pane whose process echoes each line it reads: what is typed shows once, and once more per Enter.
+    tmux("new-session", "-d", "-x", "300", "-y", "20", "cat");
+    try {
+      const [pane = "", panePid = ""] = tmux("list-panes", "-F", "#{pane_id} #{pane_pid}").trim().split(" ");
+      const pid = Number(panePid);
+      store.upsertSession({ id: "tm1", provider: "Test", project: { name: "shop", dir: "/work/shop" }, process: { pid, start: procInfo(pid)?.start ?? "", ancestors: [] }, tmux: { socket, pane, clients: [] } });
+      const screen = () => tmux("capture-pane", "-p", "-t", pane).split("\n").filter(Boolean);
+      const shows = async (lines: string[]) => {
+        for (let i = 0; i < 50 && screen().length < lines.length; i++) await new Promise((r) => setTimeout(r, 50));
+        assert.deepEqual(screen(), lines);
+      };
+
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "compact" })).status, 200, "no suggestion: /compact alone");
+      const bare = ["/compact", "/compact"];
+      await shows(bare);
+
+      // What the session wrote, kept as its adapter keeps it: one line, whatever it held.
+      const suggested = compactInstructionsLine("keep the plan\nthen\x03 run\r\x1b[2J this; kill-server;");
+      store.updateSession("tm1", (s) => ({ ...s, compactInstructions: { text: suggested, at: new Date().toISOString() } }));
+      for (const shown of [undefined, "", "keep the plan"]) {
+        const stale = await post("/api/sessions/tm1/keys", { action: "compact", ...(shown === undefined ? {} : { instructions: shown }) });
+        assert.equal(stale.status, 400, `shown ${JSON.stringify(shown)}`);
+        assert.match(((await stale.json()) as { error: string }).error, /changed since the page showed them; nothing was sent/);
+      }
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "enter", instructions: suggested })).status, 400, "only compact takes instructions");
+      await new Promise((r) => setTimeout(r, 200));
+      assert.deepEqual(screen(), bare, "nothing was typed by the refused requests");
+
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "compact", instructions: suggested })).status, 200);
+      await shows([...bare, `/compact ${suggested}`, `/compact ${suggested}`]); // capture-pane leaves out the space typed last
+      assert.equal(suggested, "keep the plan then run [2J this; kill-server", "one line: no Enter, Ctrl-C, Escape or trailing ';' for tmux to drop");
+      assert.ok(tmux("list-panes", "-F", "#{pane_dead}").trim() === "0", "the pane's process and the tmux server live on");
+
+      // The widest instructions kept, typed whole: tmux refuses a command of more than about 16 KiB. A
+      // pane that keeps what it reads, past the 4 KiB a canonical-mode line holds, as a full-screen prompt does.
+      const wide = compactInstructionsLine(`${"漢字を残す ".repeat(4000)}\\;`);
+      assert.ok(Buffer.byteLength(wide) > 11_000 && !wide.endsWith("\\"), `${Buffer.byteLength(wide)} bytes`);
+      const kept = path.join(path.dirname(socket), "typed.txt");
+      const [widePane = "", widePid = ""] = tmux("new-window", "-P", "-F", "#{pane_id} #{pane_pid}", `stty -icanon -echo; exec cat > ${kept}`).trim().split(" ");
+      store.updateSession("tm1", (s) => ({ ...s, process: { pid: Number(widePid), start: procInfo(Number(widePid))?.start ?? "", ancestors: [] }, tmux: { socket, pane: widePane, clients: [] }, compactInstructions: { text: wide, at: new Date().toISOString() } }));
+      const sent = await post("/api/sessions/tm1/keys", { action: "compact", instructions: wide });
+      assert.equal(sent.status, 200, await sent.text());
+      const typed = () => (fs.existsSync(kept) ? fs.readFileSync(kept, "utf8") : "");
+      for (let i = 0; i < 100 && !typed().endsWith("\n"); i++) await new Promise((r) => setTimeout(r, 50));
+      assert.equal(typed(), `/compact ${wide} \n`, "typed whole as one line, then sent once");
+    } finally {
+      tmux("kill-server");
+    }
   });
 
   it("ends a session's process only while it is still that process, and only from the page", async () => {

@@ -57,7 +57,7 @@ describe("handoff around a compaction", () => {
 
     const out = await recordHandoff(event(dir, "PreCompact", { trigger: "auto", custom_instructions: null }), c);
     assert.equal(out.code, 0, out.stderr);
-    assert.match(out.stdout ?? "", /^agent-desk recorded this session's branches, agents, open questions, local servers and open reviews/);
+    assert.equal(out.stdout, undefined, "no suggested instructions: nothing printed, the project's compact instructions apply (test/compact.test.ts)");
     const handoff = store.getHandoff("cc-1");
     assert.ok(handoff);
     assert.equal(handoff.trigger, "auto");
@@ -112,8 +112,7 @@ describe("handoff around a compaction", () => {
         child.stdin.end(input);
       });
     const ok = await run(JSON.stringify({ session_id: "cc-2", cwd: dir, hook_event_name: "PreCompact", trigger: "manual", custom_instructions: "keep the plan" }));
-    assert.equal(ok.code, 0);
-    assert.match(ok.stdout, /^agent-desk recorded/);
+    assert.deepEqual([ok.code, ok.stdout], [0, ""], "its own instructions: no others printed");
     assert.ok(store.getHandoff("cc-2"));
     const broken = await run(JSON.stringify({ session_id: "../x", cwd: dir, hook_event_name: "PreCompact" }));
     assert.deepEqual([broken.code, broken.stdout], [1, ""]);

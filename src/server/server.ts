@@ -9,7 +9,7 @@ import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN, id } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
-import { type DeskState, type DiskWarning, imageIds, type ProjectScan, type ReviewState, reviewNote, type Session, type SessionBranches } from "../core/model.ts";
+import { COMPACT_INSTRUCTIONS_MAX, type DeskState, type DiskWarning, imageIds, type ProjectScan, type ReviewState, reviewNote, type Session, type SessionBranches } from "../core/model.ts";
 import { MACHINE, type MachineSources, machineWarnings } from "../core/machine.ts";
 import { agentsAtLoadGate } from "../project/busy.ts";
 import { OPTIONS_TEXT_MAX, optionsText } from "../core/options.ts";
@@ -168,12 +168,20 @@ const ACTIONS: Record<string, Action> = {
   "sessions/unread": (store, target) => store.markSessionUnread(target),
   "sessions/message": (store, target, body) => store.messageFromDesk(target, ...reply(body)),
   "sessions/keys": (store, target, body) => {
-    const action = oneOf(Object.keys(TMUX_ACTIONS) as TmuxAction[])(fields(body, "body").action, "action");
+    const f = fields(body, "body");
+    const action = oneOf(Object.keys(TMUX_ACTIONS) as TmuxAction[])(f.action, "action");
+    // The instructions the page showed on the button: what is typed is the stored suggestion, sent only when it is still that one.
+    const shown = optional(f.instructions, "instructions", (v, w) => text(v, w, COMPACT_INSTRUCTIONS_MAX)) ?? "";
+    if (shown !== "" && action !== "compact") throw new InputError(`only compact takes instructions, not ${action}`);
     const s = store.getSession(target);
     if (!s?.tmux || !s.process || sessionFinished(s)) {
       throw new InputError("this session does not run in a live tmux pane; use its terminal");
     }
-    sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], action);
+    const instructions = action === "compact" ? (s.compactInstructions?.text ?? "") : "";
+    if (shown !== instructions) {
+      throw new InputError("the session's suggested compact instructions changed since the page showed them; nothing was sent, look at the button again");
+    }
+    sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], action, instructions);
     return { sent: action };
   },
   "sessions/end": (store, target) => {

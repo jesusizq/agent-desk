@@ -1,9 +1,10 @@
 // Claude Code adapter: turns Claude Code hook events into desk records, at no cost to the model.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { latestCompactSuggestion } from "./compact.ts";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { ID_PATTERN, id, newId, slug } from "../../src/core/ids.ts";
-import { type Agent, CHECK_REASON_MAX, type CheckReopened, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
+import { type Agent, CHECK_REASON_MAX, type CheckReopened, compactInstructionsLine, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
 import { fitText, statusLines } from "../../src/core/status.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
 import { checkedOutBranch, locateProject } from "../../src/project/locate.ts";
@@ -70,14 +71,17 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
   const sid = input.sessionId;
   const f = input.raw;
   switch (input.event) {
-    case "SessionStart":
+    case "SessionStart": {
       reviseEnvelopes(store, problems);
-      // Started again (resumed, or the plugins reloaded): what its last end left no longer holds.
-      store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, ...s }) => ({ ...s, state: "waiting" }));
+      // Started again (resumed, or the plugins reloaded): what its last end left no longer holds. Once
+      // compacted, the instructions it suggested were for the context that is gone.
+      const compacted = optional(f.source, "hook input.source", (v, w) => text(v, w, 100)) === "compact";
+      store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, compactInstructions, ...s }) => compact({ ...s, state: "waiting" as const, compactInstructions: compacted ? undefined : compactInstructions }));
       retireContinued(input, ctx, problems);
       recordResumes(input, ctx, problems);
       sweepResumes(input, ctx, problems);
       return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: [instructions(), unreadReviews(input, ctx, problems), handoffText(input, ctx)].filter(Boolean).join("\n\n") } }) };
+    }
 
     case "UserPromptSubmit": {
       const prompt = text(f.prompt ?? "", "hook input.prompt", 10_000_000);
@@ -315,10 +319,13 @@ function endTurn(input: Common, { message, continued, running, shells }: StopInp
   // from the transcript's tail, whichever saw more (a long fix loop pushes the early ones out of it).
   const seen = continued ? reopenedBy(stopRounds(transcriptOf(input))) : undefined;
   settleEarlierEnd(sid, store, continued, problems);
+  const texts = readTurnTexts(input, problems);
+  const suggested = latestCompactSuggestion(message === "" ? texts : [...texts, message]);
   // The turn is over: what its calls were doing, failing in a row or waiting on, ends with it.
   store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, checkReopened: counted, ...s }) =>
     compact({
       ...s,
+      compactInstructions: suggested !== undefined ? { text: suggested, at } : s.compactInstructions,
       checkReopened: continued ? (latestOf(seen, counted) ?? { times: 1, reason: REASON_UNSEEN, at }) : undefined,
       state: "waiting" as const,
       activity: undefined,
@@ -328,7 +335,7 @@ function endTurn(input: Common, { message, continued, running, shells }: StopInp
       sentWhileWorking: s.sentWhileWorking?.map((m) => (m.turnEndedAt ? m : { ...m, turnEndedAt: at })),
     }),
   );
-  recordTurnTexts(input, store, message);
+  recordTurnTexts(input, store, texts, message);
   settleAgents(input, ctx, problems, running);
   if (message) store.addMessage({ sessionId: sid, from: "session", text: message });
   store.mergeMetrics({ sessionId: sid, backgroundShells: shells });
@@ -399,6 +406,18 @@ function refusedUnread(sid: string, transcript: string, store: Store, problems: 
 
 /** One end of the turn and its Stop hooks: their refusals and what they said to the developer, and when the last of them finished. */
 export type StopRound = { refusals: string[]; said: string[]; finishedAt: string };
+
+/** What the session wrote between its tool calls this turn (turnTexts); none when its transcript cannot be read, said in `problems`. */
+function readTurnTexts(input: Common, problems: string[]): string[] {
+  const transcript = transcriptOf(input);
+  if (!transcript.endsWith(".jsonl")) return [];
+  try {
+    return turnTexts(transcript);
+  } catch (error) {
+    problems.push(`could not read this turn's texts in ${transcript}, so neither what it wrote between its tool calls nor a /compact suggested there was read: ${(error as Error).message}`);
+    return [];
+  }
+}
 
 /** The session's transcript the hook input names; empty when it names none. */
 export const transcriptOf = (input: Common) => optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096)) ?? "";
@@ -877,11 +896,9 @@ function titleFrom(prompt: string): string {
  * calls, so it can be read later on the desk (the turn's last message is recorded on its own).
  * Runs at the end of the turn and, at most every few seconds, after the session's tool calls.
  */
-function recordTurnTexts(input: Common, store: Store, last = ""): void {
-  const transcript = optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096));
-  if (!transcript?.endsWith(".jsonl")) return;
+function recordTurnTexts(input: Common, store: Store, texts: readonly string[], last = ""): void {
   const known = new Set(store.listMessages(input.sessionId).slice(-100).map((m) => m.text));
-  for (const said of turnTexts(transcript)) {
+  for (const said of texts) {
     if (known.has(said) || (last !== "" && last.includes(said))) continue;
     store.addMessage({ sessionId: input.sessionId, from: "session", text: said, step: true });
     known.add(said);
@@ -1107,7 +1124,8 @@ function recordActivity(input: Common, ctx: HookContext, problems: string[]): vo
       return compact({ ...rest, ...call, failedAt: streak(failedAt) });
     });
     syncFailingMarker(ctx.store, fails, problems);
-    recordTurnTexts(input, ctx.store);
+    const transcript = transcriptOf(input);
+    if (transcript.endsWith(".jsonl")) recordTurnTexts(input, ctx.store, turnTexts(transcript));
     return;
   }
   const meta = subagentMeta(input, agentId);
@@ -1849,29 +1867,35 @@ function unreadReviews(input: Common, ctx: HookContext, problems: string[]): str
 
 // ── Handoff around a compaction ─────────────────────────────────────────
 
+/** The most of a PreCompact hook's stdout Claude Code takes as the summary's instructions. */
+const PRECOMPACT_STDOUT_MAX = 10_000;
+
 /** Git commands of the handoff each get this long: PreCompact's timeout in hooks/hooks.json is 60 s. */
 const HANDOFF_GIT_MS = 5_000;
 
 /**
  * PreCompact: records where the session's work stands (src/core/status.ts), read now from its records
- * and git, for the session to get back when it starts again compacted. Its stdout tells the compaction
- * summary that this part is kept, so the summary keeps the decisions and next steps. A failure here
- * prints nothing on stdout and never blocks the compaction (exit code 1, not 2).
+ * and git, for the session to get back when it starts again compacted. Its stdout, which Claude Code
+ * takes as the summary's instructions, is the session's latest suggested instructions when the
+ * compaction was given none (`custom_instructions`: null for an automatic one, or a bare `/compact`).
+ * With no suggestion it prints nothing, so the project's own compact instructions apply; a compaction
+ * given its own instructions keeps them. A failure here prints nothing on stdout and never blocks the
+ * compaction (exit code 1, not 2).
  */
 export async function recordHandoff(input: Common, ctx: HookContext): Promise<HookOutput> {
+  const custom = optional(input.raw.custom_instructions, "hook input.custom_instructions", (v, w) => text(v, w, 10_000_000)) ?? "";
   const registered = handleHook(input, ctx);
   const session = ctx.store.getSession(input.sessionId);
   if (!session) throw new Error(`session ${input.sessionId} is not in the store after registering it`);
   const trigger = optional(input.raw.trigger, "hook input.trigger", (v, w) => text(v, w, 20)) === "manual" ? "manual" : "auto";
   const problems: string[] = [];
+  // An automatic compaction mid-turn comes before the Stop that would record this turn's suggestion.
+  const suggested = custom.trim() !== "" ? "" : (latestCompactSuggestion(readTurnTexts(input, problems)) ?? session.compactInstructions?.text ?? "");
+  const instructions = compactInstructionsLine(suggested, PRECOMPACT_STDOUT_MAX);
   const state = await sessionStatus(ctx.store, session, HANDOFF_GIT_MS, problems);
   ctx.store.putHandoff({ sessionId: session.id, at: state.now.toISOString(), trigger, text: fitText(statusLines(state), HANDOFF_MAX, "… (cut here; agent-desk status shows all of it)") });
   const stderr = [registered.stderr, ...problems.map((p) => `agent-desk: ${p}`), state.gitError ? `agent-desk: git not read for the handoff, the last scan kept instead: ${state.gitError}` : ""].filter(Boolean).join("\n");
-  return {
-    code: 0,
-    stdout: "agent-desk recorded this session's branches, agents, open questions, local servers and open reviews, and gives them back to the session after the compaction: the summary need not list them. Keep in it the decisions taken with their reasons, and the next steps.\n",
-    ...(stderr ? { stderr } : {}),
-  };
+  return { code: 0, ...(instructions ? { stdout: instructions } : {}), ...(stderr ? { stderr } : {}) };
 }
 
 /**
