@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
 import { compactSuggestionIn, latestCompactSuggestion } from "../adapters/claude-code/compact.ts";
-import { handleHook, type HookContext, readHookInput, recordHandoff } from "../adapters/claude-code/hooks.ts";
+import { handleHook, type HookContext, readHookInput, recordHandoff, waitForAnswer } from "../adapters/claude-code/hooks.ts";
 import { COMPACT_INSTRUCTIONS_MAX, compactInstructionsLine, readSession } from "../src/core/model.ts";
 import { TMUX_ACTIONS, tmuxKeys } from "../src/core/tmux.ts";
 import type { Store } from "../src/store/store.ts";
@@ -89,6 +89,31 @@ describe("suggested compact instructions", () => {
     assert.equal(instructionsOf(store)?.text, "keep only the next steps", "a resume compacted nothing");
     handleHook(event("SessionStart", { source: "compact" }), ctx);
     assert.equal(instructionsOf(store), undefined, "gone once a compaction is done");
+  });
+
+  it("are for the context they were written in: gone once the developer writes again, unless it is to compact", async () => {
+    const { store, transcript, ctx, event } = setup();
+    fs.writeFileSync(transcript, "");
+    const suggest = () => handleHook(event("Stop", { last_assistant_message: block("/compact keep the plan") }), ctx);
+    const prompt = (text: string) => handleHook(event("UserPromptSubmit", { prompt: text }), ctx);
+
+    suggest();
+    for (const text of ["/compact", "  /compact keep only the plan"]) {
+      prompt(text);
+      assert.equal(instructionsOf(store)?.text, "keep the plan", `${JSON.stringify(text)} is that compaction`);
+    }
+    prompt("/compactify the docs");
+    assert.equal(instructionsOf(store), undefined, "any other prompt moves on from it");
+
+    handleHook(event("Stop", { last_assistant_message: `${block("/compact keep the plan")}\n\nShall I go on first?` }), ctx);
+    assert.equal(instructionsOf(store)?.text, "keep the plan");
+    const [q] = store.openQuestions("cc-1");
+    assert.ok(q, "the turn's end asks the developer");
+    const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 });
+    await new Promise((r) => setTimeout(r, 50));
+    store.answerFromDesk(q.id, "One more thing first.");
+    assert.equal((await waiting).code, 2);
+    assert.equal(instructionsOf(store), undefined, "an answer from the desk moves on from it too");
   });
 
   it("are read from a session record as one line, whatever it holds, and refused when nothing is left of them", () => {
