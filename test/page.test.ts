@@ -2245,8 +2245,10 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         assert.equal(await page.eval<string>(`${button}.innerText.trim()`), run, "the block itself, its command shown");
         assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('#session .conversation pre[data-copy]')].map((b) => b.textContent)"), ["! ls"], "the other block still copies");
         await page.eval(`(() => { window.sentKeys = []; const real = window.fetch; window.fetch = (route, init) => String(route).endsWith('/keys') ? (window.sentKeys.push(JSON.parse(init.body)), Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))) : real(route, init); })()`);
+        const centred = (state: string) => page.eval<number>(`(() => { const b = ${button}.getBoundingClientRect(); const r = document.createRange(); r.selectNodeContents(${button}.querySelector('${state}')); const l = r.getBoundingClientRect(); return Math.abs((l.top + l.bottom) / 2 - (b.top + b.bottom) / 2); })()`);
         await page.click("#session .conversation [data-key=shell]");
         assert.equal(await page.eval<string>(`${button}.getAttribute('aria-label')`), "Run it? Read it first", "the first tap asks for a second");
+        assert.ok((await centred(".arm-ask")) <= 1, "its question centred top to bottom");
         assert.deepEqual(await page.eval<unknown[]>("window.sentKeys"), []);
         // Within the 3 s it asks: page.click would first wait for its countdown bar to stop moving.
         await page.eval(`${button}.click()`);
@@ -2255,6 +2257,7 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         store.updateSession("asks-run", ({ shellSuggestion: _sent, ...s }) => s); // as the server does once it typed it
         await page.waitFor(`${button}?.classList.contains('sent')`);
         assert.equal(await page.eval<string>(`${button}.getAttribute('aria-label')`), "Sent", "it shows it was sent after the command was dropped");
+        assert.ok((await centred(".arm-done")) <= 1, "its outcome centred top to bottom");
         await page.waitFor("document.querySelectorAll('#session .conversation pre[data-copy]').length === 2", 6000);
 
         store.updateSession("asks-run", (s) => ({ ...s, state: "working", shellSuggestion: { text: run, at } }));
