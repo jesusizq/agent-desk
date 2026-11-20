@@ -225,9 +225,10 @@ server types it only when it is one slash command without arguments and still th
 showed, with a space last: typed alone, the command leaves Claude Code's command menu open, listing
 `/ahorro:handoff-load` too, and the space closes it, so Enter sends the line as typed.
 When the reply that ended the session's turn asks the developer to run a shell command (a code block
-of one line starting with `! `, the terminal's shell prefix), the section shows that line whole above
-a **Run in terminal** button that types it and Enter. Claude Code runs a `! ` line in the shell
-without its permission checks, so the second click is the only check: read the line first. The server
+of one line starting with `! `, the terminal's shell prefix), that code block in the conversation
+becomes a two-tap button that types it and Enter (the first tap asks «Run it? Read it first»). Claude
+Code runs a `! ` line in the shell without its permission checks, so the second tap is the only
+check: read the line first. The server
 types it only while the session waits (typed mid-turn it would wait in the terminal's queue), only
 when it equals the session's stored line exactly (no control or invisible characters, no trailing `;`
 or `\`, at most 400 characters) and what the page showed, and once: sending it, the developer writing

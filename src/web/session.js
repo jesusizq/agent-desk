@@ -5,7 +5,7 @@ import { arrive } from "./motion.js";
 import { TEXT } from "./text.js";
 import { agentRows, agentsPart, failedUnseen, sessionAgents, sessionQuiet } from "./agents.js";
 import { askBody, replyBox } from "./answer.js";
-import { controlSection, forgetButton } from "./control.js";
+import { controlSection, forgetButton, runnableShell } from "./control.js";
 import { conversationView, loadConversation, outgoingView } from "./conversation.js";
 import { ago, duration, firstLine, gb, stamp } from "./format.js";
 import { fitNewBoxes, showNeedsYou } from "./layout.js";
@@ -286,7 +286,7 @@ export function chat(s) {
       "div",
       { class: "conversation chat", "aria-busy": !fetched },
       loading,
-      list.length ? conversationView(list, whileWorking) : fetched && !outgoingView(s.id).length ? h("div", { class: "faint" }, TEXT.conversation.none) : null,
+      list.length ? runnableShell(s, conversationView(list, whileWorking), () => redrawPanel(s.id)) : fetched && !outgoingView(s.id).length ? h("div", { class: "faint" }, TEXT.conversation.none) : null,
       outgoingView(s.id),
       workingNow(s, list),
     ),

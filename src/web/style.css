@@ -768,8 +768,9 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 /* A control that asks for a second click: both labels in one cell, so its width never changes; armed, it is
    filled and a line runs out over the 3 s it waits (ARM_MS in control.js). */
 .arm { position: relative; overflow: hidden; }
-.shell-ask { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 10px; }
-.shell-ask code { overflow-wrap: anywhere; white-space: pre-wrap; }
+button.shell-run { display: grid; width: 100%; justify-items: start; text-align: start; padding: 0; }
+button.shell-run pre { margin: 0; width: 100%; box-sizing: border-box; white-space: pre-wrap; overflow-wrap: anywhere; }
+button.shell-run.armed, button.shell-run.fired { justify-items: center; min-height: 3em; }
 .compact-with { display: inline-flex; gap: 6px; max-width: min(34ch, 62vw); }
 .compact-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-weight: 400; }
 .arm-lbl { display: inline-grid; }

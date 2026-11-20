@@ -10,6 +10,45 @@ import { asksOf, isLive, label, ON_THIS_MACHINE, ui } from "./state.js";
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Metrics} Metrics */
 
+/** The last shell command shown on a button, kept so that button can show it was sent after the server dropped it. */
+let shownShell = { key: "", text: "" };
+/**
+ * The reply's code block holding the shell command the session asked for, made a two-tap button that
+ * runs it, showing the command until armed.
+ * @param {Session} s @param {string} shell @param {() => void} redraw
+ * @param {string} key the button's key: the one it was fired under, once the server dropped the command
+ */
+function shellButton(s, shell, redraw, key) {
+  shownShell = { key, text: shell };
+  return armedButton({
+    key,
+    id: "shell",
+    text: shell,
+    idle: h("pre", {}, shell),
+    ask: TEXT.control.shellAsk,
+    title: TEXT.control.shellHint,
+    cls: "secondary shell-run",
+    redraw,
+    act: () => post(`/api/sessions/${s.id}/keys`, { action: "shell", command: shell }).then(() => toast(TEXT.control.sent(TEXT.control.shellSent, label(s)))),
+  });
+}
+
+/**
+ * Makes the reply's code block holding the shell command the session asks for a two-tap button that
+ * runs it, while the session waits in tmux; once sent, until its outcome has shown.
+ * @param {Session} s @param {Node[]} view @param {() => void} redraw
+ */
+export function runnableShell(s, view, redraw) {
+  const asked = s.tmux && s.state === "waiting" ? (s.shellSuggestion?.text ?? "") : "";
+  const shell = asked || (ui.fired?.key === shownShell.key && shownShell.key.startsWith(`${s.id} shell `) ? shownShell.text : "");
+  if (!shell) return view;
+  const blocks = view.flatMap((n) => (n instanceof Element ? [...n.querySelectorAll("pre[data-copy]")] : []));
+  const block = blocks.reverse().find((b) => b.textContent === shell);
+  // Sent: the server dropped the command, so the button keeps the key it was fired under.
+  if (block) block.replaceWith(shellButton(s, shell, redraw, asked ? `${s.id} shell ${s.shellSuggestion?.at ?? ""}` : shownShell.key));
+  return view;
+}
+
 /**
  * A button that acts only on a second click within 3 s, so a stray click does nothing. Armed in
  * `ui`, not in the button: what shows it redraws as the session changes.
@@ -125,18 +164,6 @@ export function controlSection(s, m, redraw) {
     fresh && fresh !== "/compact"
       ? armedButton({ key: `${s.id} fresh ${fresh}`, id: "fresh", text: fresh, ask: TEXT.control.confirm(fresh), title: TEXT.control.freshHint, redraw, act: () => post(`/api/sessions/${s.id}/keys`, { action: "fresh", command: fresh }).then(() => toast(TEXT.control.sent(fresh, label(s)))) })
       : null;
-  // A shell command the session's last reply asked for, shown whole: the server types it only while
-  // it is still this one and the session waits.
-  const shell = s.tmux && s.state === "waiting" ? (s.shellSuggestion?.text ?? "") : "";
-  const shellRow = shell
-    ? h(
-        "div",
-        { class: "shell-ask" },
-        h("span", { class: "faint" }, TEXT.control.shellTitle),
-        h("code", {}, shell),
-        armedButton({ key: `${s.id} shell ${s.shellSuggestion?.at}`, id: "shell", text: TEXT.control.shellRun, ask: TEXT.control.shellAsk, title: TEXT.control.shellHint, redraw, act: () => post(`/api/sessions/${s.id}/keys`, { action: "shell", command: shell }).then(() => toast(TEXT.control.sent(TEXT.control.shellSent, label(s)))) }),
-      )
-    : null;
   // The terminal shows a dialog (a permission prompt, a question with options) only while the
   // session has one open; the keys that answer it are offered only then.
   const asksInDialog = asksOf(s.id).some((q) => q.kind === "permission" || q.kind === "question");
@@ -146,7 +173,6 @@ export function controlSection(s, m, redraw) {
           "div",
           { class: "rsec" },
           h("h4", {}, TEXT.control.title),
-          shellRow,
           h(
             "div",
             { class: "row wt-actions" },
