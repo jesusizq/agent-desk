@@ -72,6 +72,8 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
   const f = input.raw;
   switch (input.event) {
     case "SessionStart": {
+      // A sub-agent compacted its own context: the session's state, suggestion and protocol are not its.
+      if (bySubAgent(input)) return { code: 0 };
       reviseEnvelopes(store, problems);
       // Started again (resumed, or the plugins reloaded): what its last end left no longer holds. Once
       // compacted, the instructions it suggested were for the context that is gone.
@@ -418,6 +420,9 @@ function readTurnTexts(input: Common, problems: string[]): string[] {
     return [];
   }
 }
+
+/** Whether a sub-agent of the session fired the hook (Claude Code passes the session's own id with it). */
+const bySubAgent = (input: Common) => typeof input.raw.agent_id === "string" && input.raw.agent_id !== "";
 
 /** The session's transcript the hook input names; empty when it names none. */
 export const transcriptOf = (input: Common) => optional(input.raw.transcript_path, "hook input.transcript_path", (v, w) => text(v, w, 4096)) ?? "";
@@ -1880,9 +1885,10 @@ const HANDOFF_GIT_MS = 5_000;
  * compaction was given none (`custom_instructions`: null for an automatic one, or a bare `/compact`).
  * With no suggestion it prints nothing, so the project's own compact instructions apply; a compaction
  * given its own instructions keeps them. A failure here prints nothing on stdout and never blocks the
- * compaction (exit code 1, not 2).
+ * compaction (exit code 1, not 2). A sub-agent compacting its own context gets nothing of the session's.
  */
 export async function recordHandoff(input: Common, ctx: HookContext): Promise<HookOutput> {
+  if (bySubAgent(input)) return { code: 0 };
   const custom = optional(input.raw.custom_instructions, "hook input.custom_instructions", (v, w) => text(v, w, 10_000_000)) ?? "";
   const registered = handleHook(input, ctx);
   const session = ctx.store.getSession(input.sessionId);
@@ -2177,7 +2183,7 @@ export async function waitForPermission(sessionId: string, questionId: string, s
  * before going on. A sub-agent's tool call leaves them for the session itself.
  */
 export function deliverWhileWorking(input: Common, store: Store): HookOutput {
-  if (typeof input.raw.agent_id === "string" && input.raw.agent_id !== "") return { code: 0 };
+  if (bySubAgent(input)) return { code: 0 };
   const entries = store.takeInbox(input.sessionId, forTheTurn(store));
   if (entries.length === 0) return { code: 0 };
   const additionalContext = entries

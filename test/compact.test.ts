@@ -128,6 +128,15 @@ describe("suggested compact instructions", () => {
     fs.writeFileSync(transcript, line({ type: "user", message: { content: "go on" } }) + said(block("/compact from this very turn")) + line({ type: "user", message: { content: [{ type: "tool_result" }] } }));
     assert.equal((await auto()).stdout, "from this very turn");
 
+    // A sub-agent compacting its own context fires both hooks with the session's id and transcript.
+    const sub = await recordHandoff(event("PreCompact", { trigger: "auto", custom_instructions: null, agent_id: "a1" }), ctx);
+    assert.deepEqual(sub, { code: 0 }, "a sub-agent's summary keeps its own task, not the session's suggestion");
+    store.updateSession("cc-1", (s) => ({ ...s, state: "working" as const }));
+    const kept = instructionsOf(store);
+    assert.deepEqual(handleHook(event("SessionStart", { source: "compact", agent_id: "a1" }), ctx), { code: 0 }, "nor gets the protocol");
+    assert.deepEqual(instructionsOf(store), kept, "the session's suggestion stays");
+    assert.equal(store.getSession("cc-1")?.state, "working", "the session at work is not marked waiting");
+
     handleHook(event("SessionStart", { source: "compact" }), ctx);
     // The compaction summary starts the transcript again: what came before it is the compacted context.
     fs.appendFileSync(transcript, line({ type: "system", subtype: "compact_boundary" }) + line({ type: "user", isCompactSummary: true, message: { content: "This session is being continued…" } }));
