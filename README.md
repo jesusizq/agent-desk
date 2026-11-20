@@ -224,6 +224,15 @@ When the session's adapter names another command that starts the session afresh 
 server types it only when it is one slash command without arguments and still the one the page
 showed, with a space last: typed alone, the command leaves Claude Code's command menu open, listing
 `/ahorro:handoff-load` too, and the space closes it, so Enter sends the line as typed.
+When the reply that ended the session's turn asks the developer to run a shell command (a code block
+of one line starting with `! `, the terminal's shell prefix), the section shows that line whole above
+a **Run in terminal** button that types it and Enter. Claude Code runs a `! ` line in the shell
+without its permission checks, so the second click is the only check: read the line first. The server
+types it only while the session waits (typed mid-turn it would wait in the terminal's queue), only
+when it equals the session's stored line exactly (no control or invisible characters, no trailing `;`
+or `\`, at most 400 characters) and what the page showed, and once: sending it, the developer writing
+to the session or the next turn's end removes it. Verified on 2026-11-20 with Claude Code in tmux:
+`! echo … > file`, typed this way, ran and wrote the file.
 
 To make every VS Code terminal a tmux session that ends when its tab closes, add to VS Code's user
 settings:

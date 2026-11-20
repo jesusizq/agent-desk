@@ -242,6 +242,11 @@ export const TEXT = {
     /** What a confirmed control shows on itself: on its way, then how it went. */
     fired: { sending: "Sending…", sent: "Sent", failed: "Not sent" },
     freshHint: "Starts the session afresh as its tool does it (a handoff to load in a new conversation)",
+    shellTitle: "Its last reply asks you to run",
+    shellRun: "Run in terminal",
+    shellAsk: "Run it? Read it first",
+    shellHint: "Types this line into the session's terminal: its ! prefix runs it in the shell, outside the session's permissions",
+    shellSent: "the shell command",
     /** A key short enough that "Send" would double its button. @param {string} what */
     confirmShort: (what) => `${what}?`,
     /** @param {string} what @param {string} where */

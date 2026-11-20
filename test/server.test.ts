@@ -243,7 +243,7 @@ describe("server", () => {
   it("sends terminal keys only from the allow-list, and only to a session in a live tmux pane", async () => {
     const bad = await post("/api/sessions/s1/keys", { action: "rm -rf /" });
     assert.equal(bad.status, 400);
-    assert.match(((await bad.json()) as { error: string }).error, /action: expected one of compact, fresh, interrupt/);
+    assert.match(((await bad.json()) as { error: string }).error, /action: expected one of compact, fresh, shell, interrupt/);
     const noTmux = await post("/api/sessions/s1/keys", { action: "compact" });
     assert.equal(noTmux.status, 400);
     assert.match(((await noTmux.json()) as { error: string }).error, /does not run in a live tmux pane/);
@@ -295,12 +295,31 @@ describe("server", () => {
         assert.equal(stale.status, 400, `shown ${JSON.stringify(shown)}`);
         assert.match(((await stale.json()) as { error: string }).error, /changed since the page showed it; nothing was sent/);
       }
-      assert.equal((await post("/api/sessions/tm1/keys", { action: "enter", command: "/ahorro:handoff" })).status, 400, "only fresh takes a command");
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "enter", command: "/ahorro:handoff" })).status, 400, "only fresh and shell take a command");
       store.mergeMetrics({ sessionId: "tm1", coldResume: { command: "/x; kill-server" } });
       assert.equal((await post("/api/sessions/tm1/keys", { action: "fresh", command: "/x; kill-server" })).status, 400, "an adapter's command with more than itself is never typed");
       store.mergeMetrics({ sessionId: "tm1", coldResume: { command: "/ahorro:handoff" } });
       assert.equal((await post("/api/sessions/tm1/keys", { action: "fresh", command: "/ahorro:handoff" })).status, 200);
       await shows([...bare, `/compact ${suggested}`, `/compact ${suggested}`, "/ahorro:handoff", "/ahorro:handoff"]);
+
+      // A shell command the session's last reply asked for: typed only while it is the one shown and the session waits, then gone.
+      const run = "! echo ran";
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "shell", command: run })).status, 400, "none asked for");
+      store.updateSession("tm1", (s) => ({ ...s, state: "working", shellSuggestion: { text: run, at: new Date().toISOString() } }));
+      const busy = await post("/api/sessions/tm1/keys", { action: "shell", command: run });
+      assert.equal(busy.status, 400);
+      assert.match(((await busy.json()) as { error: string }).error, /the session is working/);
+      store.updateSession("tm1", (s) => ({ ...s, state: "waiting" }));
+      for (const shown of [undefined, "", "! echo other"]) {
+        const stale = await post("/api/sessions/tm1/keys", { action: "shell", ...(shown === undefined ? {} : { command: shown }) });
+        assert.equal(stale.status, 400, `shown ${JSON.stringify(shown)}`);
+        assert.match(((await stale.json()) as { error: string }).error, /changed or is gone since the page showed it; nothing was sent/);
+      }
+      const typedBefore = screen();
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "shell", command: run })).status, 200);
+      await shows([...typedBefore, run, run]);
+      assert.equal(store.getSession("tm1")?.shellSuggestion, undefined, "sent once: a second tap types nothing");
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "shell", command: run })).status, 400);
 
       // The widest instructions kept, typed whole: tmux refuses a command of more than about 16 KiB. A
       // pane that keeps what it reads, past the 4 KiB a canonical-mode line holds, as a full-screen prompt does.

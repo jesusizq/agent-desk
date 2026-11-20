@@ -92,6 +92,7 @@ export function readSession(value: unknown, where = "session"): Session {
     sentWhileWorking: optional(f.sentWhileWorking, `${where}.sentWhileWorking`, (v, w) => list(v, w, readSent, 20)),
     checkReopened: optional(f.checkReopened, `${where}.checkReopened`, readCheckReopened),
     compactInstructions: optional(f.compactInstructions, `${where}.compactInstructions`, readCompactInstructions),
+    shellSuggestion: optional(f.shellSuggestion, `${where}.shellSuggestion`, readShellSuggestion),
   });
 }
 
@@ -102,6 +103,27 @@ function readCompactInstructions(value: unknown, where: string): { text: string;
   const line = compactInstructionsLine(t);
   if (line === "") throw new InputError(`${where}.text: nothing is left of ${JSON.stringify(t.slice(0, 200))} once made one line; expected instructions with words`);
   return { text: line, at: isoTime(f.at, `${where}.at`) };
+}
+
+function readShellSuggestion(value: unknown, where: string): { text: string; at: string } {
+  const f = fields(value, where);
+  const t = nonEmpty(f.text, `${where}.text`, SHELL_SUGGESTION_MAX);
+  if (shellSuggestionLine(t) !== t) throw new InputError(`${where}.text: ${JSON.stringify(t.slice(0, 200))} is not one line starting with "! " that types nothing but itself`);
+  return { text: t, at: isoTime(f.at, `${where}.at`) };
+}
+
+/** The most characters of a shell command a session suggests the developer run in its terminal: one typed piece. */
+export const SHELL_SUGGESTION_MAX = 400;
+
+/**
+ * A shell command for the terminal's `!` prefix, exactly as written, when it is one line that starts
+ * with `! ` and that compactInstructionsLine leaves unchanged (no control or invisible characters, no
+ * trailing `;` or `\`); "" otherwise, so the page never shows a command other than the one typed.
+ */
+export function shellSuggestionLine(value: string): string {
+  const t = value.trim();
+  if (t.length > SHELL_SUGGESTION_MAX || !/^! \S/.test(t)) return "";
+  return compactInstructionsLine(t) === t ? t : "";
 }
 
 /** The most instructions a compaction is given, in characters. */

@@ -2,7 +2,7 @@
 // Every call is `tmux` with an argument list (no shell), against the socket the session reported.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { compactInstructionsLine, TMUX_PANE } from "./model.ts";
+import { compactInstructionsLine, shellSuggestionLine, TMUX_PANE } from "./model.ts";
 
 const TIMEOUT_MS = 3000;
 
@@ -48,6 +48,7 @@ export function outerTerminal(clients: number[]): string | undefined {
 export const TMUX_ACTIONS = {
   compact: [["-l", "/compact"], ["Enter"]],
   fresh: [], // the command the session's adapter named (FRESH_COMMAND), typed by tmuxKeys
+  shell: [], // the shell command the session's last reply asked for (shellSuggestionLine), typed by tmuxKeys
   interrupt: [["Escape"]],
   enter: [["Enter"]],
   "option-1": [["-l", "1"]],
@@ -74,12 +75,16 @@ export const FRESH_COMMAND = /^\/[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?$/;
  * The keys of an action. `compact` may carry the instructions the session suggested for its
  * compaction, typed as one line after `/compact` (compactInstructionsLine), so they can type no other
  * key; without them it is `/compact` alone. `fresh` carries the command that starts the session
- * afresh. A typed line ends in a space, which closes a completion menu its last word opened (an
+ * afresh; `shell`, the `! ` shell command the session's last reply asked for. A typed line ends in a space, which closes a completion menu its last word opened (an
  * `@file`, the command menu), so Enter sends it instead of picking from that menu.
  */
 export function tmuxKeys(action: TmuxAction, text = ""): readonly (readonly string[])[] {
   if (action === "fresh") {
     if (!FRESH_COMMAND.test(text)) throw new Error(`${JSON.stringify(text.slice(0, 80))} is not one slash command without arguments; nothing was sent`);
+    return [["-l", `${text} `], ["Enter"]];
+  }
+  if (action === "shell") {
+    if (text === "" || shellSuggestionLine(text) !== text) throw new Error(`${JSON.stringify(text.slice(0, 80))} is not one line starting with "! " that types nothing but itself; nothing was sent`);
     return [["-l", `${text} `], ["Enter"]];
   }
   if (text === "") return TMUX_ACTIONS[action];

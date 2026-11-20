@@ -9,7 +9,7 @@ import { FRESH_COMMAND, sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "..
 import { ID_PATTERN, id } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
-import { COMPACT_INSTRUCTIONS_MAX, type DeskState, type DiskWarning, imageIds, type ProjectScan, type ReviewState, reviewNote, type Session, type SessionBranches } from "../core/model.ts";
+import { COMPACT_INSTRUCTIONS_MAX, type DeskState, type DiskWarning, imageIds, type ProjectScan, type ReviewState, reviewNote, type Session, SHELL_SUGGESTION_MAX, type SessionBranches } from "../core/model.ts";
 import { MACHINE, type MachineSources, machineWarnings } from "../core/machine.ts";
 import { agentsAtLoadGate } from "../project/busy.ts";
 import { OPTIONS_TEXT_MAX, optionsText } from "../core/options.ts";
@@ -173,8 +173,8 @@ const ACTIONS: Record<string, Action> = {
     // What the page showed on the button: what is typed is what the session stored, sent only while it is still that.
     const shown = optional(f.instructions, "instructions", (v, w) => text(v, w, COMPACT_INSTRUCTIONS_MAX)) ?? "";
     if (shown !== "" && action !== "compact") throw new InputError(`only compact takes instructions, not ${action}`);
-    const shownCommand = optional(f.command, "command", (v, w) => text(v, w, 200)) ?? "";
-    if (shownCommand !== "" && action !== "fresh") throw new InputError(`only fresh takes a command, not ${action}`);
+    const shownCommand = optional(f.command, "command", (v, w) => text(v, w, SHELL_SUGGESTION_MAX)) ?? "";
+    if (shownCommand !== "" && action !== "fresh" && action !== "shell") throw new InputError(`only fresh and shell take a command, not ${action}`);
     const s = store.getSession(target);
     if (!s?.tmux || !s.process || sessionFinished(s)) {
       throw new InputError("this session does not run in a live tmux pane; use its terminal");
@@ -182,6 +182,17 @@ const ACTIONS: Record<string, Action> = {
     const instructions = action === "compact" ? (s.compactInstructions?.text ?? "") : "";
     if (shown !== instructions) {
       throw new InputError("the session's suggested compact instructions changed since the page showed them; nothing was sent, look at the button again");
+    }
+    if (action === "shell") {
+      const asked = s.shellSuggestion?.text ?? "";
+      if (asked === "" || shownCommand !== asked) {
+        throw new InputError("the shell command this session's last reply asked for changed or is gone since the page showed it; nothing was sent, look at the button again");
+      }
+      // Typed while the session works, it would wait in the terminal's queue and run at some later step.
+      if (s.state !== "waiting") throw new InputError("the session is working; a shell command is typed only while it waits; nothing was sent");
+      sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], "shell", asked);
+      store.updateSession(target, ({ shellSuggestion: _sent, ...rest }) => rest);
+      return { sent: action };
     }
     const command = action === "fresh" ? (store.getMetrics(target)?.coldResume?.command ?? "") : "";
     if (action === "fresh" && !FRESH_COMMAND.test(command)) {

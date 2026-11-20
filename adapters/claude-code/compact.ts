@@ -1,6 +1,7 @@
-// The instructions a session suggests compacting its context with: the content of a fenced code block
-// of its reply that starts with `/compact ` (the developer's global instructions ask for that form).
-import { compactInstructionsLine } from "../../src/core/model.ts";
+// What a session's reply suggests the developer type in its terminal: the instructions to compact its
+// context with (a fenced code block starting with `/compact `, the form the developer's global
+// instructions ask for), and a shell command to run (a one-line block starting with `! `).
+import { compactInstructionsLine, shellSuggestionLine } from "../../src/core/model.ts";
 
 const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
 const COMMAND = /^\/compact\s/;
@@ -11,11 +12,32 @@ const COMMAND = /^\/compact\s/;
  */
 export function compactSuggestionIn(markdown: string): string | undefined {
   let found: string | undefined;
-  let open: { char: string; size: number; body: string[] } | undefined;
-  const close = () => {
-    const content = open?.body.join("\n").trim() ?? "";
+  for (const content of fencedBlocks(markdown)) {
     const line = COMMAND.test(content) ? compactInstructionsLine(content.slice("/compact".length)) : "";
     if (line !== "") found = line;
+  }
+  return found;
+}
+
+/**
+ * The shell command of the last code block in `markdown` that is one line starting with `! ` (the
+ * terminal's shell prefix), exactly as written (shellSuggestionLine); undefined when it has none.
+ */
+export function shellSuggestionIn(markdown: string): string | undefined {
+  let found: string | undefined;
+  for (const content of fencedBlocks(markdown)) {
+    const line = content.includes("\n") ? "" : shellSuggestionLine(content);
+    if (line !== "") found = line;
+  }
+  return found;
+}
+
+/** The trimmed contents of the fenced code blocks of `markdown`, in order. */
+function fencedBlocks(markdown: string): string[] {
+  const blocks: string[] = [];
+  let open: { char: string; size: number; body: string[] } | undefined;
+  const close = () => {
+    blocks.push(open?.body.join("\n").trim() ?? "");
     open = undefined;
   };
   for (const row of markdown.split(/\r?\n/)) {
@@ -31,7 +53,7 @@ export function compactSuggestionIn(markdown: string): string | undefined {
     else open.body.push(row);
   }
   if (open) close(); // a block left open runs to the end of the reply
-  return found;
+  return blocks;
 }
 
 /** The latest suggestion among the session's texts, oldest first; undefined when none has one. */

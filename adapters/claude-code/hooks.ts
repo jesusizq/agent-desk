@@ -1,7 +1,7 @@
 // Claude Code adapter: turns Claude Code hook events into desk records, at no cost to the model.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { latestCompactSuggestion } from "./compact.ts";
+import { latestCompactSuggestion, shellSuggestionIn } from "./compact.ts";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { ID_PATTERN, id, newId, slug } from "../../src/core/ids.ts";
 import { type Agent, CHECK_REASON_MAX, type CheckReopened, compactInstructionsLine, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
@@ -107,7 +107,8 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // A suggested compaction is for the context it was written in: what the developer writes next
       // moves on from it, unless it is that compaction.
       const compacting = /^\/compact(\s|$)/.test(prompt.trimStart());
-      store.updateSession(sid, ({ checkReopened: _reopened, compactInstructions, ...s }) =>
+      // A shell command the last reply asked for is for that reply only, as is a suggested compaction.
+      store.updateSession(sid, ({ checkReopened: _reopened, compactInstructions, shellSuggestion: _shell, ...s }) =>
         compact({
           ...s,
           compactInstructions: compacting ? compactInstructions : undefined,
@@ -327,11 +328,14 @@ function endTurn(input: Common, { message, continued, running, shells }: StopInp
   settleEarlierEnd(sid, store, continued, problems);
   const texts = readTurnTexts(input, problems);
   const suggested = latestCompactSuggestion(message === "" ? texts : [...texts, message]);
+  // Only the reply that ends the turn: a command asked for earlier in it was already answered or dropped.
+  const shell = shellSuggestionIn(message !== "" ? message : (texts.at(-1) ?? ""));
   // The turn is over: what its calls were doing, failing in a row or waiting on, ends with it.
   store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, checkReopened: counted, ...s }) =>
     compact({
       ...s,
       compactInstructions: suggested !== undefined ? { text: suggested, at } : s.compactInstructions,
+      shellSuggestion: shell !== undefined ? { text: shell, at } : undefined,
       checkReopened: continued ? (latestOf(seen, counted) ?? { times: 1, reason: REASON_UNSEEN, at }) : undefined,
       state: "waiting" as const,
       activity: undefined,
@@ -1960,8 +1964,8 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
     if (answers.length > 0) {
       const message = answers.map((a) => deliveryText(a, imageFiles(store, a.images))).join("\n\n");
       try {
-        // The developer answered: a compaction suggested before it is for a context that moved on.
-        store.updateSession(sessionId, ({ compactInstructions: _suggested, ...s }) => ({ ...s, state: "working" }));
+        // The developer answered: a compaction or shell command suggested before it is for a context that moved on.
+        store.updateSession(sessionId, ({ compactInstructions: _suggested, shellSuggestion: _shell, ...s }) => ({ ...s, state: "working" }));
       } catch (error) {
         // The answers are already taken: they must reach the session even if the state cannot be saved.
         return { code: 2, stderr: `${message}\n\n(agent-desk could not mark the session as working: ${(error as Error).message})` };

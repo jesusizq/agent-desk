@@ -125,6 +125,18 @@ export function controlSection(s, m, redraw) {
     fresh && fresh !== "/compact"
       ? armedButton({ key: `${s.id} fresh ${fresh}`, id: "fresh", text: fresh, ask: TEXT.control.confirm(fresh), title: TEXT.control.freshHint, redraw, act: () => post(`/api/sessions/${s.id}/keys`, { action: "fresh", command: fresh }).then(() => toast(TEXT.control.sent(fresh, label(s)))) })
       : null;
+  // A shell command the session's last reply asked for, shown whole: the server types it only while
+  // it is still this one and the session waits.
+  const shell = s.tmux && s.state === "waiting" ? (s.shellSuggestion?.text ?? "") : "";
+  const shellRow = shell
+    ? h(
+        "div",
+        { class: "shell-ask" },
+        h("span", { class: "faint" }, TEXT.control.shellTitle),
+        h("code", {}, shell),
+        armedButton({ key: `${s.id} shell ${s.shellSuggestion?.at}`, id: "shell", text: TEXT.control.shellRun, ask: TEXT.control.shellAsk, title: TEXT.control.shellHint, redraw, act: () => post(`/api/sessions/${s.id}/keys`, { action: "shell", command: shell }).then(() => toast(TEXT.control.sent(TEXT.control.shellSent, label(s)))) }),
+      )
+    : null;
   // The terminal shows a dialog (a permission prompt, a question with options) only while the
   // session has one open; the keys that answer it are offered only then.
   const asksInDialog = asksOf(s.id).some((q) => q.kind === "permission" || q.kind === "question");
@@ -134,6 +146,7 @@ export function controlSection(s, m, redraw) {
           "div",
           { class: "rsec" },
           h("h4", {}, TEXT.control.title),
+          shellRow,
           h(
             "div",
             { class: "row wt-actions" },

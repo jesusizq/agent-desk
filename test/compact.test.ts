@@ -6,9 +6,9 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { compactSuggestionIn, latestCompactSuggestion } from "../adapters/claude-code/compact.ts";
+import { compactSuggestionIn, latestCompactSuggestion, shellSuggestionIn } from "../adapters/claude-code/compact.ts";
 import { handleHook, type HookContext, readHookInput, recordHandoff, waitForAnswer } from "../adapters/claude-code/hooks.ts";
-import { COMPACT_INSTRUCTIONS_MAX, compactInstructionsLine, readSession } from "../src/core/model.ts";
+import { COMPACT_INSTRUCTIONS_MAX, compactInstructionsLine, readSession, SHELL_SUGGESTION_MAX } from "../src/core/model.ts";
 import { TMUX_ACTIONS, tmuxKeys } from "../src/core/tmux.ts";
 import type { Store } from "../src/store/store.ts";
 import { tempHome, testStore } from "./helpers.ts";
@@ -211,6 +211,49 @@ describe("suggested compact instructions", () => {
     assert.deepEqual(tmuxKeys("fresh", "/clear"), [["-l", "/clear "], ["Enter"]]);
     for (const bad of ["", "/", "ahorro:handoff", "/ahorro:handoff now", "/ahorro:handoff;", "/a\nb", "/x\x1b[2J", "/Handoff", "/a:b:c"]) {
       assert.throws(() => tmuxKeys("fresh", bad), /is not one slash command without arguments; nothing was sent/, JSON.stringify(bad));
+    }
+  });
+
+  it("ask the developer for a shell command: the last one-line `! ` block of the reply that ends the turn, exactly as written", async () => {
+    const run = "! python3 /tmp/agent-desk-rules.py";
+    assert.equal(shellSuggestionIn(`Run this:\n\n${block("! ls")}\n\nthen:\n\n${block(run)}\n\n${block("/compact keep it")}`), run, "the last one");
+    for (const none of [block("!ls"), block("! ls\n! rm -rf ~"), block("! ls;"), block("! ls \\"), block("! a\x1b[2J"), block("! a  b"), block("ls"), block(`! ${"a".repeat(SHELL_SUGGESTION_MAX)}`), "`! ls` inline", "! ls"]) {
+      assert.equal(shellSuggestionIn(none), undefined, JSON.stringify(none));
+    }
+
+    const { store, transcript, ctx, event } = setup();
+    const shellOf = () => store.getSession("cc-1")?.shellSuggestion?.text;
+    fs.writeFileSync(transcript, said(`Earlier: ${block("! rm -rf build")}`));
+    handleHook(event("Stop", { last_assistant_message: `Please run:\n\n${block(run)}` }), ctx);
+    assert.equal(shellOf(), run);
+    handleHook(event("Stop", { last_assistant_message: "Done, nothing to run." }), ctx);
+    assert.equal(shellOf(), undefined, "not from earlier in the turn, nor from an earlier turn");
+    handleHook(event("Stop", { last_assistant_message: block(run) }), ctx);
+    handleHook(event("UserPromptSubmit", { prompt: "go on" }), ctx);
+    assert.equal(shellOf(), undefined, "gone once the developer writes");
+
+    handleHook(event("Stop", { last_assistant_message: `${block(run)}\n\nShall I go on after it?` }), ctx);
+    assert.equal(shellOf(), run);
+    const [q] = store.openQuestions("cc-1");
+    assert.ok(q, "the turn's end asks the developer");
+    const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 });
+    await new Promise((r) => setTimeout(r, 50));
+    store.answerFromDesk(q.id, "No.");
+    assert.equal((await waiting).code, 2);
+    assert.equal(shellOf(), undefined, "gone once the developer answers from the desk");
+
+    const at = new Date().toISOString();
+    const session = { id: "s1", provider: "Test", project: { name: "p", dir: "/p" }, state: "waiting", startedAt: at, updatedAt: at };
+    assert.equal(readSession({ ...session, shellSuggestion: { text: run, at } }).shellSuggestion?.text, run);
+    for (const text of ["! ls\nrm x", "ls", "! ls;", "! a\u202eb"]) {
+      assert.throws(() => readSession({ ...session, shellSuggestion: { text, at } }), /shellSuggestion\.text/, JSON.stringify(text));
+    }
+  });
+
+  it("type a shell command the session asked for as one line, only when it is one", () => {
+    assert.deepEqual(tmuxKeys("shell", "! python3 /tmp/x.py"), [["-l", "! python3 /tmp/x.py "], ["Enter"]]);
+    for (const bad of ["", "ls", "! ls\nrm -rf ~", "! ls;", "! a\x03", " ! ls"]) {
+      assert.throws(() => tmuxKeys("shell", bad), /is not one line starting with "! " that types nothing but itself; nothing was sent/, JSON.stringify(bad));
     }
   });
 });

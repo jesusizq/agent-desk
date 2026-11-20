@@ -94,6 +94,12 @@ export type Session = {
    * older suggestion never compacts the context that followed it.
    */
   compactInstructions?: { text: string; at: string };
+  /**
+   * The shell command the session's last reply asked the developer to run in its terminal (a code
+   * block of one line starting with `! `, the terminal's shell prefix), and when its adapter read it:
+   * one line (`shellSuggestionLine`). Gone once the developer writes to the session or it is sent.
+   */
+  shellSuggestion?: { text: string; at: string };
 };
 
 export type CheckReopened = { times: number; reason: string; at: string };
