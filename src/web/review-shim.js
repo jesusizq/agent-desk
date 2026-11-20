@@ -324,13 +324,133 @@ textarea { box-sizing: border-box; display: block; width: 100%; min-height: 3.2e
       }
       c.paint();
     }
+    fold();
   };
   const paint = () => {
     for (const g of shown()) {
       for (const o of g.options) controls.get(o.el)?.paint();
       groupControls.get(g.name)?.paint();
     }
+    for (const s of switches.values()) s.paint();
   };
+
+  // ---------- Narrow screens: options side by side, one at a time ----------
+  // Options laid out side by side are each too narrow to read on a phone: there they show one at a
+  // time, full width, under a switch that stays at the top while its options scroll by.
+  const NARROW = matchMedia("(max-width: 720px)");
+  const SWITCH_LOOK = `
+:host { position: sticky; top: 4px; z-index: 2147483647; margin: 0 0 8px; }
+.switch { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12); }
+.switch button { flex: 1 1 0; min-width: 0; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switch button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.mark { margin-left: 6px; }
+.mark.choose { color: var(--done); } .mark.iterate { color: var(--accent); } .mark.discard { color: var(--danger); }
+button[aria-pressed="true"] .mark { color: inherit; }`;
+  const PICK_MARK = /** @type {const} */ ({ choose: "✓", iterate: "✎", discard: "✕" });
+  // What the switch sets on the options, and what the page had there before, to put back on a wide screen.
+  const SWITCHED = ["display", "grid-column", "flex", "max-width", "min-width"];
+  /** The option shown takes the whole row, whether the page lays it out as a grid or a flex row. @type {[string, string][]} */
+  const WHOLE = [["grid-column", "1 / -1"], ["flex", "1 1 100%"], ["max-width", "100%"], ["min-width", "0"]];
+  /** @typedef {{ host: HTMLElement, paint: () => void, options: { label: string, el: HTMLElement, before: string[] }[], readonly shown: number }} Switch */
+  /** @type {Map<Element, Switch>} */
+  const switches = new Map();
+  /** Whether these options share a row: tested before the switch hides any of them. @param {Element[]} els */
+  const sideBySide = (els) => {
+    const boxes = els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0 && r.height > 0);
+    return boxes.some((a, i) => boxes.some((b, j) => j > i && a.top < b.bottom && b.top < a.bottom && Math.abs(a.left - b.left) > 1));
+  };
+  /** @param {Switch} s */
+  const showOne = (s) =>
+    s.options.forEach((o, i) => {
+      if (i !== s.shown) return o.el.style.setProperty("display", "none", "important");
+      o.el.style.removeProperty("display");
+      for (const [prop, value] of WHOLE) o.el.style.setProperty(prop, value, "important");
+    });
+  /** @param {Switch} s */
+  const unswitch = (s) => {
+    s.host.remove();
+    for (const o of s.options)
+      SWITCHED.forEach((prop, i) => {
+        const before = o.before[i];
+        if (before) o.el.style.setProperty(prop, before);
+        else o.el.style.removeProperty(prop);
+      });
+  };
+  /** @param {string} group @param {{ label: string, el: HTMLElement }[]} options @returns {Switch} */
+  const switchFor = (group, options) => {
+    const state = { shown: 0 };
+    const kept = options.map((o) => ({ ...o, before: SWITCHED.map((p) => o.el.style.getPropertyValue(p)) }));
+    const { host, paint } = control("switch", (box) => {
+      box.setAttribute("role", "group");
+      box.setAttribute("aria-label", group || "Options");
+      const style = document.createElement("style");
+      style.textContent = SWITCH_LOOK;
+      box.before(style);
+      const buttons = kept.map((o, i) => {
+        const b = el(box, "button", { type: "button", title: o.label, "aria-pressed": "false" }, o.label);
+        const mark = el(b, "span", { class: "mark", "aria-hidden": "true" });
+        b.addEventListener("click", () => {
+          state.shown = i;
+          showOne(s);
+          s.paint();
+          // Read from the top of the option now shown, not from where the other one had scrolled to.
+          const top = (o.el.parentElement ?? o.el).getBoundingClientRect().top;
+          if (top < 0) scrollBy(0, top - s.host.offsetHeight - 8);
+        });
+        return { b, mark, label: o.label };
+      });
+      return () => {
+        const g = marks().find((x) => x.name === group);
+        buttons.forEach(({ b, mark, label }, i) => {
+          b.setAttribute("aria-pressed", String(i === state.shown));
+          const pick = g?.options.find((m) => m.label === label)?.pick;
+          mark.textContent = pick ? PICK_MARK[pick] : "";
+          mark.className = `mark ${pick ?? ""}`;
+        });
+      };
+    });
+    const s = {
+      host,
+      paint,
+      options: kept,
+      get shown() {
+        return state.shown;
+      },
+    };
+    return s;
+  };
+  /** Puts a switch over each row of options side by side while the screen is narrow, and takes them away when it is not. */
+  const fold = () => {
+    for (const [parent, s] of switches) {
+      if (NARROW.matches && parent.isConnected && s.options.every((o) => o.el.isConnected && o.el.parentElement === parent)) continue;
+      unswitch(s);
+      switches.delete(parent);
+    }
+    if (!NARROW.matches) return;
+    for (const g of shown()) {
+      /** @type {Map<Element, { label: string, el: Element }[]>} */
+      const rows = new Map();
+      for (const o of g.options) if (o.el.parentElement) rows.set(o.el.parentElement, [...(rows.get(o.el.parentElement) ?? []), o]);
+      for (const [parent, options] of rows) {
+        const s = switches.get(parent);
+        if (s) {
+          if (!s.host.isConnected) parent.before(s.host);
+          continue;
+        }
+        const els = options.flatMap((o) => (o.el instanceof HTMLElement ? [{ label: o.label, el: o.el }] : []));
+        if (els.length < 2 || !sideBySide(els.map((o) => o.el))) continue;
+        const made = switchFor(g.name, els);
+        switches.set(parent, made);
+        parent.before(made.host);
+        showOne(made);
+        made.paint();
+      }
+    }
+  };
+  NARROW.addEventListener("change", fold);
+  // A word longer than a phone is wide (an address, a link) would widen its column past the screen.
+  const wrap = document.createElement("style");
+  wrap.textContent = "@media (max-width: 720px) { body { overflow-wrap: anywhere; } }";
 
   let counted = "";
   /** The page's own counter; without one, the groups of options decided of all of them. */
@@ -367,6 +487,7 @@ textarea { box-sizing: border-box; display: block; width: 100%; min-height: 3.2e
     { passive: true },
   );
   addEventListener("DOMContentLoaded", () => {
+    document.head.prepend(wrap);
     // The counter may be drawn by the page's own script, at any time.
     // So may its options: the controls follow them, and are put back when a redraw drops them.
     new MutationObserver(() => (place(), progress())).observe(document.documentElement, { childList: true, characterData: true, subtree: true });

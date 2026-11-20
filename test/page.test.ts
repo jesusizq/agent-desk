@@ -4592,6 +4592,45 @@ paint();
       store.closeReview(r.id);
     });
 
+    it("on a phone, shows options side by side one at a time under a switch that stays on top, inside the screen", async () => {
+      // As a session's comparison of two letters: a grid of two columns, and an address longer than a phone is wide.
+      const letter = `<div class="mail">Subject: hello\n\n${"A long letter line. ".repeat(80)}\nwrite to someone.with.a.very.long.address@example-university-of-somewhere.edu</div>`;
+      const pair = (group: string) => `<section data-agent-desk-group="${group}"><div class="two"><div data-agent-desk-option="yours"><h3>yours</h3>${letter}</div><div data-agent-desk-option="theirs"><h3>theirs</h3>${letter}</div></div></section>`;
+      const html = `<!doctype html><html><head><title>pairs</title><style>.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}.mail{white-space:pre-wrap}</style></head><body>${pair("First")}${pair("Second")}</body></html>`;
+      const r = publish("rv-narrow", "Letters side by side", {}, html);
+      const page = await open(390, 844);
+      await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await page.eval(`import('/review.js').then((m) => m.openReview(${JSON.stringify(r.id)}))`);
+      await page.waitFor(`${arrived("review")} && document.querySelector('#review iframe')`);
+      const controls = (n: number) => `new Promise((r) => { const ready = () => (document.querySelectorAll('agent-desk-control').length === ${n} ? r(true) : setTimeout(ready, 50)); ready(); })`;
+      await page.inFrame("/review/", controls(8)); // an option's controls 4, a group's 2, a switch over each pair 2
+      const look = `(() => {
+        const two = document.querySelector('.two'), sw = two.previousElementSibling;
+        const options = [...two.querySelectorAll('[data-agent-desk-option]')];
+        return { wide: document.documentElement.scrollWidth - innerWidth, switch: sw.tagName, top: Math.round(sw.getBoundingClientRect().top),
+          buttons: [...sw.shadowRoot.querySelectorAll('button')].map((b) => b.textContent + ' ' + b.getAttribute('aria-pressed')),
+          shown: options.map((o) => o.getClientRects().length ? Math.round(o.getBoundingClientRect().width) === two.clientWidth : 'hidden') };
+      })()`;
+      type Look = { wide: number; switch: string; top: number; buttons: string[]; shown: (boolean | string)[] };
+      const before = await page.inFrame<Look>("/review/", look);
+      assert.deepEqual({ ...before, top: 0 }, { wide: 0, switch: "AGENT-DESK-CONTROL", top: 0, buttons: ["yours true", "theirs false"], shown: [true, "hidden"] }, "the first option, the whole width; nothing past the screen");
+      await page.inFrame("/review/", "document.querySelector('.two').previousElementSibling.shadowRoot.querySelectorAll('button')[1].click(), true");
+      await page.inFrame("/review/", "document.querySelector('[data-agent-desk-option=\"theirs\"] agent-desk-control').shadowRoot.querySelector('button.choose').click(), true");
+      // Read down the letter: the switch stays at the top of the screen while its pair scrolls by.
+      await page.inFrame("/review/", "scrollTo(0, document.querySelector('.two').offsetTop + 600), true");
+      const after = await page.inFrame<Look>("/review/", look);
+      assert.deepEqual(after, { wide: 0, switch: "AGENT-DESK-CONTROL", top: 4, buttons: ["yours false", "theirs✓ true"], shown: ["hidden", true] }, "the other option shown, its pick marked on the switch");
+      // Wide again, the page's own layout comes back as it was.
+      await page.send("Emulation.setDeviceMetricsOverride", { width: 1400, height: 900, deviceScaleFactor: 1, mobile: false });
+      await page.inFrame("/review/", controls(6));
+      const wide = await page.inFrame<{ styles: string[]; row: boolean }>("/review/", `(() => {
+        const options = [...document.querySelectorAll('.two')[0].querySelectorAll('[data-agent-desk-option]')];
+        return { styles: options.map((o) => o.getAttribute('style') ?? ''), row: options[0].getBoundingClientRect().top === options[1].getBoundingClientRect().top };
+      })()`);
+      assert.deepEqual(wide, { styles: ["", ""], row: true });
+      store.closeReview(r.id);
+    });
+
     it("opens a review drawn from options data with the desk's controls on every option, counting questions decided", async () => {
       store.upsertSession({ id: "rv-drawn", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "Drawn session" });
       const data = {
