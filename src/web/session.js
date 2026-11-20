@@ -215,7 +215,11 @@ export function renderPanel() {
   }
   if (ui.panelHeard !== heard(s)) {
     ui.panelHeard = heard(s);
-    loadConversation(s.id, () => {});
+    const sid = s.id;
+    loadConversation(sid, (fresh) => {
+      // The device's saved copy answered for a computer too slow: asked again in a moment, not at the session's next change.
+      if (!fresh) setTimeout(() => ui.panelSession === sid && ((ui.panelHeard = null), renderPanel()), CONVERSATION_RETRY_MS);
+    });
   }
   const shows = panelShows(s);
   if (shows === ui.panelDrawn) return;
@@ -230,6 +234,7 @@ export function renderPanel() {
   openSession(s.id);
 }
 const PANEL_REST_MS = 1200;
+const CONVERSATION_RETRY_MS = 3000;
 
 /** Everything the session panel shows, to redraw it only when some of it changed. @param {Session} s */
 function panelShows(s) {
@@ -246,6 +251,7 @@ function panelShows(s) {
     data.results.filter(mine).map((r) => r.id),
     projectOf(s),
     ui.conversations.get(s.id)?.length,
+    ui.conversations.get(s.id)?.at(-1)?.id, // at the store's cap a new message drops the oldest: the length stays
     [...ui.draftImages, ...ui.uploading, ...ui.sending], // the box below: images attached, a message on its way
     [...ui.outbox.values()].filter((o) => o.sid === s.id).map((o) => [o.id, o.state, o.error]),
     ui.offline && offlineText(),

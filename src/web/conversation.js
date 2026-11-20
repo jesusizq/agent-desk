@@ -111,18 +111,39 @@ function resolve(questionId) {
   }, RESOLVED_MS);
 }
 
-/** Fetches a session's conversation, then re-renders what shows it. @param {string} sid @param {() => void} then */
+/** The copy of a conversation this device saved (sw.js) carries when it answered for a computer too slow or away. */
+const SAVED_AT = "X-Agent-Desk-Saved-At";
+/** The latest fetch of each session's conversation: one asked earlier that answers later is older. @type {Map<string, number>} */
+const latestFetch = new Map();
+let fetches = 0;
+/**
+ * Fetches a session's conversation, then re-renders what shows it. `then` learns whether it is the
+ * desk's own (`fresh`): a copy the device saved may predate what was just sent, so the caller asks again.
+ * @param {string} sid @param {(fresh: boolean) => void} then
+ */
 export function loadConversation(sid, then) {
   const asked = Date.now();
+  const n = ++fetches;
+  latestFetch.set(sid, n);
   run(
     fetch(`/api/sessions/${encodeURIComponent(sid)}/messages`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
-      .then((/** @type {ConversationEntry[]} */ list) => {
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status}`);
+        return { list: /** @type {ConversationEntry[]} */ (await res.json()), saved: res.headers.has(SAVED_AT) };
+      })
+      .then(({ list, saved }) => {
+        if (latestFetch.get(sid) !== n) return; // a later fetch answers instead: this one may lack the newest messages
+        if (saved) {
+          // Better than nothing before the first answer, never over a newer list nor taking what was sent off the page.
+          if (!ui.conversations.has(sid)) ui.conversations.set(sid, list);
+          then(false);
+          return;
+        }
         ui.conversations.set(sid, list);
         // What was sent and is now in the conversation itself leaves its stand-in: one more message with
         // its text, or a fetch asked for after it was delivered (the conversation keeps its latest messages only).
         for (const [id, o] of ui.outbox) if (o.sid === sid && o.state === "sent" && (deskCount(sid, o.text) > o.before || asked > (o.sentAt ?? Infinity))) ui.outbox.delete(id);
-        then();
+        then(true);
       }),
   );
 }

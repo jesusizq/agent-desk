@@ -1206,6 +1206,41 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
     assert.deepEqual(page.errors, [], "the page reports no errors");
   });
 
+  it("keeps what was sent in the conversation while the device's saved copy answers for a slow computer", async () => {
+    const sid = "full-load";
+    store.upsertSession({ id: sid, provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a computer at full load", takesMessagesWhileWorking: true });
+    store.updateSession(sid, (s) => ({ ...s, state: "working", activityAt: new Date().toISOString() }));
+    store.addMessage({ sessionId: sid, from: "session", text: "Running the whole suite" });
+    const page = await open();
+    await page.click(".scard", "a computer at full load");
+    const chat = "document.querySelector('#session .conversation.chat')";
+    await page.waitFor(`${chat}?.textContent.includes('Running the whole suite') && ${STILL}`);
+    // From now on the conversation comes from the copy the device saved before, as sw.js answers past its wait.
+    await page.eval(`(async () => {
+      const saved = await (await fetch('/api/sessions/${sid}/messages')).text();
+      const real = window.fetch;
+      window.savedServed = 0;
+      window.slow = true;
+      window.fetch = (url, init) => window.slow && String(url).endsWith('/${sid}/messages')
+        ? (window.savedServed++, Promise.resolve(new Response(saved, { headers: { 'Content-Type': 'application/json', 'X-Agent-Desk-Saved-At': new Date(Date.now() - 60000).toISOString() } })))
+        : real(url, init);
+    })()`);
+    await page.click("#session .chat-footer textarea");
+    await page.type("how is it going?");
+    await page.click("#session .chat-footer .send");
+    const sent = `[...${chat}.querySelectorAll('.msg.from-developer')].filter((m) => m.textContent.includes('how is it going?'))`;
+    await page.waitFor(`${sent}.length === 1 && !!${sent}[0].querySelector('.delivered')`);
+    const served = await page.eval<number>("window.savedServed");
+    store.addMessage({ sessionId: sid, from: "session", text: "Half of it passes" });
+    await page.waitFor(`window.savedServed > ${served}`);
+    await page.eval("new Promise((done) => setTimeout(done, 100))");
+    assert.equal(await page.eval<number>(`${sent}.length`), 1, "the saved copy predates the message: it stays on the page as sent");
+    await page.eval("window.slow = false");
+    await page.waitFor(`${chat}.textContent.includes('Half of it passes')`);
+    assert.equal(await page.eval<number>(`${sent}.length`), 1, "once the computer answers, the conversation holds it once");
+    await page.press("Escape");
+  });
+
   it("marks a session unread back to the list, and opening it reads it again", async () => {
     store.upsertSession({ id: "come-back", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "come back later" });
     store.updateSession("come-back", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Here is the long report", at: new Date().toISOString() } }));

@@ -366,7 +366,7 @@ function earlierConversation(q) {
       if (open) ui.unfolded.delete(q.id);
       else {
         ui.unfolded.add(q.id);
-        loadConversation(q.sessionId, page.renderView);
+        loadConversation(q.sessionId, () => page.renderView());
       }
       page.renderView();
     },
