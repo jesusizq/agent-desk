@@ -33,6 +33,8 @@ body { font: 0.875rem/1.45 var(--sans); color: var(--text); background: var(--bg
   display: flex; flex-direction: column; overflow: hidden; }
 button { font: inherit; color: inherit; cursor: pointer; }
 :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+/* A window's title takes the focus when it opens, for a screen reader to start there: nothing to act on, so no ring (iOS Safari draws one). */
+[tabindex="-1"]:focus-visible { outline: none; }
 code, .mono { font-family: var(--mono); font-size: 0.75rem; }
 .num { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
