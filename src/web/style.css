@@ -774,6 +774,12 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 .arm-lbl > * { grid-area: 1 / 1; justify-self: center; }
 .arm .arm-ask, .arm.armed .arm-idle { visibility: hidden; }
 .arm.armed .arm-ask { visibility: visible; }
+.arm.fired .arm-idle, .arm.fired .arm-ask { visibility: hidden; }
+.arm-done { display: inline-flex; align-items: center; gap: 4px; }
+.arm-done .i { width: 13px; height: 13px; }
+:is(button.secondary, button.chip).arm.fired.sending { opacity: .7; cursor: progress; }
+:is(button.secondary, button.chip).arm.fired.sent { background: color-mix(in srgb, var(--done) 14%, var(--surface)); border-color: var(--done); color: var(--done); }
+:is(button.secondary, button.chip).arm.fired.failed { background: color-mix(in srgb, var(--danger) 10%, var(--surface)); border-color: var(--danger); color: var(--danger); }
 /* Two labels of very different widths (an icon, then a question): one shows at a time, and the control grows
    away from the pointer, its far edge held by what follows it. */
 .arm.arm-swap .arm-lbl, .arm.arm-swap .arm-idle { display: inline-flex; align-items: center; gap: 6px; }

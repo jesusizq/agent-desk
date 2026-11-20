@@ -239,6 +239,8 @@ export const TEXT = {
     /** The accessible name of /compact with the session's suggested instructions. @param {string} instructions */
     compactWith: (instructions) => `/compact with the session's suggested instructions: ${instructions.length > 200 ? `${instructions.slice(0, 199).replace(/[\ud800-\udbff]$/, "")}…` : instructions}`,
     compactSent: "/compact with its suggested instructions",
+    /** What a confirmed control shows on itself: on its way, then how it went. */
+    fired: { sending: "Sending…", sent: "Sent", failed: "Not sent" },
     freshHint: "Starts the session afresh as its tool does it (a handoff to load in a new conversation)",
     /** A key short enough that "Send" would double its button. @param {string} what */
     confirmShort: (what) => `${what}?`,

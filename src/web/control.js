@@ -31,17 +31,50 @@ export function armedButton({ key, id, text, ask, act, redraw, cls = "secondary"
       return redraw();
     }
     ui.armed = null;
+    // Each tap shows on the button itself: armed, then sending, then sent or not; a toast is easy to miss on a phone.
+    const fired = { key, state: /** @type {"sending" | "sent" | "failed"} */ ("sending") };
+    ui.fired = fired;
     redraw();
-    run(act());
+    /** @param {"sent" | "failed"} state */
+    const settle = (state) => {
+      fired.state = state;
+      redraw();
+      setTimeout(() => ui.fired === fired && ((ui.fired = null), redraw()), FIRED_MS);
+    };
+    run(
+      act().then(
+        () => settle("sent"),
+        (/** @type {Error} */ e) => {
+          settle("failed");
+          throw e; // run() shows why in a toast
+        },
+      ),
+    );
   };
   const on = armed();
-  // Both labels share one cell, so arming changes the words, not the button's width under the pointer.
+  const fired = ui.fired?.key === key ? ui.fired.state : null;
+  // Every label shares one cell, so a tap changes the words, not the button's width under the pointer.
   return h(
     "button",
-    { class: `${cls} arm${on ? " armed" : ""}`, "data-key": id, "aria-label": on ? ask : text, title, onclick: click },
-    h("span", { class: "arm-lbl", "aria-hidden": "true" }, h("span", { class: "arm-idle" }, idle ?? text), h("span", { class: "arm-ask" }, ask)),
+    {
+      class: `${cls} arm${on ? " armed" : ""}${fired ? ` fired ${fired}` : ""}`,
+      "data-key": id,
+      "aria-label": fired ? TEXT.control.fired[fired] : on ? ask : text,
+      "aria-busy": fired === "sending" ? "true" : null,
+      title,
+      onclick: fired === "sending" ? null : click,
+    },
+    h(
+      "span",
+      { class: "arm-lbl", "aria-hidden": "true" },
+      h("span", { class: "arm-idle" }, idle ?? text),
+      h("span", { class: "arm-ask" }, ask),
+      fired ? h("span", { class: "arm-done" }, fired === "sent" ? icon("check") : null, TEXT.control.fired[fired]) : null,
+    ),
   );
 }
+/** How long a confirmed control shows how it went. */
+const FIRED_MS = 2500;
 
 /**
  * Forgetting a session that ended or whose process is gone: it leaves the desk at once, what it

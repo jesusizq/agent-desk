@@ -91,6 +91,7 @@ export const ui = {
   /** @type {Map<string, number>} questions answered from the desk, shown answered on their card until then */ resolved: new Map(),
   /** @type {string | null} a question answered with the keys: the box that replaces it takes the focus */ focusAfter: null,
   /** @type {{ key: string, until: number } | null} the session control waiting for its confirming click */ armed: null,
+  /** @type {{ key: string, state: "sending" | "sent" | "failed" } | null} the session control just confirmed, until its outcome has shown */ fired: null,
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
   /** @type {Set<string>} questions whose long context is unfolded */ contextOpen: new Set(),

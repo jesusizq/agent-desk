@@ -2277,6 +2277,17 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.eval(`${fresh}.click()`);
         await page.waitFor("window.sentKeys.length > 1");
         assert.deepEqual(await page.eval<unknown>("window.sentKeys.at(-1)"), { action: "fresh", command: "/ahorro:handoff" }, "the command it showed, for the server to check");
+        // Each tap shows on the button: armed, then sent, then back to itself.
+        await page.waitFor(`${fresh}.classList.contains('sent')`);
+        assert.equal(await page.eval<string>(`${fresh}.getAttribute('aria-label')`), "Sent");
+        await page.waitFor(`${fresh}.getAttribute('aria-label') === '/ahorro:handoff' && !${fresh}.classList.contains('fired')`);
+        // A refused send says so on the button too, why in a toast.
+        await page.eval(`(() => { const stub = window.fetch; window.fetch = (route, init) => String(route).endsWith('/keys') ? Promise.resolve(new Response(JSON.stringify({ error: 'the pane is gone' }), { status: 400, headers: { 'Content-Type': 'application/json' } })) : stub(route, init); })()`);
+        await page.click("#session [data-key=fresh]");
+        await page.eval(`${fresh}.click()`);
+        await page.waitFor(`${fresh}.classList.contains('failed')`);
+        assert.equal(await page.eval<string>(`${fresh}.innerText`), "Not sent");
+        await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('the pane is gone'))");
         await page.press("Escape");
       } finally {
         store.updateSession("suggests", (s) => ({ ...s, state: "ended" }));
