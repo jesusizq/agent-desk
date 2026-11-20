@@ -30,7 +30,14 @@ command.
   - the keys endpoint runs `tmux send-keys` (argument list, no shell) with keys from a fixed
     allow-list (`src/core/tmux.ts`: /compact, Escape, Enter, 1–5), /compact optionally followed by
     the session's own stored suggestion as one literal line (`compactInstructionsLine`, typed in
-    pieces of at most 400 characters), only when it equals what the page showed, only to the pane of a registered,
+    pieces of at most 400 characters), only when it equals what the page showed; the command the
+    session's adapter names to start it afresh (`/ahorro:handoff`), only when it is one slash command
+    without arguments (`FRESH_COMMAND`) and equals what the page showed; and the shell command the
+    reply that ended the session's turn asks the developer to run (a one-line `! ` code block,
+    `shellSuggestionLine`: no control or invisible characters, at most 400), which the provider runs
+    in a shell outside its permission checks, so the page shows it whole before the confirming
+    click, and it is typed only while the session waits, only when it equals what the page showed,
+    and once; all only to the pane of a registered,
     live session, after checking that the pane's process is that session's process or one of its
     ancestors;
   - the end endpoint sends SIGTERM to a registered, live session's own process, only after checking

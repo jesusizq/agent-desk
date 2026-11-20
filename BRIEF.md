@@ -109,7 +109,10 @@ show, and it takes the developer to the right terminal in one click.
   model, so an answer cannot trigger them. Sessions that run inside `tmux` record their pane; the
   desk sends them keys from a fixed list (`/compact`, Escape, Enter, 1–5; `/compact` optionally
   followed by the session's own stored suggestion as one literal line, typed in pieces of at most
-  400 characters, only when it equals what the page showed), after a confirming second
+  400 characters, only when it equals what the page showed; the command the session's adapter
+  names to start it afresh, such as a handoff, only when it is one slash command without arguments
+  and equals what the page showed; and a one-line `! ` shell command the session's last reply asks
+  the developer to run, shown whole, typed once while the session waits), after a confirming second
   click, only to a live registered session whose pane hosts its process. Elsewhere the desk suggests
   the command with a copy button. Any terminal's session can be ended from the desk (a session left
   running where the developer can no longer reach it): after a confirming second click, the desk
