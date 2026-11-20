@@ -5,7 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import * as path from "node:path";
 import { gzipSync } from "node:zlib";
 import { fields, InputError, int, list, oneOf, optional, text } from "../core/check.ts";
-import { sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
+import { FRESH_COMMAND, sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "../core/tmux.ts";
 import { ID_PATTERN, id } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
@@ -170,9 +170,11 @@ const ACTIONS: Record<string, Action> = {
   "sessions/keys": (store, target, body) => {
     const f = fields(body, "body");
     const action = oneOf(Object.keys(TMUX_ACTIONS) as TmuxAction[])(f.action, "action");
-    // The instructions the page showed on the button: what is typed is the stored suggestion, sent only when it is still that one.
+    // What the page showed on the button: what is typed is what the session stored, sent only while it is still that.
     const shown = optional(f.instructions, "instructions", (v, w) => text(v, w, COMPACT_INSTRUCTIONS_MAX)) ?? "";
     if (shown !== "" && action !== "compact") throw new InputError(`only compact takes instructions, not ${action}`);
+    const shownCommand = optional(f.command, "command", (v, w) => text(v, w, 200)) ?? "";
+    if (shownCommand !== "" && action !== "fresh") throw new InputError(`only fresh takes a command, not ${action}`);
     const s = store.getSession(target);
     if (!s?.tmux || !s.process || sessionFinished(s)) {
       throw new InputError("this session does not run in a live tmux pane; use its terminal");
@@ -181,7 +183,14 @@ const ACTIONS: Record<string, Action> = {
     if (shown !== instructions) {
       throw new InputError("the session's suggested compact instructions changed since the page showed them; nothing was sent, look at the button again");
     }
-    sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], action, instructions);
+    const command = action === "fresh" ? (store.getMetrics(target)?.coldResume?.command ?? "") : "";
+    if (action === "fresh" && !FRESH_COMMAND.test(command)) {
+      throw new InputError(`this session's adapter names no single slash command that starts it afresh (${JSON.stringify(command.slice(0, 80))}); nothing was sent`);
+    }
+    if (shownCommand !== command) {
+      throw new InputError("the command that starts this session afresh changed since the page showed it; nothing was sent, look at the button again");
+    }
+    sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], action, action === "fresh" ? command : instructions);
     return { sent: action };
   },
   "sessions/end": (store, target) => {

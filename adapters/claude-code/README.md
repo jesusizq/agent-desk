@@ -70,7 +70,8 @@ button in the session panel. They also carry what resuming costs once the prompt
 is on in `enabledPlugins` of Claude Code's user settings (`settings.json` in `CLAUDE_CONFIG_DIR`,
 else in the home folder's `.claude`, read only), else `/compact`, also when that file cannot be read
 or is not valid JSON (caught mid-write, say), which the status line reports on stderr while it still
-records the rest of the metrics. The page suggests it once the cache has expired on a large context.
+records the rest of the metrics. The page suggests it once the cache has expired on a large context,
+and a session in tmux gets a button that types it (see the desk's README, *Send keys to a session*).
 
 ## Cost
 

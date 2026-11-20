@@ -219,6 +219,11 @@ session suggested instructions for its compaction (a code block of its reply tha
 without control characters, in pieces of at most 400 characters (a prompt takes a longer burst as a
 paste, which Enter would send to the model instead of running `/compact`) and with a space last (it
 closes a file menu a last `@word` opens); with none, it types `/compact` alone.
+When the session's adapter names another command that starts the session afresh (for Claude Code,
+`/ahorro:handoff` with the `ahorro` plugin on), a button with that command types it and Enter. The
+server types it only when it is one slash command without arguments and still the one the page
+showed, with a space last: typed alone, the command leaves Claude Code's command menu open, listing
+`/ahorro:handoff-load` too, and the space closes it, so Enter sends the line as typed.
 
 To make every VS Code terminal a tmux session that ends when its tab closes, add to VS Code's user
 settings:

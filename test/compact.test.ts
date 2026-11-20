@@ -205,4 +205,12 @@ describe("suggested compact instructions", () => {
     assert.deepEqual(tmuxKeys("compact", "\n\x03;"), TMUX_ACTIONS.compact, "nothing left of them: /compact alone");
     assert.throws(() => tmuxKeys("enter", "keep it"), /only \/compact takes instructions, not enter/);
   });
+
+  it("leave the session to a command that starts it afresh, typed only when it is one slash command", () => {
+    assert.deepEqual(tmuxKeys("fresh", "/ahorro:handoff"), [["-l", "/ahorro:handoff "], ["Enter"]], "a space last: it closes the command menu, which also lists /ahorro:handoff-load");
+    assert.deepEqual(tmuxKeys("fresh", "/clear"), [["-l", "/clear "], ["Enter"]]);
+    for (const bad of ["", "/", "ahorro:handoff", "/ahorro:handoff now", "/ahorro:handoff;", "/a\nb", "/x\x1b[2J", "/Handoff", "/a:b:c"]) {
+      assert.throws(() => tmuxKeys("fresh", bad), /is not one slash command without arguments; nothing was sent/, JSON.stringify(bad));
+    }
+  });
 });

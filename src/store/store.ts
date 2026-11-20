@@ -1436,6 +1436,12 @@ export class Store {
     });
   }
 
+  getMetrics(sessionId: string): Metrics | undefined {
+    const file = this.paths.metrics(sessionId);
+    const raw = readJson(file);
+    return raw === undefined ? undefined : readMetrics(raw, file);
+  }
+
   listMetrics(problems?: string[]): Metrics[] {
     return this.readAll(this.paths.metricsDir, readMetrics, problems);
   }

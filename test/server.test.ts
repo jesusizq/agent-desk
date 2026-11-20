@@ -243,7 +243,7 @@ describe("server", () => {
   it("sends terminal keys only from the allow-list, and only to a session in a live tmux pane", async () => {
     const bad = await post("/api/sessions/s1/keys", { action: "rm -rf /" });
     assert.equal(bad.status, 400);
-    assert.match(((await bad.json()) as { error: string }).error, /action: expected one of compact, interrupt/);
+    assert.match(((await bad.json()) as { error: string }).error, /action: expected one of compact, fresh, interrupt/);
     const noTmux = await post("/api/sessions/s1/keys", { action: "compact" });
     assert.equal(noTmux.status, 400);
     assert.match(((await noTmux.json()) as { error: string }).error, /does not run in a live tmux pane/);
@@ -251,7 +251,7 @@ describe("server", () => {
     assert.equal(cross.status, 403);
   });
 
-  it("types /compact with the session's suggested instructions as one line, only those the page showed", { skip: !hasTmux() && "tmux is not installed" }, async () => {
+  it("types /compact with the session's suggested instructions as one line, and the command that starts it afresh, only those the page showed", { skip: !hasTmux() && "tmux is not installed" }, async () => {
     const socket = path.join(tempHome(), "tmux.sock");
     const tmux = (...args: string[]) => execFileSync("tmux", ["-S", socket, ...args], { encoding: "utf8" });
     // A pane whose process echoes each line it reads: what is typed shows once, and once more per Enter.
@@ -286,6 +286,21 @@ describe("server", () => {
       await shows([...bare, `/compact ${suggested}`, `/compact ${suggested}`]); // capture-pane leaves out the space typed last
       assert.equal(suggested, "keep the plan then run [2J this; kill-server", "one line: no Enter, Ctrl-C, Escape or trailing ';' for tmux to drop");
       assert.ok(tmux("list-panes", "-F", "#{pane_dead}").trim() === "0", "the pane's process and the tmux server live on");
+
+      // The command its adapter says starts the session afresh, typed only while it is the one the page showed.
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "fresh" })).status, 400, "no adapter named one");
+      store.mergeMetrics({ sessionId: "tm1", coldResume: { command: "/ahorro:handoff" } });
+      for (const shown of [undefined, "", "/clear"]) {
+        const stale = await post("/api/sessions/tm1/keys", { action: "fresh", ...(shown === undefined ? {} : { command: shown }) });
+        assert.equal(stale.status, 400, `shown ${JSON.stringify(shown)}`);
+        assert.match(((await stale.json()) as { error: string }).error, /changed since the page showed it; nothing was sent/);
+      }
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "enter", command: "/ahorro:handoff" })).status, 400, "only fresh takes a command");
+      store.mergeMetrics({ sessionId: "tm1", coldResume: { command: "/x; kill-server" } });
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "fresh", command: "/x; kill-server" })).status, 400, "an adapter's command with more than itself is never typed");
+      store.mergeMetrics({ sessionId: "tm1", coldResume: { command: "/ahorro:handoff" } });
+      assert.equal((await post("/api/sessions/tm1/keys", { action: "fresh", command: "/ahorro:handoff" })).status, 200);
+      await shows([...bare, `/compact ${suggested}`, `/compact ${suggested}`, "/ahorro:handoff", "/ahorro:handoff"]);
 
       // The widest instructions kept, typed whole: tmux refuses a command of more than about 16 KiB. A
       // pane that keeps what it reads, past the 4 KiB a canonical-mode line holds, as a full-screen prompt does.

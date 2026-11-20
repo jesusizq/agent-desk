@@ -8,6 +8,7 @@ import { post, run } from "./server.js";
 import { asksOf, isLive, label, ON_THIS_MACHINE, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
+/** @typedef {import("../core/protocol.ts").Metrics} Metrics */
 
 /**
  * A button that acts only on a second click within 3 s, so a stray click does nothing. Armed in
@@ -61,9 +62,9 @@ export function forgetButton(s, redraw, cls) {
 /**
  * Keys the desk may send a session that runs inside tmux, and ending the session's process, each
  * after a confirming click.
- * @param {Session} s @param {() => void} redraw redraws the panel that shows them
+ * @param {Session} s @param {Metrics | undefined} m @param {() => void} redraw redraws the panel that shows them
  */
-export function controlSection(s, redraw) {
+export function controlSection(s, m, redraw) {
   const endable = Boolean(s.process?.start);
   if ((!s.tmux && !endable) || !isLive(s)) return null;
   /** @param {string} id @param {string} text @param {string} ask the armed button's question @param {() => Promise<unknown>} act @param {string} [cls] */
@@ -85,6 +86,12 @@ export function controlSection(s, redraw) {
         redraw,
       })
     : key("compact", "/compact");
+  // What its adapter says starts the session afresh (a handoff), when it is not /compact itself; the server types it only while it is still this one.
+  const fresh = m?.coldResume?.command;
+  const freshKey =
+    fresh && fresh !== "/compact"
+      ? armedButton({ key: `${s.id} fresh ${fresh}`, id: "fresh", text: fresh, ask: TEXT.control.confirm(fresh), title: TEXT.control.freshHint, redraw, act: () => post(`/api/sessions/${s.id}/keys`, { action: "fresh", command: fresh }).then(() => toast(TEXT.control.sent(fresh, label(s)))) })
+      : null;
   // The terminal shows a dialog (a permission prompt, a question with options) only while the
   // session has one open; the keys that answer it are offered only then.
   const asksInDialog = asksOf(s.id).some((q) => q.kind === "permission" || q.kind === "question");
@@ -98,6 +105,7 @@ export function controlSection(s, redraw) {
             "div",
             { class: "row wt-actions" },
             compactKey,
+            freshKey,
             key("interrupt", TEXT.control.interrupt),
             asksInDialog ? [h("span", { class: "faint" }, TEXT.control.dialog), ...[1, 2, 3, 4, 5].map((n) => key(`option-${n}`, String(n), TEXT.control.confirmShort(String(n)))), key("enter", "Enter", TEXT.control.confirmShort("Enter"))] : null,
           ),

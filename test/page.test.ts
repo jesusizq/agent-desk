@@ -2264,6 +2264,19 @@ describe("page", { skip: chrome ? false : "no Chrome found (set AGENT_DESK_CHROM
         await page.eval(`${button}.click()`);
         await page.waitFor("window.sentKeys.length > 0");
         assert.deepEqual(await page.eval<unknown>("window.sentKeys"), [{ action: "compact", instructions: "keep only the next steps" }], "the instructions it showed, for the server to check");
+
+        // What its adapter says starts it afresh gets a button of its own, unless that is /compact itself.
+        const fresh = "document.querySelector('#session [data-key=fresh]')";
+        store.mergeMetrics({ sessionId: "suggests", coldResume: { command: "/compact" } });
+        await page.waitFor(`${button}.isConnected && !${fresh}`);
+        store.mergeMetrics({ sessionId: "suggests", coldResume: { command: "/ahorro:handoff" } });
+        await page.waitFor(fresh);
+        assert.equal(await page.eval<string>(`${fresh}.innerText`), "/ahorro:handoff");
+        await page.click("#session [data-key=fresh]");
+        assert.equal(await page.eval<string>(`${fresh}.getAttribute('aria-label')`), "Send /ahorro:handoff?", "the first click asks for a second");
+        await page.eval(`${fresh}.click()`);
+        await page.waitFor("window.sentKeys.length > 1");
+        assert.deepEqual(await page.eval<unknown>("window.sentKeys.at(-1)"), { action: "fresh", command: "/ahorro:handoff" }, "the command it showed, for the server to check");
         await page.press("Escape");
       } finally {
         store.updateSession("suggests", (s) => ({ ...s, state: "ended" }));

@@ -384,7 +384,7 @@ function answerOnDesk(key) {
 function morePart(s, m) {
   const p = projectOf(s);
   return [
-    controlSection(s, () => redrawPanel(s.id)),
+    controlSection(s, m, () => redrawPanel(s.id)),
     p ? h("div", { class: "rsec" }, h("h4", {}, TEXT.worktrees.title), h("button", { class: "linkish", onclick: () => openProject(p.id) }, TEXT.worktreeLine(p.worktrees.length, gb(p.totalBytes), mergedOf(p).length))) : null,
     h(
       "div",

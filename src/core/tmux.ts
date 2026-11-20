@@ -47,6 +47,7 @@ export function outerTerminal(clients: number[]): string | undefined {
 /** The keys the desk may send a session, by name; nothing else can be sent. */
 export const TMUX_ACTIONS = {
   compact: [["-l", "/compact"], ["Enter"]],
+  fresh: [], // the command the session's adapter named (FRESH_COMMAND), typed by tmuxKeys
   interrupt: [["Escape"]],
   enter: [["Enter"]],
   "option-1": [["-l", "1"]],
@@ -64,15 +65,26 @@ export type TmuxAction = keyof typeof TMUX_ACTIONS;
 const TYPED_CHUNK = 400;
 
 /**
- * The keys of an action. `compact` alone carries text: the instructions the session suggested for
- * its compaction, typed as one line after `/compact` (compactInstructionsLine), so they can type no
- * other key; without them it is `/compact` alone. The line ends in a space, which closes a completion
- * menu its last word opened (an `@file`), so Enter sends it instead of picking from that menu.
+ * What starts a session afresh, as its adapter names it (`/compact`, `/ahorro:handoff`): one slash
+ * command and no arguments, so typing it can type nothing else.
  */
-export function tmuxKeys(action: TmuxAction, instructions = ""): readonly (readonly string[])[] {
-  if (instructions === "") return TMUX_ACTIONS[action];
+export const FRESH_COMMAND = /^\/[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)?$/;
+
+/**
+ * The keys of an action. `compact` may carry the instructions the session suggested for its
+ * compaction, typed as one line after `/compact` (compactInstructionsLine), so they can type no other
+ * key; without them it is `/compact` alone. `fresh` carries the command that starts the session
+ * afresh. A typed line ends in a space, which closes a completion menu its last word opened (an
+ * `@file`, the command menu), so Enter sends it instead of picking from that menu.
+ */
+export function tmuxKeys(action: TmuxAction, text = ""): readonly (readonly string[])[] {
+  if (action === "fresh") {
+    if (!FRESH_COMMAND.test(text)) throw new Error(`${JSON.stringify(text.slice(0, 80))} is not one slash command without arguments; nothing was sent`);
+    return [["-l", `${text} `], ["Enter"]];
+  }
+  if (text === "") return TMUX_ACTIONS[action];
   if (action !== "compact") throw new Error(`only /compact takes instructions, not ${action}; nothing was sent`);
-  const line = compactInstructionsLine(instructions);
+  const line = compactInstructionsLine(text);
   if (line === "") return TMUX_ACTIONS.compact;
   return [...typedChunks(`/compact ${line} `).map((chunk) => ["-l", chunk]), ["Enter"]];
 }
@@ -99,9 +111,9 @@ function typedChunks(text: string): string[] {
  * Sends one allowed action to a pane, after checking that the pane still hosts the session: the
  * pane's own process must be the session process or one of its ancestors.
  */
-export function sendTmuxAction(where: { socket: string; pane: string }, sessionPids: number[], action: TmuxAction, instructions = ""): void {
+export function sendTmuxAction(where: { socket: string; pane: string }, sessionPids: number[], action: TmuxAction, text = ""): void {
   if (!TMUX_PANE.test(where.pane)) throw new Error(`not a tmux pane: ${where.pane}`);
-  const keys = tmuxKeys(action, instructions);
+  const keys = tmuxKeys(action, text);
   const panePid = Number(tmux(where.socket, "display-message", "-p", "-t", where.pane, "#{pane_pid}").trim());
   if (!sessionPids.includes(panePid)) throw new Error(`tmux pane ${where.pane} no longer hosts this session; nothing was sent`);
   for (const k of keys) tmux(where.socket, "send-keys", "-t", where.pane, ...k);
