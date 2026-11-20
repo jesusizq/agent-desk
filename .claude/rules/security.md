@@ -28,7 +28,9 @@ command.
 - No endpoint executes commands, spawns processes or reads arbitrary paths, with two exceptions,
   each only after the developer confirms on the page:
   - the keys endpoint runs `tmux send-keys` (argument list, no shell) with keys from a fixed
-    allow-list (`src/core/tmux.ts`: /compact, Escape, Enter, 1–5), only to the pane of a registered,
+    allow-list (`src/core/tmux.ts`: /compact, Escape, Enter, 1–5), /compact optionally followed by
+    the session's own stored suggestion as one literal line (`compactInstructionsLine`, typed in
+    pieces of at most 400 characters), only when it equals what the page showed, only to the pane of a registered,
     live session, after checking that the pane's process is that session's process or one of its
     ancestors;
   - the end endpoint sends SIGTERM to a registered, live session's own process, only after checking
