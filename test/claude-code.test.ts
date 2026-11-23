@@ -123,6 +123,21 @@ describe("Claude Code hooks", () => {
     assert.throws(() => store.unanswered("cc-1", decisions[0]?.id), /holds the answers of review/);
   });
 
+  it("takes a prompt typed to the session waiting on its review as the round's answer, not a slash command or one typed mid-turn", () => {
+    const store = testStore();
+    const live = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
+    handleHook(event("UserPromptSubmit", { prompt: "make the proposals page" }), live);
+    const review = store.publishReview({ sessionId: "cc-1", title: "Proposals", html: "<html></html>" });
+    handleHook(event("UserPromptSubmit", { prompt: "and the footer too" }), live);
+    assert.equal(store.getReview(review.id)?.answered, undefined, "typed while the session works");
+    handleHook(event("Stop", { last_assistant_message: "It is in To review." }), live);
+    handleHook(event("UserPromptSubmit", { prompt: "/compact keep the review" }), live);
+    assert.equal(store.getReview(review.id)?.answered, undefined, "a slash command");
+    handleHook(event("Stop", { last_assistant_message: "Compacted." }), live);
+    handleHook(event("UserPromptSubmit", { prompt: "2, 3 and 4 no; iterate from here" }), live);
+    assert.equal(store.getReview(review.id)?.answered?.round, 1);
+  });
+
   it("inside tmux, events that do not look up the pane keep the terminal found with it", () => {
     const store = testStore();
     handleHook(event("SessionStart", { source: "resume" }), ctx(store));

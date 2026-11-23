@@ -119,6 +119,9 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
         }),
       );
       store.addMessage({ sessionId: sid, from: "developer", text: readablePrompt(prompt), via: "terminal" });
+      // Written to the session waiting on a review round it published: probably that round's answer,
+      // as with a question, so it leaves To review. A slash command is a command, not an answer.
+      if (!wasWorking && !prompt.trimStart().startsWith("/")) store.answerReviewsInTerminal(sid, problems);
       // An answer given on the page but not yet delivered is overtaken by what was typed; a message
       // sent from the page while the session works still reaches it, at its next step.
       if (!wasWorking) store.withdrawInbox(sid, prompt);

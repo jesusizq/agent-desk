@@ -43,12 +43,16 @@ function historyEntries() {
     }));
   /** @type {Omit<Entry, "where" | "hay">[]} */
   const results = data.results.map((r) => ({ at: r.at, sid: r.sessionId, type: "result", kind: r.status === "failed" ? "failed" : "result", title: r.title, note: r.summary, result: r }));
-  // A review closed, sent or not: when, by which session if one closed it, and why.
+  // A review closed, sent or not: when, by which session if one closed it, and why; and a round
+  // answered in the session's terminal, which left To review then.
   /** @type {Omit<Entry, "where" | "hay">[]} */
   const closed = data.reviews.flatMap((r) => {
-    if (!r.closedAt) return [];
+    /** @type {Omit<Entry, "where" | "hay">[]} */
+    const out = [];
+    if (r.answered) out.push({ at: r.answered.at, sid: r.sessionId, type: "decision", kind: "review", review: r.id, title: r.title, closed: TEXT.history.reviewAnswered(r.answered.round) });
+    if (!r.closedAt) return out;
     const by = r.closedBy === undefined ? null : r.closedBy === r.sessionId ? TEXT.history.theSession : label(S(r.closedBy));
-    return [{ at: r.closedAt, sid: r.sessionId, type: "decision", kind: "review", review: r.id, title: r.title, closed: TEXT.history.reviewClosed(by, r.closedReason) }];
+    return [...out, { at: r.closedAt, sid: r.sessionId, type: "decision", kind: "review", review: r.id, title: r.title, closed: TEXT.history.reviewClosed(by, r.closedReason) }];
   });
   const entries = [...decisions, ...results, ...closed]
     .map((e) => {

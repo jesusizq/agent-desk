@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { renderOptionsPage } from "../src/cli/review-options.ts";
 import { inlinePage } from "../src/cli/review-page.ts";
 import { InputError } from "../src/core/check.ts";
-import { parseProgress, REVIEW_ROUNDS_KEPT, REVIEW_STATE_MAX, reviewLine } from "../src/core/model.ts";
+import { inToReview, parseProgress, REVIEW_ROUNDS_KEPT, REVIEW_STATE_MAX, reviewLine, reviewStatus } from "../src/core/model.ts";
 import { OPTIONS_KEY, optionsText, readOptionMarks } from "../src/core/options.ts";
 import { reviewCsp } from "../src/server/security.ts";
 import { reviewDocument } from "../src/server/server.ts";
@@ -41,6 +41,32 @@ describe("reviews in the store", () => {
     assert.notEqual(store.publishReview({ sessionId: "s1", title: "Proposals", html: PAGE }).id, id, "a closed review is not continued");
     store.upsertSession({ id: "s2", provider: "Test", project: { name: "other", dir: "/work/other" } });
     assert.notEqual(store.publishReview({ sessionId: "s2", title: "Proposals", html: PAGE }).id, id, "nor one of another project");
+  });
+
+  it("takes what is typed to the waiting session as its latest round's answer, until a next round or a send", () => {
+    const { store, id } = withReview();
+    store.upsertSession({ id: "s2", provider: "Test", project: { name: "shop", dir: "/work/shop" } });
+    assert.deepEqual(store.answerReviewsInTerminal("s2"), [], "another session's prompt answers nothing of it");
+    const [answered] = store.answerReviewsInTerminal("s1");
+    assert.equal(answered?.answered?.round, 1);
+    assert.equal(inToReview(answered ?? assert.fail()), false);
+    assert.equal(reviewStatus(answered), "answered in the terminal");
+    assert.equal(answered.closedAt, undefined, "not closed");
+    assert.deepEqual(store.answerReviewsInTerminal("s1"), [], "a round is answered once");
+    store.changeReviewState(id, { ops: [{ op: "set", key: "card-1", value: "yes" }] }, "local");
+    const next = store.publishReview({ sessionId: "s1", title: "Proposals", html: PAGE });
+    assert.equal(next.id, id, "its next round continues it");
+    assert.equal(inToReview(next), true, "and is in To review again");
+    assert.deepEqual(store.reviewState(id).data, { "card-1": "yes" });
+    store.sendReview(id, "other", store.reviewState(id).rev);
+    assert.deepEqual(store.answerReviewsInTerminal("s1"), [], "a round sent from the desk is answered there");
+    store.publishReview({ sessionId: "s1", title: "Proposals", html: PAGE });
+    store.answerReviewsInTerminal("s1");
+    store.sendReview(id, "other", store.reviewState(id).rev);
+    assert.equal(inToReview(store.getReview(id) ?? assert.fail()), true, "sent from the desk after its terminal answer, it is back");
+    store.closeReview(id);
+    store.publishReview({ sessionId: "s1", title: "Other", html: PAGE });
+    assert.deepEqual(store.answerReviewsInTerminal("s1").map((r) => r.title), ["Other"], "a closed review is left as it is");
   });
 
   it("closes a review once, keeping why and by whom, and refuses a reason that is not one line", () => {

@@ -560,6 +560,11 @@ export type Review = {
   collected?: { at: string; sessionId: string; round: number };
   /** First opened on the desk ("New" until then). */
   openedAt?: string;
+  /**
+   * The developer wrote to the session in its terminal while it waited on this round, not sent: taken
+   * as their answer (probable), so the round leaves To review; a next round brings the review back.
+   */
+  answered?: { at: string; round: number };
   /** Left To review; it stays in History. */
   closedAt?: string;
   /** Why it was closed, when whoever closed it said (one line). */

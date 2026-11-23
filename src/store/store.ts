@@ -1363,6 +1363,26 @@ export class Store {
     return { review, state: this.reviewState(reviewId) };
   }
 
+  /**
+   * The developer wrote to `sessionId` in its terminal while it waited: each open review whose latest
+   * round that session published, and that was not sent since, takes it as that round's answer.
+   */
+  answerReviewsInTerminal(sessionId: string, problems?: string[]): Review[] {
+    const at = this.stamp();
+    const waiting = (r: Review) => {
+      const latest = r.rounds.at(-1);
+      return !r.closedAt && latest?.sessionId === sessionId && latest.at <= at && r.answered?.round !== latest.n && !r.sends.some((x) => x.at >= latest.at) ? latest : undefined;
+    };
+    return this.listReviews(problems)
+      .filter((r) => waiting(r))
+      .map((r) =>
+        this.updateReview(r.id, (cur) => {
+          const latest = waiting(cur);
+          return latest ? { ...cur, answered: { at, round: latest.n } } : cur;
+        }),
+      );
+  }
+
   /** Changes a review under its lock; one `change` returns unchanged is not written. */
   private updateReview(reviewId: string, change: (current: Review) => Review): Review {
     const file = this.paths.review(reviewId);

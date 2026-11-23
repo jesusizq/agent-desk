@@ -507,6 +507,8 @@ export const TEXT = {
     viaDesk: " (from the desk)",
     /** @param {string | null} by who closed it, when a session did @param {string | undefined} reason */
     reviewClosed: (by, reason) => `Closed${by ? ` by ${by}` : ""}${reason ? `: ${reason}` : ""}`,
+    /** @param {number} round */
+    reviewAnswered: (round) => `Round ${round} answered in the terminal`,
     theSession: "the session",
     understood: "Understood as: ",
     /** @param {string} q */

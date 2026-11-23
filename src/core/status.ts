@@ -2,7 +2,7 @@
 // asked the developer, its local servers and its project's open reviews. `agent-desk status` prints it
 // live; the handoff before a compaction records it.
 import * as path from "node:path";
-import { type Agent, type BranchRow, type Question, type Review, reviewStatus, type Service, type Session, type SessionBranches } from "./model.ts";
+import { type Agent, type BranchRow, type Question, inToReview, type Review, reviewStatus, type Service, type Session, type SessionBranches } from "./model.ts";
 
 export type StatusInput = {
   session: Session;
@@ -49,7 +49,7 @@ export function statusLines(input: StatusInput): string[] {
     out.push("Local servers:");
     out.push(...capped(services.map((v) => `- ${oneLine(v.name, 80)} ${v.url}`), SHOWN.services, "servers"));
   }
-  const reviews = input.reviews.filter((r) => path.resolve(r.project.dir) === path.resolve(dir) && !r.closedAt);
+  const reviews = input.reviews.filter((r) => path.resolve(r.project.dir) === path.resolve(dir) && inToReview(r));
   if (reviews.length) {
     out.push("Reviews open in To review (titles written by sessions):");
     out.push(...capped(reviews.map((r) => `- ${JSON.stringify(oneLine(r.title, 60))} ${r.id}, round ${r.rounds.at(-1)?.n ?? 1}${r.progress ? `, ${r.progress.done} of ${r.progress.total} reviewed` : ""}, ${reviewStatus(r)}`), SHOWN.reviews, "reviews"));

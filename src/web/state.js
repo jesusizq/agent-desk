@@ -158,7 +158,12 @@ export const isLive = (s) => s.state !== "ended" && !data.gone.includes(s.id);
 export const endedUnseen = (s) => s.state === "ended" && s.endedAsking === true && unread(s);
 
 /** Reviews a session published and the developer has not closed, in the projects shown, as the desk orders them (newest round first). */
-export const openReviews = () => data.reviews.filter((r) => !r.closedAt && (ui.project === null || r.project.name === ui.project));
+/** Its latest round was answered in the session's terminal and not sent since (`answeredInTerminal` in model.ts). @param {Review} r */
+function answeredInTerminal(r) {
+  const answered = r.answered;
+  return answered !== undefined && answered.round === r.rounds.at(-1)?.n && !r.sends.some((x) => x.at > answered.at);
+}
+export const openReviews = () => data.reviews.filter((r) => !r.closedAt && !answeredInTerminal(r) && (ui.project === null || r.project.name === ui.project));
 /** At work, a session whose adapter delivers mid-turn gets a message from the desk at its next step. @param {Session} s */
 export const midTurn = (s) => s.state === "working" && s.takesMessagesWhileWorking === true && isLive(s);
 /** A message from the desk reaches the session now: it listens for one, or takes them while it works. @param {Session} s */

@@ -584,10 +584,16 @@ export function readReview(value: unknown, where = "review"): Review {
     sends: list(f.sends ?? [], `${where}.sends`, readReviewSend, 10_000),
     collected: optional(f.collected, `${where}.collected`, readCollected),
     openedAt: optional(f.openedAt, `${where}.openedAt`, isoTime),
+    answered: optional(f.answered, `${where}.answered`, readAnswered),
     closedAt: optional(f.closedAt, `${where}.closedAt`, isoTime),
     closedReason: optional(f.closedReason, `${where}.closedReason`, reviewReason),
     closedBy: optional(f.closedBy, `${where}.closedBy`, id),
   });
+}
+
+function readAnswered(value: unknown, where: string): { at: string; round: number } {
+  const f = fields(value, where);
+  return { at: isoTime(f.at, `${where}.at`), round: int(f.round, `${where}.round`, 1) };
 }
 
 function readReviewRound(value: unknown, where: string): ReviewRound {
@@ -673,7 +679,16 @@ export function reviewLine(review: Pick<Review, "id" | "title">, round: number, 
   return note === undefined ? line : `${line}\n\n${note}`;
 }
 
-export const REVIEW_STATUSES = ["open", "sent, not read", "read", "closed"] as const;
+export const REVIEW_STATUSES = ["open", "sent, not read", "read", "answered in the terminal", "closed"] as const;
+
+/** Its latest round was answered in the session's terminal (`Review.answered`) and not sent from the desk since. */
+export function answeredInTerminal(review: Review): boolean {
+  const answered = review.answered;
+  return answered !== undefined && answered.round === review.rounds.at(-1)?.n && !review.sends.some((x) => x.at > answered.at);
+}
+
+/** Shown in To review: not closed, and its latest round not answered in the terminal. */
+export const inToReview = (review: Review): boolean => !review.closedAt && !answeredInTerminal(review);
 
 /** The send no session has read since, if any: the latest, when it came after the last read. */
 export function unreadSend(review: Review): ReviewSend | undefined {
@@ -685,5 +700,6 @@ export function unreadSend(review: Review): ReviewSend | undefined {
 export function reviewStatus(review: Review): (typeof REVIEW_STATUSES)[number] {
   if (unreadSend(review)) return "sent, not read";
   if (review.closedAt) return "closed";
+  if (answeredInTerminal(review)) return "answered in the terminal";
   return review.collected ? "read" : "open";
 }
