@@ -724,4 +724,34 @@ describe("the shim in a browser", { skip: chrome ? false : "no Chrome found (set
       await page.close();
     }
   });
+
+  it("on a phone, puts the switch over options side by side once a frame that loaded unseen is shown", async () => {
+    // A frame not shown yet lays nothing out: every option measures 0 × 0 there, side by side or not.
+    const sessionId = store.listSessions()[0]?.id ?? assert.fail("the demo has sessions");
+    const option = (label: string) => `<div data-agent-desk-option="${label}"><h3>${label}</h3><p>${"A line of the letter. ".repeat(40)}</p></div>`;
+    const html = `<!doctype html><html><head><style>.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}</style></head><body><section data-agent-desk-group="Letter"><div class="two">${option("yours")}${option("theirs")}</div></section></body></html>`;
+    const review = store.publishReview({ sessionId, title: "Letters shown late", html });
+    const page = await browser.newPage(390, 844);
+    try {
+      await page.goto(`${server.base}/`);
+      await page.eval(`(() => {
+        const frame = document.createElement("iframe");
+        frame.id = "late";
+        frame.hidden = true;
+        frame.style.cssText = "position:fixed;inset:0;width:390px;height:844px;border:0";
+        frame.src = "/review/${review.id}";
+        document.body.append(frame);
+        return true;
+      })()`);
+      const count = "document.querySelectorAll('agent-desk-control').length";
+      assert.equal(await page.inFrame<number>("/review/", count), 3, "unseen, no switch: the options' controls and the group's");
+      await page.eval("(document.getElementById('late').hidden = false), true");
+      const switched = await page.inFrame<boolean>("/review/", `new Promise((r) => { const end = Date.now() + 3000; const check = () => (${count} === 4 ? r(true) : Date.now() > end ? r(false) : setTimeout(check, 50)); check(); })`);
+      assert.equal(switched, true, "shown on a phone, its options get the switch");
+      assert.equal(await page.inFrame<string>("/review/", "document.querySelector('.two').previousElementSibling.tagName"), "AGENT-DESK-CONTROL");
+    } finally {
+      await page.close();
+      store.closeReview(review.id);
+    }
+  });
 });

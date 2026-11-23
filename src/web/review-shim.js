@@ -491,6 +491,9 @@ button[aria-pressed="true"] .mark { color: inherit; }`;
     // The counter may be drawn by the page's own script, at any time.
     // So may its options: the controls follow them, and are put back when a redraw drops them.
     new MutationObserver(() => (place(), progress())).observe(document.documentElement, { childList: true, characterData: true, subtree: true });
+    // Options measure 0 × 0 until the frame is laid out (opened unseen, or not yet shown): whether they
+    // sit side by side is looked at again whenever the page's size changes.
+    new ResizeObserver(fold).observe(document.documentElement);
     place();
     progress();
   });
