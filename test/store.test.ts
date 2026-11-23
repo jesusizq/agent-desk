@@ -90,6 +90,63 @@ describe("records read before", () => {
     assert.throws(() => (agent.after as string[]).push("other"), TypeError);
     assert.deepEqual(store.listAgents("s1").map((a) => [a.goal, a.after]), [["Build", ["tester"]]]);
   });
+
+  /** As a folder no one wrote in for a minute looks: only such a folder is taken whole while its times stay. */
+  const quiet = (dir: string) => fs.utimesSync(dir, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+
+  it("are taken whole from a quiet folder until a writer renames a file into it", () => {
+    const store = testStore();
+    addSession(store);
+    store.upsertAgent("s1", "builder", { goal: "Build A" });
+    const dir = path.dirname(store.paths.agent("s1", "builder"));
+    const goals = () => store.listAgents("s1").map((a) => a.goal);
+    quiet(dir);
+    assert.deepEqual(goals(), ["Build A"]);
+    // Against the protocol, a file changed in place leaves its folder's times: the quiet folder is taken as read.
+    const file = store.paths.agent("s1", "builder");
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("Build A", "Build C"));
+    assert.deepEqual(goals(), ["Build A"]);
+    new Store(store.paths.home).upsertAgent("s1", "builder", { goal: "Build B" });
+    assert.deepEqual(goals(), ["Build B"]);
+    quiet(dir);
+    assert.deepEqual(goals(), ["Build B"]);
+    new Store(store.paths.home).upsertAgent("s1", "tester", { goal: "Test" });
+    assert.deepEqual(goals(), ["Build B", "Test"], "a record added");
+    quiet(dir);
+    assert.deepEqual(goals(), ["Build B", "Test"]);
+    fs.rmSync(store.paths.agent("s1", "tester"));
+    assert.deepEqual(goals(), ["Build B"], "a record removed");
+  });
+
+  it("are read again at each rewrite of their folder in the same millisecond and at the same size", () => {
+    const store = testStore();
+    addSession(store);
+    const other = new Store(store.paths.home);
+    for (let i = 0; i < 50; i++) {
+      other.upsertAgent("s1", "builder", { goal: `Build ${i % 10}` });
+      assert.deepEqual(store.listAgents("s1").map((a) => a.goal), [`Build ${i % 10}`]);
+    }
+  });
+
+  it("report an unreadable file at every read, also in a quiet folder, and read it once it is fixed", () => {
+    const store = testStore();
+    addSession(store);
+    const bad = path.join(store.paths.sessionsDir, "s2.json");
+    fs.writeFileSync(bad, '{"id": "s2", "prov');
+    quiet(store.paths.sessionsDir);
+    for (let i = 0; i < 3; i++) {
+      const snap = store.snapshot();
+      assert.deepEqual(snap.sessions.map((s) => s.id), ["s1"]);
+      assert.equal(snap.problems.filter((p) => /s2\.json: not valid JSON/.test(p)).length, 1, `read ${i + 1}`);
+      assert.throws(() => store.listSessions(), /s2\.json: not valid JSON/);
+    }
+    // Fixed in place, as a person would: a folder that failed is never taken whole.
+    fs.writeFileSync(bad, fs.readFileSync(store.paths.session("s1"), "utf8").replace('"s1"', '"s2"'));
+    quiet(store.paths.sessionsDir);
+    const fixed = store.snapshot();
+    assert.deepEqual(fixed.sessions.map((s) => s.id).sort(), ["s1", "s2"]);
+    assert.deepEqual(fixed.problems, []);
+  });
 });
 
 describe("concurrency", () => {

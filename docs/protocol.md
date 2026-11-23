@@ -60,7 +60,13 @@ Hooks, the CLI and the server write the same files from different processes.
   second step fails, the question is reopened.
 - A process reads each record once: a later read of the same folder (`Store.readAll`) reuses it,
   frozen, while its file keeps the same inode, size and modification time to the nanosecond, which
-  every write changes, being a new file renamed over the old.
+  every write changes, being a new file renamed over the old. A folder read with no failure whose
+  modification time was over 5 s before the read is reused whole, without listing it or checking
+  each file, while its inode and modification and change times stay: every rename into it changes
+  them, and the 5 s leave a change within the same tick of the file system's coarse clock no way to
+  keep them. A file changed in place, which no writer of the store does, is therefore seen only once
+  its folder changes. A folder with an unreadable file is read again each time, so its problem is
+  reported at every read.
 
 ## Sessions and their terminal
 

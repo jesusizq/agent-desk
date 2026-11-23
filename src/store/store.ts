@@ -175,6 +175,14 @@ const WRITING_MAX_MS = 5 * 60_000;
 const HELD_MAX_MS = 10 * 60_000;
 
 type ReadRecord = { ino: bigint; size: bigint; mtimeNs: bigint; value: unknown };
+type FolderStamp = { ino: bigint; mtimeNs: bigint; ctimeNs: bigint };
+/**
+ * A folder's times have the clock's coarse granularity, so a change within the same tick as the last one
+ * may keep them: only a folder quiet this long before it was listed is trusted unchanged while they are.
+ */
+const FOLDER_QUIET_NS = 5_000_000_000n;
+
+const sameFolder = (a: FolderStamp, b: FolderStamp) => a.ino === b.ino && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 
 /** Frozen all the way down: a record read once is shared by every later read, so no caller may change it. */
 function deepFreeze<T>(value: T): T {
@@ -188,8 +196,11 @@ function deepFreeze<T>(value: T): T {
 export class Store {
   readonly paths: StorePaths;
   private readonly now: Clock;
-  /** Records read before, by folder and file name, reused while their file is unchanged (readAll). */
-  private readonly readCache = new Map<string, { reader: unknown; files: Map<string, ReadRecord> }>();
+  /**
+   * Records read before, by folder and file name, reused while their file is unchanged, and the whole
+   * folder's while it is (`folder`: read with no failure and quiet then) (readAll).
+   */
+  private readonly readCache = new Map<string, { reader: unknown; files: Map<string, ReadRecord>; folder?: FolderStamp }>();
 
   constructor(home: string, now: Clock = () => new Date()) {
     this.paths = new StorePaths(home);
@@ -1877,6 +1888,12 @@ export class Store {
     const out: T[] = [];
     const before = this.readCache.get(dir);
     const known = before?.reader === read ? before.files : undefined;
+    // Before the listing: a file renamed in after it changes the folder's times, seen at the next read.
+    const listedAt = BigInt(Date.now()) * 1_000_000n;
+    const folder = fs.statSync(dir, { bigint: true, throwIfNoEntry: false });
+    // Every write renames a file into its folder (writeAtomic), which changes the folder's times.
+    if (known && folder && before?.folder && sameFolder(before.folder, folder)) return [...known.values()].map((r) => r.value as T);
+    let failed = false;
     const files = new Map<string, ReadRecord>();
     for (const name of listJson(dir)) {
       const file = path.join(dir, name);
@@ -1898,9 +1915,11 @@ export class Store {
       } catch (error) {
         if (!problems) throw error;
         problems.push((error as Error).message);
+        failed = true;
       }
     }
-    this.readCache.set(dir, { reader: read, files });
+    const quiet = folder !== undefined && !failed && folder.mtimeNs < listedAt - FOLDER_QUIET_NS;
+    this.readCache.set(dir, { reader: read, files, ...(quiet ? { folder: { ino: folder.ino, mtimeNs: folder.mtimeNs, ctimeNs: folder.ctimeNs } } : {}) });
     return out;
   }
 

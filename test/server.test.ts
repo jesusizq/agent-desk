@@ -125,7 +125,14 @@ describe("server", () => {
     assert.notEqual(second.etag, first.etag, "the rest changed");
     assert.equal(second.body.history, first.body.history, "the history did not: the page does not fetch it again");
     store.upsertAgent("s1", "busy-one", { state: "done" });
-    assert.notEqual((await live()).body.history, first.body.history, "an agent that finished moves to the history");
+    const third = await live();
+    assert.notEqual(third.body.history, first.body.history, "an agent that finished moves to the history");
+    store.upsertAgent("s1", "done-one", { summary: "Changed after it ended" });
+    const fourth = await live();
+    assert.notEqual(fourth.body.history, third.body.history, "a record of the history rewritten, as many records as before");
+    const changed = (await (await fetch(base + "/api/history")).json()) as { version: string; agents: { name: string; summary?: string }[] };
+    assert.equal(changed.version, fourth.body.history);
+    assert.equal(changed.agents.find((a) => a.name === "done-one")?.summary, "Changed after it ended");
   });
 
   it("refuses writes without the exact Origin or the secret", async () => {

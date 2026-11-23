@@ -100,7 +100,7 @@ export function deskState(store: Store, now = new Date(), machine: MachineSource
     agents: gated.size === 0 ? snap.agents : snap.agents.map((a) => (gated.has(`${a.sessionId}/${a.name}`) ? { ...a, waitingFor: "machine-load" as const } : a)),
     services: liveServices(snap.services, snap.sessions, snap.problems),
     // The page shows a question's context only while it is open; the history needs no more.
-    questions: snap.questions.filter((q) => !held.has(q.id)).map(({ context, ...q }) => (q.status === "open" && context !== undefined ? { ...q, context } : q)),
+    questions: snap.questions.filter((q) => !held.has(q.id)).map((q) => (q.status === "open" || q.context === undefined ? q : withoutContext(q))),
     now: now.toISOString(),
     gone: goneSessions(snap.sessions),
     listening: heard.filter(([, ls]) => ls.length > 0).map(([id]) => id),
@@ -111,6 +111,17 @@ export function deskState(store: Store, now = new Date(), machine: MachineSource
     branches: branches.map((b) => b.shown),
     build: BUILD,
   };
+}
+
+/** Each closed question without its context, made once per record read, so an unchanged history keeps its objects (stateVersion). */
+const contextless = new WeakMap<Question, Question>();
+function withoutContext(q: Question): Question {
+  let out = contextless.get(q);
+  if (out === undefined) {
+    const { context: _context, ...rest } = q;
+    contextless.set(q, (out = rest));
+  }
+  return out;
 }
 
 /** The session's agents waiting at the load gate, read from its process tree at each state, since a scan is too rare for a wait. */
@@ -225,7 +236,12 @@ export function createDeskServer(store: Store, port: number, remote: Access["rem
   const secret = store.secret();
   const access: Access = remote ? { port, remote } : { port };
   const unlock = new RemoteUnlock(store.paths.pin, secret);
-  const version = () => stateVersion(store, machine);
+  let history: DeskHistory | undefined;
+  const version = () => {
+    const v = stateVersion(store, machine, history);
+    history = v.history;
+    return v;
+  };
   const feed = new StateFeed(() => version().etag, () => store.stateDirs(), feedOptions);
   return createServer((req, res) => {
     handle(store, access, secret, unlock, feed, version, req, res).catch((error: unknown) => {
@@ -421,13 +437,16 @@ type StateVersion = { stable: Omit<LiveState, "now">; etag: string; history: Des
  * costs the page a 304. What is over goes apart (/api/history), fetched only when its version changes:
  * sent with the rest, every status-line refresh would carry it again, megabytes to a phone.
  */
-function stateVersion(store: Store, machine: MachineSources): StateVersion {
+function stateVersion(store: Store, machine: MachineSources, before?: DeskHistory): StateVersion {
   const { now: _now, agents, questions, ...rest } = deskState(store, new Date(), machine);
   const over = { agents: agents.filter(isOver.agent), questions: questions.filter(isOver.question) };
-  const history: DeskHistory = { ...over, version: etagOf(over) };
+  // Records are reused, frozen, while their files are unchanged: the same records are the same history, hashed once.
+  const history: DeskHistory = before && sameItems(before.agents, over.agents) && sameItems(before.questions, over.questions) ? before : { ...over, version: etagOf(over) };
   const stable = { ...rest, agents: agents.filter((a) => !isOver.agent(a)), questions: questions.filter((q) => !isOver.question(q)), history: history.version };
   return { stable, etag: etagOf(stable), history };
 }
+
+const sameItems = <T>(a: readonly T[], b: readonly T[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 function versioned(body: () => object, etag: string, req: IncomingMessage, res: ServerResponse): void {
   if (req.headers["if-none-match"] === etag) {
