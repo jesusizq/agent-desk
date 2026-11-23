@@ -7,12 +7,16 @@ import { toast } from "./pieces.js";
 import { data, ID, ON_THIS_MACHINE, page, S, secret, setData, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").DeskState} DeskState */
+/** @typedef {import("../core/protocol.ts").DeskHistory} DeskHistory */
+/** @typedef {import("../core/protocol.ts").LiveState} LiveState */
 /** @typedef {import("./state.js").Outgoing} Outgoing */
 
 const LOCKED_HEADER = "X-Agent-Desk-Locked";
 const UNLOCK_ENDS_HEADER = "X-Agent-Desk-Unlock-Ends";
 /** Longer than the service worker's wait (sw.js), so its saved copy arrives first when there is one. */
 const NO_ANSWER_MS = 8000;
+/** Once the desk answers: the state over a slow link to a phone. */
+const BODY_MS = 60_000;
 
 /** Set once a device behind the PIN learns its unlock ended (endUnlock): nothing is kept on the device after. */
 export let unlockEnded = false;
@@ -142,9 +146,10 @@ export async function post(route, body = {}) {
 }
 
 let etag = "";
+/** The history shown (/api/history), and its version, which the state names. @type {DeskHistory} */
+let history = { agents: [], questions: [], version: "" };
 /** @type {string | null} */
 let loadedBuild = null;
-let latestRequest = 0;
 export let requestsWaiting = 0;
 /** When the state was last asked for, by the poll or a change. */
 export let askedAt = 0;
@@ -153,8 +158,53 @@ export function changed(version) {
   if (version !== etag) refresh();
 }
 const SAVED_AT = "X-Agent-Desk-Saved-At";
-export async function refresh() {
-  const request = ++latestRequest;
+
+/** @type {Promise<void> | null} */
+let fetching = null;
+/** @type {Promise<void> | null} */
+let queued = null;
+/**
+ * Fetches the desk's state, one fetch at a time: over a slow link, a fetch begun at each change would
+ * share it with those still on their way, and none would arrive. What is asked meanwhile is fetched
+ * once, after it, so a caller always gets a state asked for after it called.
+ * @returns {Promise<void>}
+ */
+export function refresh() {
+  if (!fetching) return (fetching = load().finally(() => (fetching = null)));
+  // Runs after it whether it failed or not: its failure is its own caller's.
+  /** @returns {Promise<void>} */
+  const after = () => ((queued = null), refresh());
+  return (queued ??= fetching.then(after, after));
+}
+
+/**
+ * A read of the state or its history. The answer must begin within NO_ANSWER_MS (a computer asleep
+ * leaves the request hanging) and then arrive within BODY_MS: a slow link carries it, slowly.
+ * @param {string} route @param {string} version the one shown, answered by a 304 while it is current
+ */
+async function read(route, version) {
+  const stop = new AbortController();
+  const noAnswer = AbortSignal.timeout(NO_ANSWER_MS);
+  const giveUp = () => stop.abort(noAnswer.reason);
+  noAnswer.addEventListener("abort", giveUp);
+  const res = await fetch(route, { headers: version ? { "If-None-Match": version } : {}, signal: stop.signal }).finally(() => noAnswer.removeEventListener("abort", giveUp));
+  const slow = AbortSignal.timeout(BODY_MS);
+  slow.addEventListener("abort", () => stop.abort(slow.reason));
+  return { res, body: res.ok ? /** @type {unknown} */ (await res.json()) : null };
+}
+
+/** The state with its history in it, as the page reads the desk: a record in both is the history's, fetched after. @param {LiveState} live @param {DeskHistory} past @returns {DeskState} */
+function withHistory({ history: _version, ...live }, past) {
+  const closed = new Set(past.questions.map((q) => q.id));
+  const over = new Set(past.agents.map((a) => `${a.sessionId}/${a.name}`));
+  return {
+    ...live,
+    questions: [...live.questions.filter((q) => !closed.has(q.id)), ...past.questions].sort((a, b) => a.askedAt.localeCompare(b.askedAt)),
+    agents: [...live.agents.filter((a) => !over.has(`${a.sessionId}/${a.name}`)), ...past.agents].sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
+  };
+}
+
+async function load() {
   /** @type {string | null} */
   let savedAt = null;
   /** @type {DeskState | null} */
@@ -162,23 +212,29 @@ export async function refresh() {
   requestsWaiting++;
   askedAt = Date.now();
   try {
-    const res = await fetch("/api/state", { headers: etag ? { "If-None-Match": etag } : {}, signal: AbortSignal.timeout(NO_ANSWER_MS) });
+    const { res, body } = await read("/api/state", etag);
     if (needsPin(res)) return endUnlock();
     reloadAtUnlockEnd(res);
     ui.refused = res.status === 421;
     savedAt = res.headers.get(SAVED_AT);
     if (res.status !== 304) {
       if (!res.ok) throw new Error(`${res.status}`);
-      next = /** @type {DeskState} */ (await res.json());
-      if (request === latestRequest && !savedAt) etag = res.headers.get("ETag") ?? "";
+      const live = /** @type {LiveState} */ (body);
+      if (live.history !== history.version) {
+        const past = await read("/api/history", history.version);
+        if (needsPin(past.res)) return endUnlock();
+        if (!past.res.ok && past.res.status !== 304) throw new Error(`history: ${past.res.status}`);
+        if (past.res.ok) history = /** @type {DeskHistory} */ (past.body);
+      }
+      next = withHistory(live, history);
+      if (!savedAt) etag = res.headers.get("ETag") ?? "";
     }
   } catch {
-    if (request === latestRequest) setOffline(true); // shown in the strip; the poll goes on, and tells when it is back
+    setOffline(true); // shown in the strip; the poll goes on, and tells when it is back
     return;
   } finally {
     requestsWaiting--;
   }
-  if (request !== latestRequest) return; // a newer request answers instead; this one may be stale
   ui.savedAt = savedAt;
   ui.updatedAt = savedAt ?? new Date().toISOString();
   if (savedAt) {

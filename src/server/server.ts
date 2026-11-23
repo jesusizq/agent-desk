@@ -9,7 +9,7 @@ import { FRESH_COMMAND, sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "..
 import { ID_PATTERN, id } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
-import { COMPACT_INSTRUCTIONS_MAX, type DeskState, type DiskWarning, imageIds, type ProjectScan, type ReviewState, reviewNote, type Session, SHELL_SUGGESTION_MAX, type SessionBranches } from "../core/model.ts";
+import { type Agent, COMPACT_INSTRUCTIONS_MAX, type DeskCommand, type DeskHistory, type DeskState, type DiskWarning, imageIds, type LiveState, type ProjectScan, type Question, type ReviewState, reviewNote, type Session, SHELL_SUGGESTION_MAX, type SessionBranches } from "../core/model.ts";
 import { MACHINE, type MachineSources, machineWarnings } from "../core/machine.ts";
 import { agentsAtLoadGate } from "../project/busy.ts";
 import { OPTIONS_TEXT_MAX, optionsText } from "../core/options.ts";
@@ -78,6 +78,7 @@ const LOCKED = { "X-Agent-Desk-Locked": "1" };
 const UNLOCK_ENDS = "X-Agent-Desk-Unlock-Ends";
 const YEAR_S = 31_536_000;
 const LOW_DISK_RATIO = 0.1;
+const DISK_STEP_BYTES = 1e8;
 const REFUSED_PAGE = "This device is not allowed on this desk: it accepts only its owner's Tailscale account. Sign in to Tailscale with that account and open it again.\n";
 
 const BUILD = new Date().toISOString();
@@ -143,14 +144,18 @@ export function diskWarnings(sessions: Session[], problems: string[], lowRatio =
       continue;
     }
     const totalBytes = stat.blocks * stat.bsize;
-    const freeBytes = stat.bavail * stat.bsize;
-    if (totalBytes === 0 || freeBytes / totalBytes >= lowRatio) continue;
+    // To the tenth of a GB the page shows: exact, the free space of a busy disk would change the state's version every check.
+    const freeBytes = Math.floor((stat.bavail * stat.bsize) / DISK_STEP_BYTES) * DISK_STEP_BYTES;
+    if (totalBytes === 0 || stat.bavail * stat.bsize >= lowRatio * totalBytes) continue;
     const entry = byDevice.get(dev) ?? { dir: s.project.dir, projects: [], freeBytes, totalBytes };
     if (!entry.projects.includes(s.project.name)) entry.projects.push(s.project.name);
     byDevice.set(dev, entry);
   }
   return [...byDevice.values()];
 }
+
+/** The session with `command` marked as typed now, `text` after it: its button shows it was sent. */
+const sentFromDesk = (s: Session, command: DeskCommand, text: string): Session => ({ ...s, deskSent: { ...s.deskSent, [command]: { text, at: new Date().toISOString() } } });
 
 type Action = (store: Store, target: string, body: unknown) => unknown;
 
@@ -191,7 +196,7 @@ const ACTIONS: Record<string, Action> = {
       // Typed while the session works, it would wait in the terminal's queue and run at some later step.
       if (s.state !== "waiting") throw new InputError("the session is working; a shell command is typed only while it waits; nothing was sent");
       sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], "shell", asked);
-      store.updateSession(target, ({ shellSuggestion: _sent, ...rest }) => rest);
+      store.updateSession(target, ({ shellSuggestion: _sent, ...rest }) => sentFromDesk(rest, "shell", asked));
       return { sent: action };
     }
     const command = action === "fresh" ? (store.getMetrics(target)?.coldResume?.command ?? "") : "";
@@ -202,6 +207,7 @@ const ACTIONS: Record<string, Action> = {
       throw new InputError("the command that starts this session afresh changed since the page showed it; nothing was sent, look at the button again");
     }
     sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], action, action === "fresh" ? command : instructions);
+    if (action === "compact" || action === "fresh") store.updateSession(target, (rest) => sentFromDesk(rest, action, action === "fresh" ? command : instructions));
     return { sent: action };
   },
   "sessions/end": (store, target) => {
@@ -248,7 +254,14 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     if (route === "/") return page(res, secret);
     const type = STATIC[route];
     if (type) return send(res, 200, fs.readFileSync(path.join(WEB_DIR, route.slice(1))), type);
-    if (route === "/api/state") return state(version(), req, res);
+    if (route === "/api/state") {
+      const v = version();
+      return versioned(() => ({ ...v.stable, now: new Date().toISOString() }), v.etag, req, res);
+    }
+    if (route === "/api/history") {
+      const v = version();
+      return versioned(() => v.history, v.history.version, req, res);
+    }
     // A remote device's stream ends with its unlock, as its next request would.
     if (route === "/api/events") return req.method === "GET" ? feed.stream(res, unlockEnds) : sendJson(res, 405, { error: "method not allowed" });
     if (route === "/api/push/key") return sendJson(res, 200, { key: new Push(store.paths.push).publicKey() });
@@ -398,23 +411,34 @@ function page(res: ServerResponse, secret: string): void {
   send(res, 200, html, "text/html; charset=utf-8");
 }
 
-type StateVersion = { stable: Omit<DeskState, "now">; etag: string };
-/** What the page shows but the clock, and its version: the ETag ignores the clock, so an unchanged store costs the page a 304. */
+/** What is over: an agent that finished, a question closed. Most of the state, and it changes far less often than the rest. */
+const isOver = { agent: (a: Agent) => a.state === "done" || a.state === "failed", question: (q: Question) => q.status !== "open" };
+const etagOf = (value: unknown) => `"${createHash("sha256").update(JSON.stringify(value)).digest("base64url").slice(0, 22)}"`;
+
+type StateVersion = { stable: Omit<LiveState, "now">; etag: string; history: DeskHistory };
+/**
+ * What the page shows but the clock, and its version: the ETag ignores the clock, so an unchanged store
+ * costs the page a 304. What is over goes apart (/api/history), fetched only when its version changes:
+ * sent with the rest, every status-line refresh would carry it again, megabytes to a phone.
+ */
 function stateVersion(store: Store, machine: MachineSources): StateVersion {
-  const { now: _now, ...stable } = deskState(store, new Date(), machine);
-  return { stable, etag: `"${createHash("sha256").update(JSON.stringify(stable)).digest("base64url").slice(0, 22)}"` };
+  const { now: _now, agents, questions, ...rest } = deskState(store, new Date(), machine);
+  const over = { agents: agents.filter(isOver.agent), questions: questions.filter(isOver.question) };
+  const history: DeskHistory = { ...over, version: etagOf(over) };
+  const stable = { ...rest, agents: agents.filter((a) => !isOver.agent(a)), questions: questions.filter((q) => !isOver.question(q)), history: history.version };
+  return { stable, etag: etagOf(stable), history };
 }
 
-function state({ stable, etag }: StateVersion, req: IncomingMessage, res: ServerResponse): void {
-  const body = JSON.stringify({ ...stable, now: new Date().toISOString() });
+function versioned(body: () => object, etag: string, req: IncomingMessage, res: ServerResponse): void {
   if (req.headers["if-none-match"] === etag) {
     res.writeHead(304, { ETag: etag, "Cache-Control": "no-cache" });
     res.end();
     return;
   }
+  const json = JSON.stringify(body());
   // Fetched at every change, also from a phone over the tailnet: compressed when the browser takes it.
   const gzip = /\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""));
-  send(res, 200, gzip ? gzipSync(body) : body, "application/json; charset=utf-8", { ETag: etag, "Cache-Control": "no-cache", Vary: "Accept-Encoding", ...(gzip ? { "Content-Encoding": "gzip" } : {}) });
+  send(res, 200, gzip ? gzipSync(json) : json, "application/json; charset=utf-8", { ETag: etag, "Cache-Control": "no-cache", Vary: "Accept-Encoding", ...(gzip ? { "Content-Encoding": "gzip" } : {}) });
 }
 
 /** A remote device's browser keeps the image only until its unlock ends, so that it cannot show it after. */

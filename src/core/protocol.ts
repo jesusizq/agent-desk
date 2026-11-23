@@ -100,7 +100,17 @@ export type Session = {
    * one line (`shellSuggestionLine`). Gone once the developer writes to the session or it is sent.
    */
   shellSuggestion?: { text: string; at: string };
+  /**
+   * The commands the desk last typed into the session's terminal, by action: what was typed after the
+   * command (instructions, the command itself; "" for a bare /compact) and when, so the page marks its
+   * button as sent and the developer does not send it twice.
+   */
+  deskSent?: Partial<Record<DeskCommand, { text: string; at: string }>>;
 };
+
+/** The tmux actions that type a command, marked on their button once the desk sent them. */
+export const DESK_COMMANDS = ["compact", "fresh", "shell"] as const;
+export type DeskCommand = (typeof DESK_COMMANDS)[number];
 
 export type CheckReopened = { times: number; reason: string; at: string };
 /** The start of a check's refusal kept on the desk: its first lines, up to this many characters. */
@@ -608,3 +618,8 @@ export type DeskState = {
   /** Changes when the server restarts; the page reloads itself to pick up new code. */
   build: string;
 };
+
+/** What /api/history serves: the agents that finished and the questions closed, and their version. */
+export type DeskHistory = { agents: Agent[]; questions: Question[]; version: string };
+/** What /api/state serves: the desk without its history, and the version of the history to fetch with it. */
+export type LiveState = DeskState & { history: string };

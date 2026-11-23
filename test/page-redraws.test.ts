@@ -418,6 +418,27 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
       }
     });
 
+    it("asks for the state one fetch at a time over a slow link, however often it changes, and shows the latest", async () => {
+      store.upsertSession({ id: "flight", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "flight 0", state: "waiting" });
+      try {
+        const page = await open();
+        await page.waitFor("[...document.querySelectorAll('.scard')].some((c) => c.textContent.includes('flight 0'))");
+        // Each state takes 1.5 s to arrive, as 600 KB do over a weak mobile link.
+        await page.eval(`(() => { const real = window.fetch; const c = (window.stateFetches = { now: 0, most: 0, total: 0 }); window.fetch = (url, init) => { if (String(url) !== '/api/state') return real(url, init); c.now++; c.total++; c.most = Math.max(c.most, c.now); return new Promise((r) => setTimeout(r, 1500)).then(() => real(url, init)).finally(() => c.now--); }; })()`);
+        for (let i = 1; i <= 6; i++) {
+          store.updateSession("flight", (x) => ({ ...x, title: `flight ${i}` }));
+          await new Promise((r) => setTimeout(r, 300));
+        }
+        await page.waitFor("[...document.querySelectorAll('.scard')].some((c) => c.textContent.includes('flight 6'))", 15_000);
+        const counts = await page.eval<{ most: number; total: number }>("window.stateFetches");
+        assert.equal(counts.most, 1, "never two at once: they would share the link and neither arrive");
+        assert.ok(counts.total <= 4, `what changed meanwhile asked once after each, not once per change: ${counts.total} fetches`);
+        assert.equal(await page.eval<boolean>("document.documentElement.classList.contains('offline') || !!document.querySelector('.strip-offline')"), false, "slow is not offline");
+      } finally {
+        store.updateSession("flight", (x) => ({ ...x, state: "ended" }));
+      }
+    });
+
     it("makes the code block holding the shell command a waiting session asks for a two-tap button that runs it, and only that block", async () => {
       const own = procInfo(process.pid);
       assert.ok(own?.start);
@@ -445,11 +466,18 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         await page.eval(`${button}.click()`);
         await page.waitFor("window.sentKeys.length === 1");
         assert.deepEqual(await page.eval<unknown[]>("window.sentKeys"), [{ action: "shell", command: run }]);
-        store.updateSession("asks-run", ({ shellSuggestion: _sent, ...s }) => s); // as the server does once it typed it
+        const sentAt = new Date().toISOString();
+        store.updateSession("asks-run", ({ shellSuggestion: _sent, ...s }) => ({ ...s, deskSent: { shell: { text: run, at: sentAt } } })); // as the server does once it typed it
         await page.waitFor(`${button}?.classList.contains('sent')`);
         assert.equal(await page.eval<string>(`${button}.getAttribute('aria-label')`), "Sent", "it shows it was sent after the command was dropped");
         assert.ok((await centred(".arm-done")) <= 1, "its outcome centred top to bottom");
         await page.waitFor("document.querySelectorAll('#session .conversation pre[data-copy]').length === 2", 6000);
+        const mark = "document.querySelector('#session .conversation .shell-sent .sent-mark')";
+        assert.match(await page.eval<string>(`${mark}?.textContent ?? ''`), /^Sent \d\d:\d\d$/, "then the block keeps a mark, so it is not sent twice");
+        assert.equal(await page.eval<string>(`${mark}.previousElementSibling.textContent`), run, "on the block it sent");
+        store.updateSession("asks-run", (s) => ({ ...s, turnEndedAt: new Date(Date.parse(sentAt) + 1000).toISOString() }));
+        await page.waitFor(`!${mark}`);
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .conversation pre[data-copy]').length"), 2, "a turn ended after it: a block again");
 
         store.updateSession("asks-run", (s) => ({ ...s, state: "working", shellSuggestion: { text: run, at } }));
         await new Promise((r) => setTimeout(r, 400));
@@ -514,6 +542,10 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         await page.waitFor(`${fresh}.classList.contains('sent')`);
         assert.equal(await page.eval<string>(`${fresh}.getAttribute('aria-label')`), "Sent");
         await page.waitFor(`${fresh}.getAttribute('aria-label') === '/ahorro:handoff' && !${fresh}.classList.contains('fired')`);
+        store.updateSession("suggests", (s) => ({ ...s, deskSent: { fresh: { text: "/ahorro:handoff", at: new Date().toISOString() } } })); // as the server records it
+        await page.waitFor(`${fresh}.querySelector('.sent-mark')`);
+        assert.match(await page.eval<string>(`${fresh}.getAttribute('aria-label')`), /^\/ahorro:handoff · Already sent from the desk/, "it keeps saying it was sent until the session's next turn ends");
+        assert.equal(await page.eval<boolean>(`!!${button}.querySelector('.sent-mark')`), false, "only on the command sent");
         // A refused send says so on the button too, why in a toast.
         await page.eval(`(() => { const stub = window.fetch; window.fetch = (route, init) => String(route).endsWith('/keys') ? Promise.resolve(new Response(JSON.stringify({ error: 'the pane is gone' }), { status: 400, headers: { 'Content-Type': 'application/json' } })) : stub(route, init); })()`);
         await page.click("#session [data-key=fresh]");

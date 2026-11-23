@@ -19,7 +19,7 @@ const DESK_DOWN = new Set([502, 503, 504]);
 /** The page, its files, the state, conversations and images: what the desk needs to draw itself; and
  * each review's page and saved state, to open it offline. The event stream (/api/events) is not among
  * them: it always goes to the network and is never kept. */
-const KEPT = /^\/(?:|[\w-]+\.(?:js|css|svg|png|webmanifest)|api\/state|api\/sessions\/[\w-]+\/messages|images\/[\w.-]+|review\/[\w-]+\/raw|api\/reviews\/[\w-]+\/state)$/;
+const KEPT = /^\/(?:|[\w-]+\.(?:js|css|svg|png|webmanifest)|api\/state|api\/history|api\/sessions\/[\w-]+\/messages|images\/[\w.-]+|review\/[\w-]+\/raw|api\/reviews\/[\w-]+\/state)$/;
 /** A review's page as the desk serves it (src/server: the review routes), built here from its kept parts when the computer does not answer. */
 const REVIEW_PAGE = /^\/review\/([\w-]+)$/;
 const REVIEW_STATE = /^\/api\/reviews\/([\w-]+)\/state$/;
@@ -46,8 +46,8 @@ sw.addEventListener("fetch", (e) => {
   const saving = REVIEW_STATE.exec(url.pathname)?.[1];
   if (e.request.method === "POST" && saving) return e.respondWith(saveReview(e.request, saving));
   if (e.request.method !== "GET") return;
-  if (review) return e.respondWith(networkOrSaved(e.request, url.pathname, () => reviewOffline(review)));
-  if (KEPT.test(url.pathname)) e.respondWith(networkOrSaved(e.request, url.pathname));
+  if (review) return e.respondWith(networkOrSaved(e, url.pathname, () => reviewOffline(review)));
+  if (KEPT.test(url.pathname)) e.respondWith(networkOrSaved(e, url.pathname));
 });
 
 async function dropOtherCaches() {
@@ -55,10 +55,11 @@ async function dropOtherCaches() {
 }
 
 /**
- * @param {Request} request @param {string} key
+ * @param {FetchEvent} e @param {string} key
  * @param {(key: string) => Promise<Response | undefined>} [saved] what answers when the network does not: the copy kept for `key`, or one built
  */
-async function networkOrSaved(request, key, saved = savedCopy) {
+async function networkOrSaved(e, key, saved = savedCopy) {
+  const { request } = e;
   // Given up on, a hung request is ended: the browser would hold later ones to the same address behind it.
   const giveUp = new AbortController();
   request.signal.addEventListener("abort", () => giveUp.abort());
@@ -66,7 +67,15 @@ async function networkOrSaved(request, key, saved = savedCopy) {
     // The PIN page is not the desk, and says this device's unlock ended: what it kept goes too.
     // A failed delete is logged, not thrown: thrown, it would have the saved copy answer instead of the PIN page.
     if (res.headers.has(LOCKED)) await forget().catch((error) => console.error("agent-desk: could not delete the saved desk once locked:", error));
-    else if (res.ok && !unlockEnded(res) && saved === savedCopy) await (await caches.open(CACHE)).put(key, await stamped(res.clone()));
+    // Kept as it arrives, not before answering: the computer answered, and a slow link may take long to carry it all.
+    else if (res.ok && !unlockEnded(res) && saved === savedCopy) {
+      const keeping = keep(key, res.clone());
+      try {
+        e.waitUntil(keeping);
+      } catch {
+        // Answered late, after the saved copy: the event is over, the copy is kept all the same unless the worker stops first.
+      }
+    }
     return res;
   });
   network.catch(() => {}); // a late failure, once the saved copy has answered: nobody waits for it
@@ -172,6 +181,15 @@ function unlockEnded(res) {
 /** Deletes every copy this device kept of the desk. */
 async function forget() {
   await caches.delete(CACHE);
+}
+
+/** Logged, not thrown: the page already has the desk's answer, only this device's copy of it is older. @param {string} key @param {Response} res */
+async function keep(key, res) {
+  try {
+    await (await caches.open(CACHE)).put(key, await stamped(res));
+  } catch (error) {
+    console.error(`agent-desk: could not keep ${key} on this device:`, error);
+  }
 }
 
 /** A copy that says when it was saved, so the page can tell the developer how old it is. @param {Response} res */

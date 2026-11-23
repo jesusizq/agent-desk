@@ -241,6 +241,10 @@ export const TEXT = {
     compactSent: "/compact with its suggested instructions",
     /** What a confirmed control shows on itself: on its way, then how it went. */
     fired: { sending: "Sending…", sent: "Sent", failed: "Not sent" },
+    /** The mark of a command the desk already typed, until the session's next turn ends. @param {string} when */
+    sentMark: (when) => `Sent ${when}`,
+    /** @param {string} when */
+    sentMarkHint: (when) => `Already sent from the desk (${when}): it shows until the session's next turn ends`,
     freshHint: "Starts the session afresh as its tool does it (a handoff to load in a new conversation)",
     shellAsk: "Run it? Read it first",
     shellHint: "Types this line into the session's terminal: its ! prefix runs it in the shell, outside the session's permissions",

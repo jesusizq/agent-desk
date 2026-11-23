@@ -91,8 +91,41 @@ describe("server", () => {
     assert.equal(res.headers.get("content-encoding"), "gzip");
     const { questions } = (await res.json()) as { questions: { id: string; context?: string }[] };
     assert.equal(questions.find((q) => q.id === open.id)?.context, "why it asks");
-    assert.equal(questions.find((q) => q.id === closed.id)?.context, undefined);
+    const past = await fetch(base + "/api/history", { headers: { "Accept-Encoding": "gzip" } });
+    assert.equal(past.headers.get("content-encoding"), "gzip");
+    const history = (await past.json()) as { questions: { id: string; context?: string }[] };
+    assert.equal(history.questions.find((q) => q.id === closed.id)?.context, undefined);
     store.dismiss(open.id);
+  });
+
+  it("sends what is over apart, so a change to the rest does not send it again", async () => {
+    const asked = store.ask({ sessionId: "s1", kind: "question", text: "Over?" });
+    store.dismiss(asked.id);
+    store.upsertAgent("s1", "done-one", { state: "done" });
+    store.upsertAgent("s1", "busy-one", { state: "working" });
+    type Live = { history: string; questions: { id: string }[]; agents: { name: string }[] };
+    type Past = { version: string; questions: { id: string }[]; agents: { name: string }[] };
+    const live = async () => {
+      const res = await fetch(base + "/api/state");
+      return { etag: res.headers.get("etag") ?? "", body: (await res.json()) as Live };
+    };
+    const first = await live();
+    assert.equal(first.body.questions.some((q) => q.id === asked.id), false, "a closed question is the history's");
+    assert.deepEqual(first.body.agents.map((a) => a.name), ["busy-one"]);
+    const res = await fetch(base + "/api/history");
+    const past = (await res.json()) as Past;
+    assert.equal(res.headers.get("etag"), first.body.history, "the state names the history's version");
+    assert.equal(past.version, first.body.history);
+    assert.ok(past.questions.some((q) => q.id === asked.id));
+    assert.deepEqual(past.agents.map((a) => a.name), ["done-one"]);
+    assert.equal((await fetch(base + "/api/history", { headers: { "If-None-Match": past.version } })).status, 304);
+
+    store.upsertAgent("s1", "busy-one", { activity: "something else" });
+    const second = await live();
+    assert.notEqual(second.etag, first.etag, "the rest changed");
+    assert.equal(second.body.history, first.body.history, "the history did not: the page does not fetch it again");
+    store.upsertAgent("s1", "busy-one", { state: "done" });
+    assert.notEqual((await live()).body.history, first.body.history, "an agent that finished moves to the history");
   });
 
   it("refuses writes without the exact Origin or the secret", async () => {
@@ -269,6 +302,8 @@ describe("server", () => {
       assert.equal((await post("/api/sessions/tm1/keys", { action: "compact" })).status, 200, "no suggestion: /compact alone");
       const bare = ["/compact", "/compact"];
       await shows(bare);
+      const deskSent = (command: "compact" | "fresh" | "shell") => store.getSession("tm1")?.deskSent?.[command];
+      assert.equal(deskSent("compact")?.text, "", "marked as sent, so the page does not send it twice");
 
       // What the session wrote, kept as its adapter keeps it: one line, whatever it held.
       const suggested = compactInstructionsLine("keep the plan\nthen\x03 run\r\x1b[2J this; kill-server;");
@@ -284,6 +319,7 @@ describe("server", () => {
 
       assert.equal((await post("/api/sessions/tm1/keys", { action: "compact", instructions: suggested })).status, 200);
       await shows([...bare, `/compact ${suggested}`, `/compact ${suggested}`]); // capture-pane leaves out the space typed last
+      assert.equal(deskSent("compact")?.text, suggested, "the instructions typed with it");
       assert.equal(suggested, "keep the plan then run [2J this; kill-server", "one line: no Enter, Ctrl-C, Escape or trailing ';' for tmux to drop");
       assert.ok(tmux("list-panes", "-F", "#{pane_dead}").trim() === "0", "the pane's process and the tmux server live on");
 
@@ -301,6 +337,8 @@ describe("server", () => {
       store.mergeMetrics({ sessionId: "tm1", coldResume: { command: "/ahorro:handoff" } });
       assert.equal((await post("/api/sessions/tm1/keys", { action: "fresh", command: "/ahorro:handoff" })).status, 200);
       await shows([...bare, `/compact ${suggested}`, `/compact ${suggested}`, "/ahorro:handoff", "/ahorro:handoff"]);
+      assert.equal(deskSent("fresh")?.text, "/ahorro:handoff");
+      assert.equal(deskSent("shell"), undefined, "a refused request marks nothing");
 
       // A shell command the session's last reply asked for: typed only while it is the one shown and the session waits, then gone.
       const run = "! echo ran";
@@ -319,6 +357,7 @@ describe("server", () => {
       assert.equal((await post("/api/sessions/tm1/keys", { action: "shell", command: run })).status, 200);
       await shows([...typedBefore, run, run]);
       assert.equal(store.getSession("tm1")?.shellSuggestion, undefined, "sent once: a second tap types nothing");
+      assert.equal(deskSent("shell")?.text, run);
       assert.equal((await post("/api/sessions/tm1/keys", { action: "shell", command: run })).status, 400);
 
       // The widest instructions kept, typed whole: tmux refuses a command of more than about 16 KiB. A
@@ -754,6 +793,17 @@ describe("disk warnings", () => {
     // Every disk counts as short of space at a ratio of 1, so only which sessions are listed is tested.
     assert.deepEqual(diskWarnings(sessions, problems, 1).flatMap((w) => w.projects), ["live"]);
     assert.deepEqual(problems, []);
+  });
+
+  it("count free space to the tenth of a GB the page shows, so a busy disk does not change the state at every check", () => {
+    const me = procInfo(process.pid);
+    assert.ok(me);
+    const live = { id: "live", provider: "Test", project: { name: "live", dir: os.tmpdir() }, state: "waiting", startedAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", process: { pid: process.pid, start: me.start, ancestors: [] } } as Session;
+    const [warning] = diskWarnings([live], [], 1);
+    assert.ok(warning);
+    assert.equal(warning.freeBytes % 1e8, 0);
+    const stat = fs.statfsSync(os.tmpdir());
+    assert.ok(stat.bavail * stat.bsize - warning.freeBytes < 1e8 + 1e7, "rounded down, never more than the disk has");
   });
 });
 

@@ -118,7 +118,7 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
   let browser: Browser;
   let server: http.Server;
   let base: string;
-  let mode: "up" | "hung" | "gateway" | "dropped" | "locked" = "up";
+  let mode: "up" | "hung" | "gateway" | "dropped" | "locked" | "slow" = "up";
   /** Set, the desk answers as to a device that entered the PIN: with when its unlock ends. Unset, as to this computer. */
   let unlockEnds: number | undefined;
   const SAVED_TEXT = "the desk";
@@ -157,6 +157,8 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
         const unlock = unlockEnds === undefined ? {} : { "X-Agent-Desk-Unlock-Ends": String(unlockEnds) };
         if (req.url === "/api/state") {
           if (mode === "locked") return res.writeHead(401, { "Content-Type": "application/json", "X-Agent-Desk-Locked": "1" }).end('{"error":"locked: enter the PIN"}');
+          // Answered at once, then carried slowly, as a large state over a weak link to a phone.
+          if (mode === "slow") return void (res.writeHead(200, { "Content-Type": "application/json", ...unlock }).write('{"desk":'), setTimeout(() => res.end('"slow"}'), 6000));
           return res.writeHead(200, { "Content-Type": "application/json", ...unlock }).end('{"desk":true}');
         }
         if (mode === "locked") return res.writeHead(200, { "Content-Type": "text/html", "X-Agent-Desk-Locked": "1" }).end("<!doctype html><title>pin</title>Enter your PIN");
@@ -209,6 +211,16 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
 
     mode = "hung";
     assert.equal(await load(), "desk", "no answer at all shows the saved desk once the wait ends");
+  });
+
+  it("passes on an answer that began within its wait however long it takes to arrive, and keeps it once whole", async () => {
+    unlockEnds = undefined;
+    const { fetched } = await openDesk();
+    assert.equal(await fetched("/api/state"), '{"desk":true}');
+    mode = "slow";
+    assert.equal(await fetched("/api/state"), '{"desk":"slow"}', "the computer answered: not the saved copy, which would show the desk offline");
+    mode = "hung";
+    assert.equal(await fetched("/api/state"), '{"desk":"slow"}', "the slow answer was kept");
   });
 
   it("deletes a device's saved desk once the desk answers it is locked, and never saves the PIN page", async () => {

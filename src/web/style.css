@@ -780,6 +780,9 @@ button.shell-run pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .arm.armed .arm-ask { visibility: visible; }
 .arm.fired .arm-idle, .arm.fired .arm-ask { visibility: hidden; }
 .arm-done { display: inline-flex; align-items: center; gap: 4px; }
+.sent-mark { display: inline-flex; align-items: center; gap: 3px; margin-inline-start: 8px; color: var(--done); font-size: 12px; font-weight: 500; white-space: nowrap; vertical-align: middle; }
+.sent-mark .i { width: 12px; height: 12px; }
+:is(button.shell-run, .shell-sent) .sent-mark { display: flex; margin: 4px 8px 6px; }
 .arm-done .i { width: 13px; height: 13px; }
 :is(button.secondary, button.chip).arm.fired.sending { opacity: .7; cursor: progress; }
 :is(button.secondary, button.chip).arm.fired.sent { background: color-mix(in srgb, var(--done) 14%, var(--surface)); border-color: var(--done); color: var(--done); }

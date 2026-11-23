@@ -6,9 +6,23 @@ import { TEXT } from "./text.js";
 import { copy, toast } from "./pieces.js";
 import { post, run } from "./server.js";
 import { asksOf, isLive, label, ON_THIS_MACHINE, ui } from "./state.js";
+import { stamp } from "./format.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Metrics} Metrics */
+/** @typedef {import("../core/protocol.ts").DeskCommand} DeskCommand */
+
+/**
+ * What the desk last typed of `command` into the session, while no turn has ended since: until the
+ * session has acted on it, its button says it was sent, so it is not sent twice.
+ * @param {Session} s @param {DeskCommand} command
+ */
+export function sentOf(s, command) {
+  const sent = s.deskSent?.[command];
+  return sent && sent.at > (s.turnEndedAt ?? "") ? sent : null;
+}
+/** @param {string} at */
+const sentMark = (at) => h("span", { class: "sent-mark", title: TEXT.control.sentMarkHint(stamp(at)) }, icon("check"), TEXT.control.sentMark(stamp(at)));
 
 /** The last shell command shown on a button, kept so that button can show it was sent after the server dropped it. */
 let shownShell = { key: "", text: "" };
@@ -40,23 +54,32 @@ function shellButton(s, shell, redraw, key) {
  */
 export function runnableShell(s, view, redraw) {
   const asked = s.tmux && s.state === "waiting" ? (s.shellSuggestion?.text ?? "") : "";
-  const shell = asked || (ui.fired?.key === shownShell.key && shownShell.key.startsWith(`${s.id} shell `) ? shownShell.text : "");
+  const firing = ui.fired?.key === shownShell.key && shownShell.key.startsWith(`${s.id} shell `) ? shownShell.text : "";
+  const sent = sentOf(s, "shell");
+  const shell = asked || firing || (sent?.text ?? "");
   if (!shell) return view;
   const blocks = view.flatMap((n) => (n instanceof Element ? [...n.querySelectorAll("pre[data-copy]")] : []));
   const block = blocks.reverse().find((b) => b.textContent === shell);
+  if (!block) return view;
   // Sent: the server dropped the command, so the button keeps the key it was fired under.
-  if (block) block.replaceWith(shellButton(s, shell, redraw, asked ? `${s.id} shell ${s.shellSuggestion?.at ?? ""}` : shownShell.key));
+  if (asked || firing) block.replaceWith(shellButton(s, shell, redraw, asked ? `${s.id} shell ${s.shellSuggestion?.at ?? ""}` : shownShell.key));
+  else if (sent) {
+    const done = h("div", { class: "shell-sent" });
+    block.replaceWith(done);
+    done.append(block, sentMark(sent.at));
+  }
   return view;
 }
 
 /**
  * A button that acts only on a second click within 3 s, so a stray click does nothing. Armed in
  * `ui`, not in the button: what shows it redraws as the session changes.
- * @param {{ key: string, id: string, text: string, ask: string, act: () => Promise<unknown>, redraw: () => void, cls?: string, title?: string, idle?: import("./dom.js").Child }} b
+ * @param {{ key: string, id: string, text: string, ask: string, act: () => Promise<unknown>, redraw: () => void, cls?: string, title?: string, idle?: import("./dom.js").Child, sentAt?: string }} b
  * `key`: one per record and action; `ask`: the armed button's question; `redraw`: draws what shows it;
- * `idle`: what it shows unarmed, when not `text` (which stays its accessible name)
+ * `idle`: what it shows unarmed, when not `text` (which stays its accessible name); `sentAt`: when
+ * what it sends was sent already, marked on it
  */
-export function armedButton({ key, id, text, ask, act, redraw, cls = "secondary", title, idle }) {
+export function armedButton({ key, id, text, ask, act, redraw, cls = "secondary", title, idle, sentAt }) {
   const armed = () => ui.armed?.key === key && ui.armed.until > Date.now();
   const click = () => {
     if (!armed()) {
@@ -98,7 +121,7 @@ export function armedButton({ key, id, text, ask, act, redraw, cls = "secondary"
     {
       class: `${cls} arm${on ? " armed" : ""}${fired ? ` fired ${fired}` : ""}`,
       "data-key": id,
-      "aria-label": fired ? TEXT.control.fired[fired] : on ? ask : text,
+      "aria-label": fired ? TEXT.control.fired[fired] : on ? ask : sentAt ? `${text} · ${TEXT.control.sentMarkHint(stamp(sentAt))}` : text,
       "aria-busy": fired === "sending" ? "true" : null,
       title,
       onclick: fired === "sending" ? null : click,
@@ -106,7 +129,7 @@ export function armedButton({ key, id, text, ask, act, redraw, cls = "secondary"
     h(
       "span",
       { class: "arm-lbl", "aria-hidden": "true" },
-      h("span", { class: "arm-idle" }, idle ?? text),
+      h("span", { class: "arm-idle" }, idle ?? text, sentAt ? sentMark(sentAt) : null),
       h("span", { class: "arm-ask" }, ask),
       fired ? h("span", { class: "arm-done" }, fired === "sent" ? icon("check") : null, TEXT.control.fired[fired]) : null,
     ),
@@ -146,6 +169,9 @@ export function controlSection(s, m, redraw) {
   // With the instructions the session suggested, the button shows the start of what it types; the
   // server types them only while they are still these.
   const instructions = s.compactInstructions?.text ?? "";
+  const compacted = sentOf(s, "compact");
+  // A bare /compact is marked after any: the instructions are dropped once the context is compacted.
+  const compactSentAt = compacted && (!instructions || compacted.text === instructions) ? compacted.at : undefined;
   const compactKey = instructions
     ? armedButton({
         key: `${s.id} compact ${s.compactInstructions?.at}`,
@@ -156,13 +182,15 @@ export function controlSection(s, m, redraw) {
         idle: h("span", { class: "compact-with" }, h("span", {}, "/compact"), h("span", { class: "compact-preview" }, instructions)),
         act: () => post(`/api/sessions/${s.id}/keys`, { action: "compact", instructions }).then(() => toast(TEXT.control.sent(TEXT.control.compactSent, label(s)))),
         redraw,
+        sentAt: compactSentAt,
       })
-    : key("compact", "/compact");
+    : armedButton({ key: `${s.id} compact`, id: "compact", text: "/compact", ask: TEXT.control.confirm("/compact"), redraw, sentAt: compactSentAt, act: () => post(`/api/sessions/${s.id}/keys`, { action: "compact" }).then(() => toast(TEXT.control.sent("/compact", label(s)))) });
   // What its adapter says starts the session afresh (a handoff), when it is not /compact itself; the server types it only while it is still this one.
   const fresh = m?.coldResume?.command;
+  const freshSent = sentOf(s, "fresh");
   const freshKey =
     fresh && fresh !== "/compact"
-      ? armedButton({ key: `${s.id} fresh ${fresh}`, id: "fresh", text: fresh, ask: TEXT.control.confirm(fresh), title: TEXT.control.freshHint, redraw, act: () => post(`/api/sessions/${s.id}/keys`, { action: "fresh", command: fresh }).then(() => toast(TEXT.control.sent(fresh, label(s)))) })
+      ? armedButton({ key: `${s.id} fresh ${fresh}`, id: "fresh", text: fresh, ask: TEXT.control.confirm(fresh), title: TEXT.control.freshHint, redraw, sentAt: freshSent?.text === fresh ? freshSent.at : undefined, act: () => post(`/api/sessions/${s.id}/keys`, { action: "fresh", command: fresh }).then(() => toast(TEXT.control.sent(fresh, label(s)))) })
       : null;
   // The terminal shows a dialog (a permission prompt, a question with options) only while the
   // session has one open; the keys that answer it are offered only then.

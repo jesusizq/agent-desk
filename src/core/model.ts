@@ -8,6 +8,7 @@ import {
   ANSWER_SOURCES,
   ATTACHED_IMAGES_MAX,
   CHECK_REASON_MAX,
+  DESK_COMMANDS,
   GROUP_SIZE_MAX,
   MESSAGE_AUTHORS,
   QUESTION_KINDS,
@@ -93,7 +94,19 @@ export function readSession(value: unknown, where = "session"): Session {
     checkReopened: optional(f.checkReopened, `${where}.checkReopened`, readCheckReopened),
     compactInstructions: optional(f.compactInstructions, `${where}.compactInstructions`, readCompactInstructions),
     shellSuggestion: optional(f.shellSuggestion, `${where}.shellSuggestion`, readShellSuggestion),
+    deskSent: optional(f.deskSent, `${where}.deskSent`, readDeskSent),
   });
+}
+
+function readDeskSent(value: unknown, where: string): Session["deskSent"] {
+  const f = fields(value, where);
+  const unknown = Object.keys(f).find((k) => !(DESK_COMMANDS as readonly string[]).includes(k));
+  if (unknown !== undefined) throw new InputError(`${where}: ${JSON.stringify(unknown)} is not one of ${DESK_COMMANDS.join(", ")}`);
+  const sent = (v: unknown, w: string) => {
+    const s = fields(v, w);
+    return { text: text(s.text, `${w}.text`, COMPACT_INSTRUCTIONS_MAX), at: isoTime(s.at, `${w}.at`) };
+  };
+  return compact(Object.fromEntries(DESK_COMMANDS.map((c) => [c, optional(f[c], `${where}.${c}`, sent)])));
 }
 
 function readCompactInstructions(value: unknown, where: string): { text: string; at: string } {
