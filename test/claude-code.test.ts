@@ -1273,7 +1273,7 @@ describe("options a turn's question offers", () => {
     assert.deepEqual(asked("¿Por dónde empiezo? Opciones:\n\na) El login\nb) El checkout\nc) Las facturas")?.options, ["El login", "El checkout", "Las facturas"], "lettered, after a line that introduces them");
   });
 
-  it("takes long items as options only when the question asks to choose and one item is recommended", () => {
+  it("takes long items as options only when one item is recommended, whatever words the question uses", () => {
     const list = [
       "- Los puntos 1 y 2, midiendo antes y después (recomendado)",
       "- Solo el 1, que es una línea y sin riesgo",
@@ -1287,7 +1287,7 @@ describe("options a turn's question offers", () => {
     });
     const unmarked = list.map((l) => l.replace(" (recomendado)", ""));
     assert.deepEqual(asked(["Esto es lo que he medido.", "", "¿Qué hago?", ...unmarked].join("\n"))?.options, [], "without one recommended, a long item is prose, not an option");
-    assert.deepEqual(asked(["Esto es lo que he medido.", "", "¿Lo dejo así?", ...list].join("\n"))?.options, [], "nor when the question does not ask to choose");
+    assert.deepEqual(asked(["Esto es lo que he medido.", "", "¿La hago ahora?", ...list].join("\n"))?.options, list.map((l) => l.slice(2)), "a yes-or-no question with one item recommended offers them too");
   });
 
   it("takes the list right before the question, the labels before a colon or a dash, the descriptions kept under the question", () => {

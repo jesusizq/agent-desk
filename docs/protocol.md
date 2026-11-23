@@ -272,8 +272,8 @@ prefieres?`, `¿cómo seguimos?`, "which…?", "how should I proceed?" and the l
 `:` that introduces the list as options, alternatives or ways, or exactly one item marked
 `(recomendado)`/`(recomendada)`/`(recommended)`. An option's label is its item as written before a
 description after `: ` or a spaced dash (outside brackets and quotes), without bold marks, at most
-80 characters and 12 words in one sentence (200 and 40 when the question's words ask to choose and
-exactly one item is marked recommended), its recommendation mark kept; when an item has a
+80 characters and 12 words in one sentence (200 and 40 when exactly one item is marked
+recommended, whatever the question's words), its recommendation mark kept; when an item has a
 description, the list stays in the context under the question. `¿cuáles…?` and "which ones?" take
 several. Anything else (steps of a plan under "shall I go ahead?", a list of findings under "commit
 it?", two questions) leaves the question with a free answer, as before. A question asked with

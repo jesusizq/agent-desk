@@ -748,8 +748,8 @@ function offer(at: Layout): OfferedQuestion | undefined {
   if (!at.after && askingSentences(above).length > 0) return undefined;
   const words = folded(asked.join(" "));
   const recommended = at.list.filter((l) => RECOMMENDED.test(l)).length === 1;
-  // A list the question asks to choose from, with one item recommended, is a choice however long its items.
-  const options = optionItems(at.list, OPTION_LABEL) ?? (CHOOSING.test(words) && recommended ? optionItems(at.list, OPTION_LABEL_CHOSEN) : undefined);
+  // A list under a question with one item recommended is a choice however long its items ("¿La hago ahora?").
+  const options = optionItems(at.list, OPTION_LABEL) ?? (recommended ? optionItems(at.list, OPTION_LABEL_CHOSEN) : undefined);
   if (options === undefined) return undefined;
   const lastLine = (text: string | undefined) => text?.split("\n").filter((l) => l.trim() !== "").at(-1) ?? "";
   const lead = at.after ? lastLine(at.question) : at.intro.length > 0 ? lastLine(at.intro.join("\n")) : lastLine(at.others.at(-1));
