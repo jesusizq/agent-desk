@@ -139,6 +139,8 @@ export function openSession(sid) {
     ui.panelPart = null;
     ui.panelAsk = null;
   }
+  // A confirmation left open when the window closed would wait there with its Run already live.
+  if (!d.open) ui.confirmShell = null;
   const m = metricsOf(sid);
   const part = ui.panelPart ?? "";
   const before = d.querySelector(".session-body");

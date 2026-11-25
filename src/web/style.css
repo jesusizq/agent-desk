@@ -768,10 +768,6 @@ dialog[open]::backdrop { background: rgb(10 12 18 / .38); backdrop-filter: blur(
 /* A control that asks for a second click: both labels in one cell, so its width never changes; armed, it is
    filled and a line runs out over the 3 s it waits (ARM_MS in control.js). */
 .arm { position: relative; overflow: hidden; }
-button.shell-run { display: block; width: 100%; text-align: start; padding: 0; }
-button.shell-run .arm-lbl { display: grid; width: 100%; }
-button.shell-run .arm-idle { justify-self: stretch; }
-button.shell-run pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .compact-with { display: inline-flex; gap: 6px; max-width: min(34ch, 62vw); }
 .compact-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-weight: 400; }
 .arm-lbl { display: inline-grid; }
@@ -782,7 +778,7 @@ button.shell-run pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere
 .arm-done { display: inline-flex; align-items: center; gap: 4px; }
 .sent-mark { display: inline-flex; align-items: center; gap: 3px; margin-inline-start: 8px; color: var(--done); font-size: 12px; font-weight: 500; white-space: nowrap; vertical-align: middle; }
 .sent-mark .i { width: 12px; height: 12px; }
-:is(button.shell-run, .shell-sent) .sent-mark { display: flex; margin: 4px 8px 6px; }
+.shell-sent .sent-mark { display: flex; margin: 4px 8px 6px; }
 .arm-done .i { width: 13px; height: 13px; }
 :is(button.secondary, button.chip).arm.fired.sending { opacity: .7; cursor: progress; }
 :is(button.secondary, button.chip).arm.fired.sent { background: color-mix(in srgb, var(--done) 14%, var(--surface)); border-color: var(--done); color: var(--done); }
@@ -800,6 +796,19 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .arm.armed::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: currentColor; opacity: .55;
   transform-origin: left; animation: arm-out 3s linear forwards; }
 @keyframes arm-out { to { transform: scaleX(0); } }
+/* The shell command a session asked the developer to run, always whole; asked to run, it shows a
+   confirmation in its place. A double tap on it must not zoom the page. */
+.shell-run { display: flex; flex-direction: column; gap: 6px; }
+.shell-run .shell-cmd { overflow-wrap: anywhere; touch-action: manipulation; cursor: copy; }
+.shell-run:not(.confirming) .shell-cmd:hover { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
+.shell-run.confirming { padding: 10px 12px; border: 1px solid var(--accent); border-radius: 9px; background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.shell-run.confirming .shell-cmd { cursor: text; }
+.shell-ask { margin: 0; }
+.shell-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.8125rem; }
+.shell-fired { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
+.shell-fired .i { width: 13px; height: 13px; }
+.shell-fired.sent { color: var(--done); }
+.shell-fired.failed { color: var(--danger); }
 .next .qfull { color: var(--text); }
 .conversation { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; padding: 4px 2px; }
 .conversation.long { max-height: 560px; }

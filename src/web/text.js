@@ -246,8 +246,14 @@ export const TEXT = {
     /** @param {string} when */
     sentMarkHint: (when) => `Already sent from the desk (${when}): it shows until the session's next turn ends`,
     freshHint: "Starts the session afresh as its tool does it (a handoff to load in a new conversation)",
-    shellAsk: "Run it? Read it first",
+    shellRun: "Run in its terminal…",
+    shellClickTwice: "or double-click the command",
+    shellTapTwice: "or tap the command twice",
     shellHint: "Types this line into the session's terminal: its ! prefix runs it in the shell, outside the session's permissions",
+    shellConfirm: "Run this line in the session's terminal?",
+    shellCheck: "Its ! prefix runs it in the shell, outside the session's permissions: read all of it first.",
+    shellGo: "Run",
+    shellCancel: "Cancel",
     shellSent: "the shell command",
     /** A key short enough that "Send" would double its button. @param {string} what */
     confirmShort: (what) => `${what}?`,

@@ -92,6 +92,7 @@ export const ui = {
   /** @type {string | null} a question answered with the keys: the box that replaces it takes the focus */ focusAfter: null,
   /** @type {{ key: string, until: number } | null} the session control waiting for its confirming click */ armed: null,
   /** @type {{ key: string, state: "sending" | "sent" | "failed" } | null} the session control just confirmed, until its outcome has shown */ fired: null,
+  /** @type {{ key: string, at: number } | null} the shell command whose confirmation is open, and when it opened */ confirmShell: null,
   /** @type {Set<string>} sessions whose agents at work are unfolded in the session panel */ agentsOpen: new Set(),
   /** @type {Set<string>} questions already brought up a second time */ reminded: new Set(),
   /** @type {Set<string>} questions whose long context is unfolded */ contextOpen: new Set(),

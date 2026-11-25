@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { after, afterEach, before, describe, it } from "node:test";
 import { execFileSync } from "node:child_process";
 import { Store } from "../src/store/store.ts";
-import { base, browser, cardOf, DRAWN, open, openDialogs, ownDesk, pages, setupPage, SKIP, STILL, store } from "./page-harness.ts";
+import { arrived, base, browser, cardOf, DRAWN, open, openDialogs, openPhone, ownDesk, pages, setupPage, SKIP, STILL, store } from "./page-harness.ts";
 import { procInfo } from "../src/core/proc.ts";
 import { serve, tempHome } from "./helpers.ts";
 import { type Page } from "./browser.ts";
@@ -439,52 +439,117 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
       }
     });
 
-    it("makes the code block holding the shell command a waiting session asks for a two-tap button that runs it, and only that block", async () => {
+    it("makes the shell command a waiting session asks for runnable in its own reply only: a double click shows it whole with Run and Cancel, and only Run, after a moment, sends it", async () => {
       const own = procInfo(process.pid);
       assert.ok(own?.start);
-      const run = "! python3 /tmp/rules.py";
+      // As a session wrote one: quotes, backticks, && and backslashes, longer than a line of the conversation.
+      const run = "! cd /home/demo/Projects/web-shop && f=.claude/skills/db-migrate/SKILL.md && sed -i 's#^5\\. Run `cd client && npm run migration:run`#5. Run `cd client \\&\\& APP_MIGRATING=true npm run migration:run`#' \"$f\" && git diff -- \"$f\"";
+      const reply = `Run:\n\n\`\`\`\n! ls\n\`\`\`\n\nthen:\n\n\`\`\`\n${run}\n\`\`\``;
       const at = new Date().toISOString();
-      store.upsertSession({ id: "asks-run", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "asks to run a command", state: "waiting", lastMessage: { text: `Run:\n\n\`\`\`\n! ls\n\`\`\`\n\nthen:\n\n\`\`\`\n${run}\n\`\`\``, at }, process: { pid: process.pid, start: own.start, ancestors: [] }, tmux: { socket: "/tmp/tmux-1000/default", pane: "%1", clients: [] } });
+      store.upsertSession({ id: "asks-run", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "asks to run a command", state: "waiting", lastMessage: { text: reply, at }, process: { pid: process.pid, start: own.start, ancestors: [] }, tmux: { socket: "/tmp/tmux-1000/default", pane: "%1", clients: [] } });
+      store.addMessage({ sessionId: "asks-run", from: "session", text: reply });
+      // The same line in what the developer wrote after it: only the session's reply asks to run it.
+      store.addMessage({ sessionId: "asks-run", from: "developer", text: `Mine:\n\n\`\`\`\n${run}\n\`\`\``, via: "desk" });
       try {
         const page = await open();
         await page.click(".scard", "asks to run a command");
-        await page.waitFor("document.querySelectorAll('#session .conversation pre[data-copy]').length === 2");
-        assert.equal(await page.eval<number>("document.querySelectorAll('#session [data-key=shell]').length"), 0, "none stored: both blocks only copy");
+        await page.waitFor("document.querySelectorAll('#session .conversation pre[data-copy]').length === 3");
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .shell-run').length"), 0, "none stored: every block only copies");
 
         store.updateSession("asks-run", (s) => ({ ...s, shellSuggestion: { text: run, at } }));
-        const button = "document.querySelector('#session .conversation [data-key=shell]')";
-        await page.waitFor(button);
-        assert.equal(await page.eval<string>(`${button}.innerText.trim()`), run, "the block itself, its command shown");
-        assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('#session .conversation pre[data-copy]')].map((b) => b.textContent)"), ["! ls"], "the other block still copies");
+        const block = "#session .conversation .msg.from-session .shell-run";
+        await page.waitFor(`document.querySelector('${block}')`);
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .shell-run').length"), 1);
+        assert.equal(await page.eval<string>(`document.querySelector('${block} .shell-cmd').textContent`), run, "the block itself, its command shown");
+        assert.equal(await page.eval<string>(`document.querySelector('${block} .shell-foot').innerText`), "Run in its terminal…\nor double-click the command", "what runs it said under it");
+        assert.deepEqual(
+          await page.eval<[string, string][]>("[...document.querySelectorAll('#session .conversation pre[data-copy]')].map((b) => [b.closest('.msg').classList[1], b.textContent])"),
+          [["from-session", "! ls"], ["from-developer", run]],
+          "the other block and the developer's copy of it only copy",
+        );
         await page.eval(`(() => { window.sentKeys = []; const real = window.fetch; window.fetch = (route, init) => String(route).endsWith('/keys') ? (window.sentKeys.push(JSON.parse(init.body)), Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))) : real(route, init); })()`);
-        const centred = (state: string) => page.eval<number>(`(() => { const b = ${button}.getBoundingClientRect(); const r = document.createRange(); r.selectNodeContents(${button}.querySelector('${state}')); const l = r.getBoundingClientRect(); return Math.abs((l.top + l.bottom) / 2 - (b.top + b.bottom) / 2); })()`);
-        await page.click("#session .conversation [data-key=shell]");
-        assert.equal(await page.eval<string>(`${button}.getAttribute('aria-label')`), "Run it? Read it first", "the first tap asks for a second");
-        assert.ok((await centred(".arm-ask")) <= 1, "its question centred top to bottom");
-        assert.deepEqual(await page.eval<unknown[]>("window.sentKeys"), []);
-        // Within the 3 s it asks: page.click would first wait for its countdown bar to stop moving.
-        await page.eval(`${button}.click()`);
+        const confirming = `document.querySelector('${block}.confirming')`;
+        const go = `${confirming}?.querySelector('[data-key=shell-go]')`;
+
+        await page.click(`${block} .shell-cmd`);
+        await new Promise((r) => setTimeout(r, 700));
+        assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "one click only copies it");
+
+        await page.click(`${block} .shell-cmd`, "", 2);
+        await page.waitFor(confirming);
+        assert.equal(await page.eval<string>(`${confirming}.querySelector('.shell-ask').textContent`), "Run this line in the session's terminal? Its ! prefix runs it in the shell, outside the session's permissions: read all of it first.");
+        const shown = await page.eval<{ text: string; cut: boolean }>(`(() => { const p = ${confirming}.querySelector('.shell-cmd'); return { text: p.textContent, cut: p.scrollWidth > p.clientWidth || p.scrollHeight > p.clientHeight }; })()`);
+        assert.deepEqual(shown, { text: run, cut: false }, "the command whole, nothing cut off");
+        assert.equal(await page.eval<boolean>(`${go}.disabled`), true, "Run waits a moment: the clicks that opened it cannot press it");
+        assert.equal(await page.eval<string>("document.activeElement?.dataset.key"), "shell-cancel", "the keys are on Cancel");
+        const [x, y] = await page.eval<[number, number]>(`(() => { const r = ${go}.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`);
+        for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 3 });
+        await page.click(`${block} [data-key=shell-cancel]`);
+        await page.waitFor(`!${confirming} && document.querySelector('${block} [data-key=shell]')`);
+        assert.deepEqual(await page.eval<unknown[]>("window.sentKeys"), [], "a click at once on Run, then Cancel: nothing sent");
+
+        await page.click(`${block} [data-key=shell]`, "Run in its terminal");
+        await page.waitFor(`${go} && !${go}.disabled`);
+        await page.click(`${block} [data-key=shell-go]`);
         await page.waitFor("window.sentKeys.length === 1");
         assert.deepEqual(await page.eval<unknown[]>("window.sentKeys"), [{ action: "shell", command: run }]);
         const sentAt = new Date().toISOString();
         store.updateSession("asks-run", ({ shellSuggestion: _sent, ...s }) => ({ ...s, deskSent: { shell: { text: run, at: sentAt } } })); // as the server does once it typed it
-        await page.waitFor(`${button}?.classList.contains('sent')`);
-        assert.equal(await page.eval<string>(`${button}.getAttribute('aria-label')`), "Sent", "it shows it was sent after the command was dropped");
-        assert.ok((await centred(".arm-done")) <= 1, "its outcome centred top to bottom");
-        await page.waitFor("document.querySelectorAll('#session .conversation pre[data-copy]').length === 2", 6000);
-        const mark = "document.querySelector('#session .conversation .shell-sent .sent-mark')";
-        assert.match(await page.eval<string>(`${mark}?.textContent ?? ''`), /^Sent \d\d:\d\d$/, "then the block keeps a mark, so it is not sent twice");
+        await page.waitFor(`document.querySelector('${block} .shell-fired.sent')`);
+        assert.equal(await page.eval<string>(`document.querySelector('${block} .shell-fired').textContent`), "Sent", "it shows it was sent after the command was dropped");
+        const mark = "document.querySelector('#session .conversation .msg.from-session .shell-sent .sent-mark')";
+        await page.waitFor(mark, 6000);
+        assert.match(await page.eval<string>(`${mark}.textContent`), /^Sent \d\d:\d\d$/, "then the block keeps a mark, so it is not sent twice");
         assert.equal(await page.eval<string>(`${mark}.previousElementSibling.textContent`), run, "on the block it sent");
         store.updateSession("asks-run", (s) => ({ ...s, turnEndedAt: new Date(Date.parse(sentAt) + 1000).toISOString() }));
         await page.waitFor(`!${mark}`);
-        assert.equal(await page.eval<number>("document.querySelectorAll('#session .conversation pre[data-copy]').length"), 2, "a turn ended after it: a block again");
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .conversation pre[data-copy]').length"), 3, "a turn ended after it: a block again");
 
-        store.updateSession("asks-run", (s) => ({ ...s, state: "working", shellSuggestion: { text: run, at } }));
+        const later = new Date(Date.parse(sentAt) + 2000).toISOString();
+        store.updateSession("asks-run", (s) => ({ ...s, shellSuggestion: { text: run, at: later } }));
+        await page.click(`${block} [data-key=shell]`, "Run in its terminal");
+        await page.waitFor(confirming);
+        // Asked again, even the same line: what was confirmed is not, until confirmed again.
+        store.updateSession("asks-run", (s) => ({ ...s, shellSuggestion: { text: run, at: new Date(Date.parse(later) + 1000).toISOString() } }));
+        await page.waitFor(`!${confirming} && document.querySelector('${block} [data-key=shell]')`);
+
+        await page.click(`${block} [data-key=shell]`, "Run in its terminal");
+        await page.waitFor(confirming);
+        await page.press("Escape");
+        await page.waitFor("!document.getElementById('session').open");
+        await page.click(".scard", "asks to run a command");
+        await page.waitFor(`document.querySelector('${block}')`);
+        assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "a window opened again starts with no confirmation open");
+
+        store.updateSession("asks-run", (s) => ({ ...s, state: "working" }));
+        await page.waitFor(`!document.querySelector('${block}')`);
+        await page.click("#session .conversation .msg.from-session pre[data-copy]", "sed -i", 2);
         await new Promise((r) => setTimeout(r, 400));
-        assert.equal(await page.eval<number>("document.querySelectorAll('#session [data-key=shell]').length"), 0, "never while the session works");
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .shell-run').length"), 0, "never while the session works");
+        assert.deepEqual(await page.eval<unknown[]>("window.sentKeys"), [{ action: "shell", command: run }], "sent once in all");
         await page.press("Escape");
       } finally {
         store.updateSession("asks-run", (s) => ({ ...s, state: "ended" }));
+      }
+    });
+
+    it("opens the shell command's confirmation with a double tap on a phone", async () => {
+      const own = procInfo(process.pid);
+      assert.ok(own?.start);
+      const run = "! npm run build";
+      const at = new Date().toISOString();
+      store.upsertSession({ id: "asks-run-phone", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "asks a phone to run", state: "waiting", lastMessage: { text: `\`\`\`\n${run}\n\`\`\``, at }, shellSuggestion: { text: run, at }, process: { pid: process.pid, start: own.start, ancestors: [] }, tmux: { socket: "/tmp/tmux-1000/default", pane: "%1", clients: [] } });
+      try {
+        const page = await openPhone();
+        await page.eval("location.hash = '#s=asks-run-phone'");
+        await page.waitFor(`${arrived("session")} && document.querySelector('#session .shell-run')`);
+        assert.equal(await page.eval<string>("document.querySelector('#session .shell-foot .faint').textContent"), "or tap the command twice");
+        await page.tap("#session .shell-cmd");
+        await page.tap("#session .shell-cmd");
+        await page.waitFor("document.querySelector('#session .shell-run.confirming')");
+        assert.equal(await page.eval<number>("visualViewport.scale"), 1, "the double tap did not zoom the page");
+      } finally {
+        store.updateSession("asks-run-phone", (s) => ({ ...s, state: "ended" }));
       }
     });
 

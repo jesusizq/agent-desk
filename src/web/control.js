@@ -7,6 +7,7 @@ import { copy, toast } from "./pieces.js";
 import { post, run } from "./server.js";
 import { asksOf, isLive, label, ON_THIS_MACHINE, ui } from "./state.js";
 import { stamp } from "./format.js";
+import { COARSE } from "./layout.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Metrics} Metrics */
@@ -24,32 +25,77 @@ export function sentOf(s, command) {
 /** @param {string} at */
 const sentMark = (at) => h("span", { class: "sent-mark", title: TEXT.control.sentMarkHint(stamp(at)) }, icon("check"), TEXT.control.sentMark(stamp(at)));
 
-/** The last shell command shown on a button, kept so that button can show it was sent after the server dropped it. */
+/** The last shell command shown runnable, kept so its block can show it was sent after the server dropped it. */
 let shownShell = { key: "", text: "" };
+/** The last click on a runnable command: another on it within DOUBLE_MS makes a double click, or a double tap. */
+let lastClick = { key: "", at: 0 };
+const DOUBLE_MS = 500;
+/** How long Run stays inert once the confirmation opens, so the clicks or taps that opened it cannot press it. */
+const HOLD_MS = 1000;
+
 /**
- * The reply's code block holding the shell command the session asked for, made a two-tap button that
- * runs it, showing the command until armed.
+ * The reply's code block holding the shell command the session asked for, made runnable: a double
+ * click on it (a double tap on a phone), or Run under it, opens a confirmation in its place that shows
+ * the command whole, with Run and Cancel; only that Run types it.
  * @param {Session} s @param {string} shell @param {() => void} redraw
- * @param {string} key the button's key: the one it was fired under, once the server dropped the command
+ * @param {string} key one per command asked: the one it was fired under, once the server dropped the command
  */
-function shellButton(s, shell, redraw, key) {
+function runnableCommand(s, shell, redraw, key) {
   shownShell = { key, text: shell };
-  return armedButton({
-    key,
-    id: "shell",
-    text: shell,
-    idle: h("pre", {}, shell),
-    ask: TEXT.control.shellAsk,
-    title: TEXT.control.shellHint,
-    cls: "secondary shell-run",
-    redraw,
-    act: () => post(`/api/sessions/${s.id}/keys`, { action: "shell", command: shell }).then(() => toast(TEXT.control.sent(TEXT.control.shellSent, label(s)))),
-  });
+  const t = TEXT.control;
+  const fired = ui.fired?.key === key ? ui.fired.state : null;
+  const openedAt = !fired && ui.confirmShell?.key === key ? ui.confirmShell.at : 0;
+  const confirm = () => {
+    const at = Date.now();
+    ui.confirmShell = { key, at };
+    setTimeout(() => ui.confirmShell?.at === at && redraw(), HOLD_MS);
+    redraw();
+    /** @type {HTMLElement | null} */ (document.querySelector(".shell-run.confirming [data-key=shell-cancel]"))?.focus({ preventScroll: true });
+  };
+  if (openedAt) {
+    const held = Date.now() - openedAt < HOLD_MS;
+    const cancel = () => ((ui.confirmShell = null), redraw());
+    const go = () => {
+      if (Date.now() - openedAt < HOLD_MS) return;
+      ui.confirmShell = null;
+      fire(key, () => post(`/api/sessions/${s.id}/keys`, { action: "shell", command: shell }).then(() => toast(t.sent(t.shellSent, label(s)))), redraw);
+    };
+    return h(
+      "div",
+      { class: "shell-run confirming", "data-key": "shell-run", role: "group", "aria-label": t.shellConfirm },
+      h("p", { class: "shell-ask" }, h("b", {}, t.shellConfirm), " ", t.shellCheck),
+      h("pre", { class: "shell-cmd" }, shell),
+      h("div", { class: "shell-foot" }, h("button", { class: "primary", "data-key": "shell-go", disabled: held, onclick: go }, t.shellGo), h("button", { class: "secondary", "data-key": "shell-cancel", onclick: cancel }, t.shellCancel)),
+    );
+  }
+  const clicked = () => {
+    const now = Date.now();
+    if (lastClick.key === key && now - lastClick.at < DOUBLE_MS) {
+      lastClick = { key: "", at: 0 };
+      return confirm();
+    }
+    lastClick = { key, at: now };
+    // As every code block, one click copies it; a click that ends a text selection leaves it alone.
+    if (document.getSelection()?.isCollapsed) copy(shell);
+  };
+  const twice = COARSE.matches ? t.shellTapTwice : t.shellClickTwice;
+  return h(
+    "div",
+    { class: "shell-run", "data-key": "shell-run" },
+    h("pre", { class: "shell-cmd", onclick: fired ? null : clicked }, shell),
+    h(
+      "div",
+      { class: "shell-foot" },
+      fired
+        ? h("span", { class: `shell-fired ${fired}`, role: "status" }, fired === "sent" ? icon("check") : null, t.fired[fired])
+        : [h("button", { class: "secondary", "data-key": "shell", title: t.shellHint, onclick: confirm }, t.shellRun), h("span", { class: "faint" }, twice)],
+    ),
+  );
 }
 
 /**
- * Makes the reply's code block holding the shell command the session asks for a two-tap button that
- * runs it, while the session waits in tmux; once sent, until its outcome has shown.
+ * Makes the code block holding the shell command the session asks for runnable (runnableCommand),
+ * in the reply that ended its turn and while it waits in tmux; once sent, until its outcome has shown.
  * @param {Session} s @param {Node[]} view @param {() => void} redraw
  */
 export function runnableShell(s, view, redraw) {
@@ -58,11 +104,12 @@ export function runnableShell(s, view, redraw) {
   const sent = sentOf(s, "shell");
   const shell = asked || firing || (sent?.text ?? "");
   if (!shell) return view;
-  const blocks = view.flatMap((n) => (n instanceof Element ? [...n.querySelectorAll("pre[data-copy]")] : []));
-  const block = blocks.reverse().find((b) => b.textContent === shell);
+  // The session's own last reply, which asked for it: a block the developer or an agent wrote never runs.
+  const reply = view.filter((n) => n instanceof Element && n.matches(".msg.from-session:not(.step)")).at(-1);
+  const block = reply instanceof Element ? [...reply.querySelectorAll("pre[data-copy]")].reverse().find((b) => b.textContent === shell) : undefined;
   if (!block) return view;
-  // Sent: the server dropped the command, so the button keeps the key it was fired under.
-  if (asked || firing) block.replaceWith(shellButton(s, shell, redraw, asked ? `${s.id} shell ${s.shellSuggestion?.at ?? ""}` : shownShell.key));
+  // Sent: the server dropped the command, so the block keeps the key it was fired under.
+  if (asked || firing) block.replaceWith(runnableCommand(s, shell, redraw, asked ? `${s.id} shell ${s.shellSuggestion?.at ?? ""}` : shownShell.key));
   else if (sent) {
     const done = h("div", { class: "shell-sent" });
     block.replaceWith(done);
@@ -93,25 +140,7 @@ export function armedButton({ key, id, text, ask, act, redraw, cls = "secondary"
       return redraw();
     }
     ui.armed = null;
-    // Each tap shows on the button itself: armed, then sending, then sent or not; a toast is easy to miss on a phone.
-    const fired = { key, state: /** @type {"sending" | "sent" | "failed"} */ ("sending") };
-    ui.fired = fired;
-    redraw();
-    /** @param {"sent" | "failed"} state */
-    const settle = (state) => {
-      fired.state = state;
-      redraw();
-      setTimeout(() => ui.fired === fired && ((ui.fired = null), redraw()), FIRED_MS);
-    };
-    run(
-      act().then(
-        () => settle("sent"),
-        (/** @type {Error} */ e) => {
-          settle("failed");
-          throw e; // run() shows why in a toast
-        },
-      ),
-    );
+    fire(key, act, redraw);
   };
   const on = armed();
   const fired = ui.fired?.key === key ? ui.fired.state : null;
@@ -137,6 +166,32 @@ export function armedButton({ key, id, text, ask, act, redraw, cls = "secondary"
 }
 /** How long a confirmed control shows how it went. */
 const FIRED_MS = 2500;
+
+/**
+ * Sends what a control was confirmed for. It shows on the control itself (`ui.fired`): sending, then
+ * sent or not for FIRED_MS; a toast is easy to miss on a phone.
+ * @param {string} key the control's @param {() => Promise<unknown>} act @param {() => void} redraw
+ */
+function fire(key, act, redraw) {
+  const fired = { key, state: /** @type {"sending" | "sent" | "failed"} */ ("sending") };
+  ui.fired = fired;
+  redraw();
+  /** @param {"sent" | "failed"} state */
+  const settle = (state) => {
+    fired.state = state;
+    redraw();
+    setTimeout(() => ui.fired === fired && ((ui.fired = null), redraw()), FIRED_MS);
+  };
+  run(
+    act().then(
+      () => settle("sent"),
+      (/** @type {Error} */ e) => {
+        settle("failed");
+        throw e; // run() shows why in a toast
+      },
+    ),
+  );
+}
 
 /**
  * Forgetting a session that ended or whose process is gone: it leaves the desk at once, what it

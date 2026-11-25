@@ -247,8 +247,11 @@ export class Page {
     }
   }
 
-  /** A real mouse click on the element's centre (the first match containing `text`, when given): it gives the page a user activation, as a person would. */
-  async click(selector: string, text = ""): Promise<void> {
+  /**
+   * A real mouse click on the element's centre (the first match containing `text`, when given): it gives the page a user activation, as a person would.
+   * `count` clicks in a row make a double click, as a mouse sends one.
+   */
+  async click(selector: string, text = "", count = 1): Promise<void> {
     const find = `[...document.querySelectorAll(${JSON.stringify(selector)})].find((el) => el.getBoundingClientRect().width && el.getBoundingClientRect().height && el.textContent.includes(${JSON.stringify(text)}))`;
     await this.waitFor(find);
     // As a person would, it waits for a moving element (a panel sliding in) to come to rest. A
@@ -272,7 +275,7 @@ export class Page {
       return [r.x + r.width / 2, r.y + r.height / 2];
     })()`);
     await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-    for (const type of ["mousePressed", "mouseReleased"]) await this.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+    for (let n = 1; n <= count; n++) for (const type of ["mousePressed", "mouseReleased"]) await this.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: n });
   }
 
   /** A finger's tap on the element's centre (the first match containing `text`), on a page with touch emulated. */
