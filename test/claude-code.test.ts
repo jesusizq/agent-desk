@@ -72,6 +72,11 @@ describe("Claude Code hooks", () => {
     assert.equal(s?.state, "waiting");
     const context = JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
     assert.match(context, /agent-desk result/);
+    // A `! ` line runs once, with no one at a prompt: credentials only from the shell, a prompting command elsewhere.
+    const shell = context.slice(context.indexOf("A command only the developer can run here"), context.indexOf("- A short answer"));
+    assert.match(shell, /credentials their shell already holds and\s+your sandbox cannot reach/);
+    assert.match(shell, /the only such block in the reply/);
+    assert.match(shell, /would prompt \(a password, a login, `sudo`\) is never a `! ` line: ask the\s+developer to run it in a terminal of their own/);
     assert.equal(store.listMetrics()[0]?.permissionMode, "auto");
   });
 

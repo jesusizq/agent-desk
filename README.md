@@ -225,8 +225,8 @@ server types it only when it is one slash command without arguments and still th
 showed, with a space last: typed alone, the command leaves Claude Code's command menu open, listing
 `/ahorro:handoff-load` too, and the space closes it, so Enter sends the line as typed.
 When the reply that ended the session's turn asks the developer to run a shell command (a code block
-of one line starting with `! `, the terminal's shell prefix), that code block of its reply in the
-conversation can be run: a double click on it (two taps on a phone), or "Run in its terminal…" under
+of one line starting with `! `, the terminal's shell prefix; the last one when the reply holds
+several), that code block of its reply in the conversation can be run: a double click on it (two taps on a phone), or "Run in its terminal…" under
 it, opens a confirmation in its place with the whole line, each character outside ASCII followed by its
 code (`а U+0430`: some look like others), Cancel where "Run in its terminal…" was and Run at the far
 end; Run types it and Enter. Run does nothing for its first second and never sits where the clicks
