@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { after, afterEach, before, describe, it } from "node:test";
 import { execFileSync } from "node:child_process";
 import { Store } from "../src/store/store.ts";
-import { arrived, base, browser, cardOf, DRAWN, open, openDialogs, openPhone, ownDesk, pages, setupPage, SKIP, STILL, store } from "./page-harness.ts";
+import { arrived, base, browser, cardOf, DRAWN, open, openDialogs, openPhone, ownDesk, pages, setupPage, SKIP, STILL, store, underFinger } from "./page-harness.ts";
 import { procInfo } from "../src/core/proc.ts";
 import { serve, tempHome } from "./helpers.ts";
 import { type Page } from "./browser.ts";
@@ -573,6 +573,64 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         assert.equal(await page.eval<number>("visualViewport.scale"), 1, "the double tap did not zoom the page");
       } finally {
         store.updateSession("asks-run-phone", (s) => ({ ...s, state: "ended" }));
+      }
+    });
+
+    it("never puts Run where the click or tap that opened the confirmation was, on a computer and on a phone, at the conversation's end or scrolled up from it", async () => {
+      const own = procInfo(process.pid);
+      assert.ok(own?.start);
+      const run = "! cd /home/demo/Projects/web-shop && git worktree prune && git branch -D old-checkout-branch && npm ci";
+      const reply = `Please run it in your terminal:\n\n\`\`\`\n${run}\n\`\`\`\n\nIt drops the worktree that was removed by hand, deletes its branch and installs again what the lockfile pins, so the next migration starts from a clean checkout.\n\nThen tell me and I go on with the migration.`;
+      const at = new Date().toISOString();
+      store.upsertSession({ id: "asks-run-where", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "asks to run where it was", state: "waiting", lastMessage: { text: reply, at }, shellSuggestion: { text: run, at }, process: { pid: process.pid, start: own.start, ancestors: [] }, tmux: { socket: "/tmp/tmux-1000/default", pane: "%1", clients: [] } });
+      // Long enough to scroll: the window holds the conversation at its end as it changes.
+      for (let i = 0; i < 20; i++) store.addMessage({ sessionId: "asks-run-where", from: i % 2 ? "developer" : "session", text: `Round ${i}: the migration of the orders table, its indexes and the backfill of the totals, checked against a copy of production before going on to the next table.` });
+      store.addMessage({ sessionId: "asks-run-where", from: "session", text: reply });
+      const block = "#session .conversation .shell-run";
+      const confirming = `document.querySelector('${block}.confirming')`;
+      const go = `${confirming}?.querySelector('[data-key=shell-go]')`;
+      const frames = (page: Page) => page.eval("new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))");
+      try {
+        for (const phone of [false, true]) {
+          const page = phone ? await openPhone() : await open();
+          await page.eval("location.hash = '#s=asks-run-where'");
+          await page.waitFor(`${arrived("session")} && document.querySelector('${block} [data-key=shell]')`);
+          for (const up of [0, 60]) {
+            for (const opener of ["button", "command"] as const) {
+              const where = `${phone ? "phone" : "computer"}, ${up ? "scrolled up" : "at its end"}, opened by the ${opener}`;
+              const fromEnd = "(() => { const b = document.querySelector('#session .session-body'); return b.scrollHeight - b.scrollTop - b.clientHeight; })()";
+              await page.eval(`(() => { const b = document.querySelector('#session .session-body'); b.scrollTop = b.scrollHeight - b.clientHeight - ${up}; })()`);
+              await frames(page);
+              assert.ok(Math.abs((await page.eval<number>(fromEnd)) - up) <= 1, `${where}: ${up} px from the end`);
+              const target = `document.querySelector('${block} ${opener === "button" ? "[data-key=shell]" : ".shell-cmd"}')`;
+              const r = await page.eval<{ x: number; y: number; width: number; height: number }>(`(() => { const r = ${target}.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; })()`);
+              const [x, y] = [r.x + r.width / 2, r.y + r.height / 2];
+              assert.ok(await page.eval<boolean>(underFinger(target)), `${where}: it is under the pointer`);
+              for (let n = 1; n <= (opener === "button" ? 1 : 2); n++) {
+                if (phone) for (const type of ["touchStart", "touchEnd"]) await page.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchStart" ? [{ x, y }] : [] });
+                else for (const type of ["mousePressed", "mouseReleased"]) await page.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: n });
+              }
+              // Past the moment Run waits, when a tap more by habit would press it.
+              await page.waitFor(`${go} && !${go}.disabled`);
+              await frames(page);
+              if (up) assert.ok((await page.eval<number>(fromEnd)) > 40, `${where}: not held at the end`);
+              assert.ok(await page.eval<boolean>(underFinger(go)), `${where}: Run in sight and free to press`);
+              const onRun = await page.eval<string[]>(`(() => {
+                const hits = [];
+                for (const fx of [0.02, 0.25, 0.5, 0.75, 0.98]) for (const fy of [0.05, 0.5, 0.95]) {
+                  if (document.elementFromPoint(${r.x} + ${r.width} * fx, ${r.y} + ${r.height} * fy)?.closest('[data-key=shell-go]')) hits.push(fx + ' × ' + fy);
+                }
+                return hits;
+              })()`);
+              assert.deepEqual(onRun, [], `${where}: Run under none of the points of what opened it`);
+              await page.eval(`${confirming}.querySelector('[data-key=shell-cancel]').click()`);
+              await page.waitFor(`!${confirming} && document.querySelector('${block} [data-key=shell]')`);
+              await frames(page); // the window settles its scroll after a redraw
+            }
+          }
+        }
+      } finally {
+        store.updateSession("asks-run-where", (s) => ({ ...s, state: "ended" }));
       }
     });
 

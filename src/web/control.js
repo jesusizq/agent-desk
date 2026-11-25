@@ -65,7 +65,8 @@ function runnableCommand(s, shell, redraw, key) {
       { class: "shell-run confirming", "data-key": "shell-run", role: "group", "aria-label": t.shellConfirm },
       h("p", { class: "shell-ask" }, h("b", {}, t.shellConfirm), " ", t.shellCheck),
       h("pre", { class: "shell-cmd" }, shell),
-      h("div", { class: "shell-foot" }, h("button", { class: "primary", "data-key": "shell-go", disabled: held, onclick: go }, t.shellGo), h("button", { class: "secondary", "data-key": "shell-cancel", onclick: cancel }, t.shellCancel)),
+      // Run at the far end, never where the clicks that opened it were: one more by habit finds Cancel or nothing.
+      h("div", { class: "shell-foot" }, h("button", { class: "secondary", "data-key": "shell-cancel", onclick: cancel }, t.shellCancel), h("button", { class: "primary shell-go", "data-key": "shell-go", disabled: held, onclick: go }, t.shellGo)),
     );
   }
   const clicked = () => {

@@ -797,14 +797,16 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
   transform-origin: left; animation: arm-out 3s linear forwards; }
 @keyframes arm-out { to { transform: scaleX(0); } }
 /* The shell command a session asked the developer to run, always whole; asked to run, it shows a
-   confirmation in its place. A double tap on it must not zoom the page. */
-.shell-run { display: flex; flex-direction: column; gap: 6px; }
+   confirmation in its place. A double tap on it must not zoom the page. Both keep the same edge under
+   their foot: the conversation holds its end still, so a taller one would lift Run onto the command. */
+.shell-run { display: flex; flex-direction: column; gap: 6px; border: 0 solid transparent; border-bottom-width: 1px; padding-bottom: 10px; }
 .shell-run .shell-cmd { overflow-wrap: anywhere; touch-action: manipulation; cursor: copy; }
 .shell-run:not(.confirming) .shell-cmd:hover { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
 .shell-run.confirming { padding: 10px 12px; border: 1px solid var(--accent); border-radius: 9px; background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
 .shell-run.confirming .shell-cmd { cursor: text; }
 .shell-ask { margin: 0; }
 .shell-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.8125rem; }
+.shell-go { margin-inline-start: auto; }
 .shell-fired { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
 .shell-fired .i { width: 13px; height: 13px; }
 .shell-fired.sent { color: var(--done); }
