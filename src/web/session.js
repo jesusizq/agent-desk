@@ -124,6 +124,12 @@ function resultRow(r, opened) {
 function redrawPanel(sid) {
   if (ui.panelSession === sid && dialog("session").open) openSession(sid);
 }
+// A hidden tab hides the confirmation too: shown again, its Run would already be live.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden || !ui.confirmShell) return;
+  ui.confirmShell = null;
+  if (ui.panelSession) redrawPanel(ui.panelSession);
+});
 
 /**
  * The session panel: its head, its chips (and the part one of them unfolds), then the conversation
@@ -138,9 +144,10 @@ export function openSession(sid) {
     ui.panelSession = sid;
     ui.panelPart = null;
     ui.panelAsk = null;
+    ui.confirmShell = null;
   }
-  // A confirmation left open when the window closed would wait there with its Run already live.
-  if (!d.open) ui.confirmShell = null;
+  // A confirmation out of sight goes: shown again, its Run would already be live.
+  if (!d.open || ui.panelPart) ui.confirmShell = null;
   const m = metricsOf(sid);
   const part = ui.panelPart ?? "";
   const before = d.querySelector(".session-body");

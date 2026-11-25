@@ -520,6 +520,29 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         await page.click(".scard", "asks to run a command");
         await page.waitFor(`document.querySelector('${block}')`);
         assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "a window opened again starts with no confirmation open");
+        const shownSession = (id: string) => `document.querySelector('#session .session-body')?.dataset.session === '${id}'`;
+        const other = store.listSessions().find((s) => s.id !== "asks-run" && s.state !== "ended")?.id ?? "";
+        await page.click(`${block} [data-key=shell]`, "Run in its terminal");
+        await page.waitFor(confirming);
+        await page.eval(`location.hash = '#s=${other}'`);
+        await page.waitFor(shownSession(other));
+        await page.eval("location.hash = '#s=asks-run'");
+        await page.waitFor(`${shownSession("asks-run")} && document.querySelector('${block}')`);
+        assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "nor one left in another session the window showed meanwhile");
+        await page.click(`${block} [data-key=shell]`, "Run in its terminal");
+        await page.waitFor(confirming);
+        await page.click("#session .pchips button.chip", "More");
+        await page.waitFor("document.querySelector('#session .ppart')");
+        await page.click("#session .ppart .back");
+        await page.waitFor(`document.querySelector('${block}')`);
+        assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "nor one a part of the session took the place of");
+        await page.click(`${block} [data-key=shell]`, "Run in its terminal");
+        await page.waitFor(confirming);
+        await page.eval("(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); })()");
+        await page.eval("(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); })()");
+        await page.waitFor(`document.querySelector('${block}')`);
+        assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "nor one left while the tab was hidden");
+
 
         store.updateSession("asks-run", (s) => ({ ...s, state: "working" }));
         await page.waitFor(`!document.querySelector('${block}')`);
