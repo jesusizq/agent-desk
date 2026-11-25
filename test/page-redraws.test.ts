@@ -600,7 +600,7 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
           const page = phone ? await openPhone() : await open();
           await page.eval("location.hash = '#s=asks-run-where'");
           await page.waitFor(`${arrived("session")} && document.querySelector('${block} [data-key=shell]')`);
-          for (const up of [0, 60]) {
+          for (const up of [0, 20, 39, 60]) {
             for (const opener of ["button", "command"] as const) {
               const where = `${phone ? "phone" : "computer"}, ${up ? "scrolled up" : "at its end"}, opened by the ${opener}`;
               const fromEnd = "(() => { const b = document.querySelector('#session .session-body'); return b.scrollHeight - b.scrollTop - b.clientHeight; })()";
@@ -618,7 +618,8 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
               // Past the moment Run waits, when a tap more by habit would press it.
               await page.waitFor(`${go} && !${go}.disabled`);
               await frames(page);
-              if (up) assert.ok((await page.eval<number>(fromEnd)) > 40, `${where}: not held at the end`);
+              // The confirmation's foot stays where it was on screen: the distance from the end is kept, not pulled to 0.
+              if (up) assert.ok((await page.eval<number>(fromEnd)) >= up - 1, `${where}: not held at the end`);
               assert.ok(await page.eval<boolean>(underFinger(go)), `${where}: Run in sight and free to press`);
               const onRun = await page.eval<string[]>(`(() => {
                 const hits = [];

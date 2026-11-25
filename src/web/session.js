@@ -157,6 +157,7 @@ export function openSession(sid) {
   const samePart = !fresh && before instanceof HTMLElement && before.dataset.part === part;
   const atBottom = !before || before.scrollHeight - before.scrollTop - before.clientHeight < 40;
   const scrolled = before?.scrollTop ?? 0;
+  const fromEnd = before ? Math.max(0, before.scrollHeight - before.scrollTop - before.clientHeight) : 0;
   const chipsLeft = before?.querySelector(".pchips")?.scrollLeft ?? 0;
   const askedBefore = d.open ? (d.querySelector(".panel-question")?.getAttribute("data-key") ?? null) : null;
   const body = h(
@@ -200,7 +201,8 @@ export function openSession(sid) {
     // After layout, on whichever body is shown then: opening draws the panel twice in one go.
     requestAnimationFrame(() => {
       const shown = d.querySelector(".session-body");
-      if (shown) shown.scrollTop = shown.scrollHeight;
+      // An open confirmation keeps its distance from the end: its foot, Run included, must not move under the pointer.
+      if (shown) shown.scrollTop = shown.scrollHeight - shown.clientHeight - (ui.confirmShell ? fromEnd : 0);
     });
   }
   if (!d.open) {
