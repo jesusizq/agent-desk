@@ -807,6 +807,9 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .shell-ask { margin: 0; }
 .shell-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.8125rem; }
 .shell-go { margin-inline-start: auto; }
+/* A character outside ASCII, followed by its code point: some look like others. */
+.shell-cp { color: inherit; background: color-mix(in srgb, var(--doing) 16%, transparent); border-radius: 3px; }
+.shell-cp::after { content: " " attr(data-cp); font: 600 0.85em var(--sans); color: var(--doing); }
 .shell-fired { display: inline-flex; align-items: center; gap: 4px; font-weight: 500; }
 .shell-fired .i { width: 13px; height: 13px; }
 .shell-fired.sent { color: var(--done); }

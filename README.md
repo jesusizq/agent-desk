@@ -227,12 +227,13 @@ showed, with a space last: typed alone, the command leaves Claude Code's command
 When the reply that ended the session's turn asks the developer to run a shell command (a code block
 of one line starting with `! `, the terminal's shell prefix), that code block of its reply in the
 conversation can be run: a double click on it (two taps on a phone), or "Run in its terminal…" under
-it, opens a confirmation in its place with the whole line, Cancel where "Run in its terminal…" was and
-Run at the far end; Run types it and Enter. Run does nothing for its first second and never sits where
-the clicks that opened the confirmation were, so neither they nor one more by habit can press it; one
-click on the block still copies it. A block the developer or an agent wrote never runs. Claude Code
-runs a `! ` line in the shell without its permission checks, so Run is the only check: read the line
-first. The server
+it, opens a confirmation in its place with the whole line, each character outside ASCII followed by its
+code (`а U+0430`: some look like others), Cancel where "Run in its terminal…" was and Run at the far
+end; Run types it and Enter. Run does nothing for its first second and never sits where the clicks
+that opened the confirmation were, so neither they nor one more by habit can press it; one click on
+the block still copies it. A block the developer or an agent wrote never runs. Claude Code runs a `! `
+line in the shell without its permission checks, so Run is the only check: read the line first. The
+server
 types it only while the session waits (typed mid-turn it would wait in the terminal's queue), only
 when it equals the session's stored line exactly (no control or invisible characters, no trailing `;`
 or `\`, at most 400 characters) and what the page showed, and once: sending it, the developer writing

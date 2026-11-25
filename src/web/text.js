@@ -252,6 +252,7 @@ export const TEXT = {
     shellHint: "Types this line into the session's terminal: its ! prefix runs it in the shell, outside the session's permissions",
     shellConfirm: "Run this line in the session's terminal?",
     shellCheck: "Its ! prefix runs it in the shell, outside the session's permissions: read all of it first.",
+    shellNotAscii: "Each character outside ASCII shows its code after it: some look like others.",
     shellGo: "Run",
     shellCancel: "Cancel",
     shellSent: "the shell command",

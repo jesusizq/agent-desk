@@ -60,11 +60,12 @@ function runnableCommand(s, shell, redraw, key) {
       ui.confirmShell = null;
       fire(key, () => post(`/api/sessions/${s.id}/keys`, { action: "shell", command: shell }).then(() => toast(t.sent(t.shellSent, label(s)))), redraw);
     };
+    const marked = markedCommand(shell);
     return h(
       "div",
       { class: "shell-run confirming", "data-key": "shell-run", role: "group", "aria-label": t.shellConfirm },
-      h("p", { class: "shell-ask" }, h("b", {}, t.shellConfirm), " ", t.shellCheck),
-      h("pre", { class: "shell-cmd" }, shell),
+      h("p", { class: "shell-ask" }, h("b", {}, t.shellConfirm), " ", t.shellCheck, marked.some((p) => typeof p !== "string") ? [" ", t.shellNotAscii] : null),
+      h("pre", { class: "shell-cmd" }, marked),
       // Run at the far end, never where the clicks that opened it were: one more by habit finds Cancel or nothing.
       h("div", { class: "shell-foot" }, h("button", { class: "secondary", "data-key": "shell-cancel", onclick: cancel }, t.shellCancel), h("button", { class: "primary shell-go", "data-key": "shell-go", disabled: held, onclick: go }, t.shellGo)),
     );
@@ -92,6 +93,29 @@ function runnableCommand(s, shell, redraw, key) {
         : [h("button", { class: "secondary", "data-key": "shell", title: t.shellHint, onclick: confirm }, t.shellRun), h("span", { class: "faint" }, twice)],
     ),
   );
+}
+
+/**
+ * The command as typed, each character outside ASCII in a mark that shows its code point after it
+ * (a ::after, so the text stays the command's alone): some look like others (а, U+0430, is not a).
+ * @param {string} shell @returns {(string | HTMLElement)[]}
+ */
+function markedCommand(shell) {
+  /** @type {(string | HTMLElement)[]} */
+  const parts = [];
+  let plain = "";
+  for (const c of shell) {
+    const code = c.codePointAt(0) ?? 0;
+    if (code < 0x80) {
+      plain += c;
+      continue;
+    }
+    if (plain) parts.push(plain);
+    plain = "";
+    parts.push(h("mark", { class: "shell-cp", "data-cp": `U+${code.toString(16).toUpperCase().padStart(4, "0")}` }, c));
+  }
+  if (plain) parts.push(plain);
+  return parts;
 }
 
 /**
