@@ -3,7 +3,7 @@
 // it ended, each after a confirming click.
 import { dialog, h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
-import { copy, toast } from "./pieces.js";
+import { copy, copyClicked, toast } from "./pieces.js";
 import { post, run } from "./server.js";
 import { asksOf, isLive, label, ON_THIS_MACHINE, ui } from "./state.js";
 import { stamp } from "./format.js";
@@ -77,8 +77,7 @@ function runnableCommand(s, shell, redraw, key) {
       return confirm();
     }
     lastClick = { key, at: now };
-    // As every code block, one click copies it; a click that ends a text selection leaves it alone.
-    if (document.getSelection()?.isCollapsed) copy(shell);
+    copyClicked(shell); // as every code block
   };
   const twice = COARSE.matches ? t.shellTapTwice : t.shellClickTwice;
   return h(

@@ -231,9 +231,9 @@ it, opens a confirmation in its place with the whole line, each character outsid
 code (`а U+0430`: some look like others), Cancel where "Run in its terminal…" was and Run at the far
 end; Run types it and Enter. Run does nothing for its first second and never sits where the clicks
 that opened the confirmation were, so neither they nor one more by habit can press it; one click on
-the block still copies it. A block the developer or an agent wrote never runs. Claude Code runs a `! `
-line in the shell without its permission checks, so Run is the only check: read the line first. The
-server
+the block still copies it. A block the developer, another session or an agent wrote, or the session
+between its tool calls, never runs. Claude Code runs a `! ` line in the shell without its permission
+checks, so Run is the only check: read the line first. The server
 types it only while the session waits (typed mid-turn it would wait in the terminal's queue), only
 when it equals the session's stored line exactly (no control or invisible characters, no trailing `;`
 or `\`, at most 400 characters) and what the page showed, and once: sending it, the developer writing

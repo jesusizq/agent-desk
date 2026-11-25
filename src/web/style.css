@@ -638,8 +638,8 @@ a.primary, a.secondary, a.row-go { text-decoration: none; }
 .md li > ul, .md li > ol { margin-top: 4px; }
 .md pre { margin: 0; white-space: pre-wrap; font: 0.7812rem/1.5 var(--mono); color: var(--text); padding: 8px 10px; border-radius: 7px;
   background: var(--surface-2); border: 1px solid var(--border); }
-[data-copy] { cursor: copy; }
-[data-copy]:hover { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
+:is([data-copy], .shell-run:not(.confirming) .shell-cmd) { cursor: copy; }
+:is([data-copy], .shell-run:not(.confirming) .shell-cmd):hover { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
 .md .md-h { margin-top: 6px; color: var(--accent); }
 .md-table { overflow-x: auto; }
 .md table { border-collapse: collapse; font-size: .95em; }
@@ -800,10 +800,8 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
    confirmation in its place. A double tap on it must not zoom the page. Both keep the same edge under
    their foot: the conversation holds its end still, so a taller one would lift Run onto the command. */
 .shell-run { display: flex; flex-direction: column; gap: 6px; border: 0 solid transparent; border-bottom-width: 1px; padding-bottom: 10px; }
-.shell-run .shell-cmd { overflow-wrap: anywhere; touch-action: manipulation; cursor: copy; }
-.shell-run:not(.confirming) .shell-cmd:hover { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; }
+.shell-run .shell-cmd { overflow-wrap: anywhere; touch-action: manipulation; }
 .shell-run.confirming { padding: 10px 12px; border: 1px solid var(--accent); border-radius: 9px; background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
-.shell-run.confirming .shell-cmd { cursor: text; }
 .shell-ask { margin: 0; }
 .shell-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.8125rem; }
 .shell-go { margin-inline-start: auto; }

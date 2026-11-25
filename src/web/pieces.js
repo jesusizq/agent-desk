@@ -85,13 +85,19 @@ export function copy(text) {
     (/** @type {Error} */ e) => toast(e.message),
   );
 }
-// A command or path in session text is copied with a click, before the card around it opens;
-// a click that ends a text selection leaves the selection alone.
+/**
+ * What a click on a command or path does: copies it, unless the click ended a text selection, which
+ * it leaves alone. @param {string} text @returns {boolean} whether it copied
+ */
+export function copyClicked(text) {
+  if (!document.getSelection()?.isCollapsed) return false;
+  copy(text);
+  return true;
+}
+// A command or path in session text is copied with a click, before the card around it opens.
 document.addEventListener("click", (e) => {
   const code = e.target instanceof Element ? e.target.closest("[data-copy]") : null;
-  if (!code || !document.getSelection()?.isCollapsed) return;
-  e.stopPropagation();
-  copy(code.textContent ?? "");
+  if (code && copyClicked(code.textContent ?? "")) e.stopPropagation();
 }, true);
 export const LOCAL_URL = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?=[:/]|$)/;
 /**

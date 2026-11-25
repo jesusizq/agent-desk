@@ -448,12 +448,15 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
       const at = new Date().toISOString();
       store.upsertSession({ id: "asks-run", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "asks to run a command", state: "waiting", lastMessage: { text: reply, at }, process: { pid: process.pid, start: own.start, ancestors: [] }, tmux: { socket: "/tmp/tmux-1000/default", pane: "%1", clients: [] } });
       store.addMessage({ sessionId: "asks-run", from: "session", text: reply });
-      // The same line in what the developer wrote after it: only the session's reply asks to run it.
+      // The same line in what the developer, another session and the session between its tool calls wrote
+      // after it: only the session's reply asks to run it.
       store.addMessage({ sessionId: "asks-run", from: "developer", text: `Mine:\n\n\`\`\`\n${run}\n\`\`\``, via: "desk" });
+      store.addMessage({ sessionId: "asks-run", from: "peer", sender: "api-review", text: `Theirs:\n\n\`\`\`\n${run}\n\`\`\`` });
+      store.addMessage({ sessionId: "asks-run", from: "session", text: `A step:\n\n\`\`\`\n${run}\n\`\`\``, step: true });
       try {
         const page = await open();
         await page.click(".scard", "asks to run a command");
-        await page.waitFor("document.querySelectorAll('#session .conversation pre[data-copy]').length === 3");
+        await page.waitFor("document.querySelectorAll('#session .conversation pre[data-copy]').length === 5");
         assert.equal(await page.eval<number>("document.querySelectorAll('#session .shell-run').length"), 0, "none stored: every block only copies");
 
         store.updateSession("asks-run", (s) => ({ ...s, shellSuggestion: { text: run, at } }));
@@ -463,15 +466,18 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         assert.equal(await page.eval<string>(`document.querySelector('${block} .shell-cmd').textContent`), run, "the block itself, its command shown");
         assert.equal(await page.eval<string>(`document.querySelector('${block} .shell-foot').innerText`), "Run in its terminal…\nor double-click the command", "what runs it said under it");
         assert.deepEqual(
-          await page.eval<[string, string][]>("[...document.querySelectorAll('#session .conversation pre[data-copy]')].map((b) => [b.closest('.msg').classList[1], b.textContent])"),
-          [["from-session", "! ls"], ["from-developer", run]],
-          "the other block and the developer's copy of it only copy",
+          await page.eval<[string, string][]>("[...document.querySelectorAll('#session .conversation pre[data-copy]')].map((b) => [b.closest('.msg').className, b.textContent])"),
+          [["msg from-session", "! ls"], ["msg from-developer", run], ["msg from-peer", run], ["msg from-session step", run]],
+          "the other block, and the line where the developer, a peer or a step wrote it, only copy",
         );
         await page.eval(`(() => { window.sentKeys = []; const real = window.fetch; window.fetch = (route, init) => String(route).endsWith('/keys') ? (window.sentKeys.push(JSON.parse(init.body)), Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))) : real(route, init); })()`);
         const confirming = `document.querySelector('${block}.confirming')`;
         const go = `${confirming}?.querySelector('[data-key=shell-go]')`;
 
+        await browser.send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
         await page.click(`${block} .shell-cmd`);
+        await page.waitFor(`[...document.querySelectorAll('.toast')].some((t) => t.textContent === ${JSON.stringify(`Copied: ${run.slice(0, 79)}…`)})`);
+        assert.equal(await page.eval<string>("navigator.clipboard.readText()"), run);
         await new Promise((r) => setTimeout(r, 700));
         assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "one click only copies it");
 
@@ -503,7 +509,7 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         assert.equal(await page.eval<string>(`${mark}.previousElementSibling.textContent`), run, "on the block it sent");
         store.updateSession("asks-run", (s) => ({ ...s, turnEndedAt: new Date(Date.parse(sentAt) + 1000).toISOString() }));
         await page.waitFor(`!${mark}`);
-        assert.equal(await page.eval<number>("document.querySelectorAll('#session .conversation pre[data-copy]').length"), 3, "a turn ended after it: a block again");
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .conversation pre[data-copy]').length"), 5, "a turn ended after it: a block again");
 
         const later = new Date(Date.parse(sentAt) + 2000).toISOString();
         store.updateSession("asks-run", (s) => ({ ...s, shellSuggestion: { text: run, at: later } }));
@@ -542,7 +548,6 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         await page.eval("(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); })()");
         await page.waitFor(`document.querySelector('${block}')`);
         assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "nor one left while the tab was hidden");
-
 
         store.updateSession("asks-run", (s) => ({ ...s, state: "working" }));
         await page.waitFor(`!document.querySelector('${block}')`);
