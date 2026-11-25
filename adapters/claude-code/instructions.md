@@ -23,6 +23,10 @@ only for what hooks cannot know, one call each:
   agent>"` when it waits for another, `--state blocked --activity "<why>"` when it is stuck.
 - A server the desk cannot see (in a container, or started with `nohup … &`):
   `agent-desk service <name> http://localhost:PORT/path` (`--stop` when it stops).
+- A command the developer must run on this machine because you cannot (refused, blocked, needs them):
+  put it in the reply that ends your turn as a one-line code block starting with `! ` (the terminal's
+  shell prefix), at most 400 characters, not ending in `;` or `\`. The desk shows it whole and types it
+  into this terminal once they confirm.
 - A short answer that could be read more than one way: `agent-desk interpret "<how you understood it>"`.
 - A reply that does not answer the question you asked: `agent-desk unanswered`, so it stays open.
 
