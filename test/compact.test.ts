@@ -228,6 +228,11 @@ describe("suggested compact instructions", () => {
     assert.equal(shellOf(), run);
     handleHook(event("Stop", { last_assistant_message: "Done, nothing to run." }), ctx);
     assert.equal(shellOf(), undefined, "not from earlier in the turn, nor from an earlier turn");
+    fs.appendFileSync(transcript, said(`Then run:\n\n${block(run)}`));
+    handleHook(event("Stop", { last_assistant_message: "" }), ctx);
+    const step = store.listMessages("cc-1").at(-1);
+    assert.deepEqual([step?.text, step?.step], [`Then run:\n\n${block(run)}`, true], "a turn that ends with no reply keeps what it wrote last as a step");
+    assert.equal(shellOf(), undefined, "which the page never runs, so nor is it stored");
     handleHook(event("Stop", { last_assistant_message: block(run) }), ctx);
     handleHook(event("UserPromptSubmit", { prompt: "go on" }), ctx);
     assert.equal(shellOf(), undefined, "gone once the developer writes");

@@ -331,8 +331,9 @@ function endTurn(input: Common, { message, continued, running, shells }: StopInp
   settleEarlierEnd(sid, store, continued, problems);
   const texts = readTurnTexts(input, problems);
   const suggested = latestCompactSuggestion(message === "" ? texts : [...texts, message]);
-  // Only the reply that ends the turn: a command asked for earlier in it was already answered or dropped.
-  const shell = shellSuggestionIn(message !== "" ? message : (texts.at(-1) ?? ""));
+  // Only the reply that ends the turn, the one the page runs it from: what the turn wrote before it is
+  // kept as steps, and a command asked for there was already answered or dropped.
+  const shell = message !== "" ? shellSuggestionIn(message) : undefined;
   // The turn is over: what its calls were doing, failing in a row or waiting on, ends with it.
   store.updateSession(sid, ({ failedAt: _failed, failedWhat: _what, waitsForJob: _waits, checkReopened: counted, ...s }) =>
     compact({
