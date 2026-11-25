@@ -118,11 +118,13 @@ function readCompactInstructions(value: unknown, where: string): { text: string;
   return { text: line, at: isoTime(f.at, `${where}.at`) };
 }
 
-function readShellSuggestion(value: unknown, where: string): { text: string; at: string } {
+function readShellSuggestion(value: unknown, where: string): { text: string; at: string } | undefined {
   const f = fields(value, where);
   const t = nonEmpty(f.text, `${where}.text`, SHELL_SUGGESTION_MAX);
-  if (shellSuggestionLine(t) !== t) throw new InputError(`${where}.text: ${JSON.stringify(t.slice(0, 200))} is not one line starting with "! " that types nothing but itself`);
-  return { text: t, at: isoTime(f.at, `${where}.at`) };
+  const at = isoTime(f.at, `${where}.at`);
+  // Absent once the rule was tightened after it was kept: unlike instructions it cannot be reworded, and
+  // a refusal here would fail every later update of the session.
+  return shellSuggestionLine(t) === t ? { text: t, at } : undefined;
 }
 
 /** The most characters of a shell command a session suggests the developer run in its terminal: one typed piece. */
@@ -155,7 +157,7 @@ export function compactInstructionsLine(value: string, max = COMPACT_INSTRUCTION
   const one = value
     .replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/g, " ")
     .replace(new RegExp(CONTROL.source, "gu"), "")
-    .replace(/[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069]/g, "") // the page would show other words than those sent
+    .replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cs}\u2800]/gu, "") // bidi, format and blank ones, lone surrogates: the page would show other words than those sent
     .replace(/\s+/g, " ")
     .trim();
   let chars = 0;

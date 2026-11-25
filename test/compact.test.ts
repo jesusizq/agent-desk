@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { compactSuggestionIn, latestCompactSuggestion, shellSuggestionIn } from "../adapters/claude-code/compact.ts";
 import { handleHook, type HookContext, readHookInput, recordHandoff, waitForAnswer } from "../adapters/claude-code/hooks.ts";
-import { COMPACT_INSTRUCTIONS_MAX, compactInstructionsLine, readSession, SHELL_SUGGESTION_MAX } from "../src/core/model.ts";
+import { COMPACT_INSTRUCTIONS_MAX, compactInstructionsLine, readSession, SHELL_SUGGESTION_MAX, shellSuggestionLine } from "../src/core/model.ts";
 import { TMUX_ACTIONS, tmuxKeys } from "../src/core/tmux.ts";
 import type { Store } from "../src/store/store.ts";
 import { tempHome, testStore } from "./helpers.ts";
@@ -246,8 +246,29 @@ describe("suggested compact instructions", () => {
     const session = { id: "s1", provider: "Test", project: { name: "p", dir: "/p" }, state: "waiting", startedAt: at, updatedAt: at };
     assert.equal(readSession({ ...session, shellSuggestion: { text: run, at } }).shellSuggestion?.text, run);
     for (const text of ["! ls\nrm x", "ls", "! ls;", "! a\u202eb"]) {
-      assert.throws(() => readSession({ ...session, shellSuggestion: { text, at } }), /shellSuggestion\.text/, JSON.stringify(text));
+      assert.equal(readSession({ ...session, shellSuggestion: { text, at } }).shellSuggestion, undefined, `${JSON.stringify(text)}: kept as no command, never as this one`);
     }
+    for (const bad of [{ text: 42, at }, { text: run, at: "soon" }, { text: "" }]) {
+      assert.throws(() => readSession({ ...session, shellSuggestion: bad }), /shellSuggestion\./, JSON.stringify(bad));
+    }
+  });
+
+  it("ask for no shell command holding a character that shows nothing: soft hyphens, joiners, variation selectors, tags, fillers, blank braille, format characters, lone surrogates", () => {
+    const format = ["\u0600", "\u0605", "\u06dd", "\u070f", "\u0890", "\u0891", "\u08e2", "\ufff9", "\ufffb", "\u{110bd}", "\u{110cd}", "\u{13430}", "\u{1343f}"];
+    for (const c of ["\u00ad", "\u034f", "\u17b4", "\u180e", "\u3164", "\ufe00", "\ufe0f", "\uffa0", "\u2800", "\u{e0001}", "\u{e0041}", "\u{e007f}", ...format, "\ud800", "\udfff"]) {
+      const name = `U+${(c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
+      assert.equal(compactInstructionsLine(`keep${c} it`), "keep it", `${name} goes from instructions`);
+      assert.equal(shellSuggestionLine(`! echo a${c}b`), "", `${name}: the line would not be the one shown`);
+      assert.equal(shellSuggestionIn(block(`! echo a${c}b`)), undefined, name);
+      assert.throws(() => tmuxKeys("shell", `! echo a${c}b`), /nothing was sent/, name);
+    }
+    // Kept before the rule refused it (an emoji with U+FE0F): the session reads, and updates, without it.
+    const { store } = setup();
+    const file = store.paths.session("cc-1");
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), shellSuggestion: { text: "! echo \u2714\ufe0f done", at: new Date().toISOString() } }));
+    assert.equal(store.getSession("cc-1")?.shellSuggestion, undefined);
+    store.updateSession("cc-1", (s) => ({ ...s, title: "still updated" }));
+    assert.equal(store.getSession("cc-1")?.title, "still updated");
   });
 
   it("type a shell command the session asked for as one line, only when it is one", () => {
