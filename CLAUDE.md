@@ -1,7 +1,8 @@
 # agent-desk
 
 A local, provider-independent desk to follow and answer every AI coding session on this machine.
-See @AGENTS.md for the product specification and @BRIEF.md for where the work starts.
+See @AGENTS.md for the product specification; `BRIEF.md` holds the original brief (the problems the
+desk solves), read when a change needs its reasons.
 
 ## Hard constraints
 
