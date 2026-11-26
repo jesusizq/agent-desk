@@ -549,6 +549,12 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         await page.waitFor(`document.querySelector('${block}')`);
         assert.equal(await page.eval<boolean>(`!!${confirming}`), false, "nor one left while the tab was hidden");
 
+        const unlisten = store.listen("asks-run", process.pid, { checks: true, turn: true });
+        await page.waitFor(`!document.querySelector('${block}')`);
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .shell-run').length"), 0, "never while the checks at its turn's end still run");
+        unlisten();
+        await page.waitFor(`document.querySelector('${block} [data-key=shell]')`);
+
         store.updateSession("asks-run", (s) => ({ ...s, state: "working" }));
         await page.waitFor(`!document.querySelector('${block}')`);
         await page.click("#session .conversation .msg.from-session pre[data-copy]", "sed -i", 2);

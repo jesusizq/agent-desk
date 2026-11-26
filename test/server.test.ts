@@ -355,6 +355,11 @@ describe("server", () => {
       assert.equal(busy.status, 400);
       assert.match(((await busy.json()) as { error: string }).error, /the session is working/);
       store.updateSession("tm1", (s) => ({ ...s, state: "waiting" }));
+      const unlisten = store.listen("tm1", process.pid, { checks: true, turn: true }); // its turn-end checks still run
+      const checking = await post("/api/sessions/tm1/keys", { action: "shell", command: run });
+      assert.equal(checking.status, 400);
+      assert.match(((await checking.json()) as { error: string }).error, /checks that run at the session's turn end are still running .*; nothing was sent/);
+      unlisten();
       for (const shown of [undefined, "", "! echo other"]) {
         const stale = await post("/api/sessions/tm1/keys", { action: "shell", ...(shown === undefined ? {} : { command: shown }) });
         assert.equal(stale.status, 400, `shown ${JSON.stringify(shown)}`);
