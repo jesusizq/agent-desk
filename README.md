@@ -238,8 +238,8 @@ types it only while the session waits (typed mid-turn it would wait in the termi
 checks at its turn's end have ended (one may still send it back to work; the page hides Run until
 then), only when it equals the session's stored line exactly (no control or invisible characters, no
 trailing `;` or `\`, at most 400 characters) and what the page showed, and once: starting to type it
-(even if tmux then fails part way), the developer writing to the session or the next turn's end
-removes it. Verified on 2026-11-20 with Claude Code in tmux:
+(even if tmux then fails part way), the developer writing to the session, the next turn's end or the
+session starting again (resumed, compacted) removes it. Verified on 2026-11-20 with Claude Code in tmux:
 `! echo … > file`, typed this way, ran and wrote the file.
 
 To make every VS Code terminal a tmux session that ends when its tab closes, add to VS Code's user

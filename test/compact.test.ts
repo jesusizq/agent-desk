@@ -234,6 +234,12 @@ describe("suggested compact instructions", () => {
     handleHook(event("UserPromptSubmit", { prompt: "go on" }), ctx);
     assert.equal(shellOf(), undefined, "gone once the developer writes");
 
+    for (const source of ["resume", "compact", "startup"]) {
+      handleHook(event("Stop", { last_assistant_message: block(run) }), ctx);
+      handleHook(event("SessionStart", { source }), ctx);
+      assert.equal(shellOf(), undefined, `gone once the session starts again (${source}): it was for a run that is over`);
+    }
+
     handleHook(event("Stop", { last_assistant_message: `${block(run)}\n\nShall I go on after it?` }), ctx);
     assert.equal(shellOf(), run);
     const [q] = store.openQuestions("cc-1");

@@ -75,10 +75,10 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // A sub-agent compacted its own context: the session's state, suggestion and protocol are not its.
       if (bySubAgent(input)) return { code: 0 };
       reviseEnvelopes(store, problems);
-      // Started again (resumed, or the plugins reloaded): what its last end left no longer holds. Once
-      // compacted, the instructions it suggested were for the context that is gone.
+      // Started again (resumed, or the plugins reloaded): what its last end left no longer holds, the
+      // shell command its last reply asked for included. Once compacted, its suggested instructions too.
       const compacted = optional(f.source, "hook input.source", (v, w) => text(v, w, 100)) === "compact";
-      store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, compactInstructions, ...s }) => compact({ ...s, state: "waiting" as const, compactInstructions: compacted ? undefined : compactInstructions }));
+      store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, shellSuggestion: _shell, compactInstructions, ...s }) => compact({ ...s, state: "waiting" as const, compactInstructions: compacted ? undefined : compactInstructions }));
       retireContinued(input, ctx, problems);
       recordResumes(input, ctx, problems);
       sweepResumes(input, ctx, problems);

@@ -97,7 +97,8 @@ export type Session = {
   /**
    * The shell command the session's last reply asked the developer to run in its terminal (a code
    * block of one line starting with `! `, the terminal's shell prefix), and when its adapter read it:
-   * one line (`shellSuggestionLine`). Gone once the developer writes to the session or it is sent.
+   * one line (`shellSuggestionLine`). Gone once the developer writes to the session, the session starts
+   * again, or the desk starts typing it.
    */
   shellSuggestion?: { text: string; at: string };
   /**
