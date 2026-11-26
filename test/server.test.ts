@@ -389,6 +389,29 @@ describe("server", () => {
     }
   });
 
+  it("types an asked-for shell command once even when tmux fails after typing part of it", async () => {
+    // A tmux that hosts this process in pane %1, keeps what is typed, and refuses Enter.
+    const dir = tempHome();
+    const typed = path.join(dir, "typed");
+    fs.writeFileSync(path.join(dir, "tmux"), `#!/bin/sh\nshift 2\ncase "$1" in\n  display-message) echo ${process.pid} ;;\n  send-keys) if [ "$4" = Enter ]; then echo "lost the server" >&2; exit 1; fi; printf '%s' "$5" >> '${typed}' ;;\n  *) exit 1 ;;\nesac\n`, { mode: 0o700 });
+    const run = "! echo once";
+    store.upsertSession({ id: "tm-half", provider: "Test", project: { name: "shop", dir: "/work/shop" }, state: "waiting", process: { pid: process.pid, start: procInfo(process.pid)?.start ?? "", ancestors: [] }, tmux: { socket: path.join(dir, "sock"), pane: "%1", clients: [] }, shellSuggestion: { text: run, at: new Date().toISOString() } });
+    const pathBefore = process.env.PATH;
+    process.env.PATH = `${dir}:${pathBefore}`;
+    try {
+      const failed = await post("/api/sessions/tm-half/keys", { action: "shell", command: run });
+      assert.equal(failed.status, 500);
+      assert.equal(fs.readFileSync(typed, "utf8"), `${run} `, "typed, not sent");
+      assert.equal(store.getSession("tm-half")?.shellSuggestion, undefined, "gone once typing began: a retry has nothing to type");
+      assert.match(((await failed.json()) as { error: string }).error, /may be typed in its terminal without being sent.*lost the server/s);
+      assert.equal(store.getSession("tm-half")?.deskSent?.shell, undefined, "and not marked as sent");
+      assert.equal((await post("/api/sessions/tm-half/keys", { action: "shell", command: run })).status, 400);
+      assert.equal(fs.readFileSync(typed, "utf8"), `${run} `, "typed once in all");
+    } finally {
+      process.env.PATH = pathBefore;
+    }
+  });
+
   it("ends a session's process only while it is still that process, and only from the page", async () => {
     const { spawn } = await import("node:child_process");
     const { procInfo } = await import("../src/core/proc.ts");

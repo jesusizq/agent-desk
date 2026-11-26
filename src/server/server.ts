@@ -208,8 +208,9 @@ const ACTIONS: Record<string, Action> = {
       if (s.state !== "waiting") throw new InputError("the session is working; a shell command is typed only while it waits; nothing was sent");
       // Waiting from its own Stop hook on, while the other turn-end checks still run and may send it back to work.
       if (store.listeners(target).some((l) => l.checks)) throw new InputError("the checks that run at the session's turn end are still running and may send it back to work; nothing was sent, try again once they end");
-      sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], "shell", asked);
-      store.updateSession(target, ({ shellSuggestion: _sent, ...rest }) => sentFromDesk(rest, "shell", asked));
+      // Dropped before its first key: if tmux fails part way, a retry cannot type the line a second time.
+      sendTmuxAction(s.tmux, [s.process.pid, ...s.process.ancestors], "shell", asked, () => store.updateSession(target, ({ shellSuggestion: _typing, ...rest }) => rest));
+      store.updateSession(target, (rest) => sentFromDesk(rest, "shell", asked));
       return { sent: action };
     }
     const command = action === "fresh" ? (store.getMetrics(target)?.coldResume?.command ?? "") : "";

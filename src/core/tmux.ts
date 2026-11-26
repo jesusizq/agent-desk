@@ -114,12 +114,21 @@ function typedChunks(text: string): string[] {
 
 /**
  * Sends one allowed action to a pane, after checking that the pane still hosts the session: the
- * pane's own process must be the session process or one of its ancestors.
+ * pane's own process must be the session process or one of its ancestors. `typing` runs once that
+ * check passed, before the first key: what must not be typed twice is dropped there, so a failure
+ * part way leaves nothing to type again.
  */
-export function sendTmuxAction(where: { socket: string; pane: string }, sessionPids: number[], action: TmuxAction, text = ""): void {
+export function sendTmuxAction(where: { socket: string; pane: string }, sessionPids: number[], action: TmuxAction, text = "", typing = (): void => {}): void {
   if (!TMUX_PANE.test(where.pane)) throw new Error(`not a tmux pane: ${where.pane}`);
   const keys = tmuxKeys(action, text);
   const panePid = Number(tmux(where.socket, "display-message", "-p", "-t", where.pane, "#{pane_pid}").trim());
   if (!sessionPids.includes(panePid)) throw new Error(`tmux pane ${where.pane} no longer hosts this session; nothing was sent`);
-  for (const k of keys) tmux(where.socket, "send-keys", "-t", where.pane, ...k);
+  typing();
+  for (const [i, k] of keys.entries()) {
+    try {
+      tmux(where.socket, "send-keys", "-t", where.pane, ...k);
+    } catch (error) {
+      throw new Error(`tmux failed at key ${i + 1} of ${keys.length} of ${action}: it may be typed in its terminal without being sent; look there before sending it again (${(error as Error).message.trim()})`);
+    }
+  }
 }
