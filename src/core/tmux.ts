@@ -85,7 +85,7 @@ export function tmuxKeys(action: TmuxAction, text = ""): readonly (readonly stri
   }
   if (action === "shell") {
     if (text === "" || shellSuggestionLine(text) !== text) throw new Error(`${JSON.stringify(text.slice(0, 80))} is not one line starting with "! " that types nothing but itself; nothing was sent`);
-    return [["-l", `${text} `], ["Enter"]];
+    return [...typedChunks(`${text} `).map((chunk) => ["-l", chunk]), ["Enter"]];
   }
   if (text === "") return TMUX_ACTIONS[action];
   if (action !== "compact") throw new Error(`only /compact takes instructions, not ${action}; nothing was sent`);

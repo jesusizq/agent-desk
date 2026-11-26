@@ -275,6 +275,15 @@ describe("suggested compact instructions", () => {
 
   it("type a shell command the session asked for as one line, only when it is one", () => {
     assert.deepEqual(tmuxKeys("shell", "! python3 /tmp/x.py"), [["-l", "! python3 /tmp/x.py "], ["Enter"]]);
+    // The longest, with the space after it: in pieces of at most 400, as /compact's, never one burst a prompt takes as a paste.
+    for (const wide of [`! echo ${"abcdefgh ".repeat(43)}abcdef`, `! ${"a".repeat(SHELL_SUGGESTION_MAX - 2)}`]) {
+      assert.equal(shellSuggestionLine(wide), wide);
+      const keys = tmuxKeys("shell", wide);
+      assert.deepEqual(keys.at(-1), ["Enter"]);
+      const typed = keys.slice(0, -1);
+      assert.equal(typed.map((k) => k[1]).join(""), `${wide} `, "the whole line, in order");
+      for (const [flag, chunk = ""] of typed) assert.ok(flag === "-l" && chunk.length <= 400, `${chunk.length} characters`);
+    }
     for (const bad of ["", "ls", "! ls\nrm -rf ~", "! ls;", "! a\x03", " ! ls"]) {
       assert.throws(() => tmuxKeys("shell", bad), /is not one line starting with "! " that types nothing but itself; nothing was sent/, JSON.stringify(bad));
     }
