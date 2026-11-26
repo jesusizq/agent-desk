@@ -5,13 +5,21 @@ import { bump } from "./motion.js";
 import { TEXT } from "./text.js";
 import { failedUnseen } from "./agents.js";
 import { alertOn, chime, notify } from "./alerts.js";
-import { inSight, panelShowsConversation } from "./layout.js";
+import { inSight, ONE_COLUMN, panelShowsConversation } from "./layout.js";
 import { toast } from "./pieces.js";
 import { openResult } from "./result.js";
 import { openSession } from "./session.js";
 import { asksOf, data, itemKey, itemOf, label, page, S, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Question} Question */
+
+/**
+ * A toast nobody asked for. On a phone it covers the screen being worked on, and the badges, the bubble and the
+ * system notification already tell of it: none there. A toast answering a tap still shows. @param {string} msg
+ */
+const tell = (msg) => {
+  if (!ONE_COLUMN.matches) toast(msg);
+};
 
 /** What a notification of a question opens: its item, large on the desk. @param {Question} q */
 const showOnDesk = (q) => () => {
@@ -60,7 +68,7 @@ export function remindWaiting() {
     if (q.status !== "open" || ui.reminded.has(q.id) || Date.now() - Date.parse(q.askedAt) < REMIND_MS) continue;
     for (const x of itemOf(q).questions) ui.reminded.add(x.id);
     const where = label(S(q.sessionId));
-    toast(TEXT.reminder(where));
+    tell(TEXT.reminder(where));
     chime();
     notify(TEXT.reminder(where), q.text, `again-${q.id}`, showOnDesk(q));
   }
@@ -81,7 +89,7 @@ function noticeFailures() {
     const agent = kind === "a" ? data.agents.find((x) => x.sessionId === a && x.name === b) : undefined;
     const sid = result?.sessionId ?? agent?.sessionId ?? "";
     const what = result?.title ?? agent?.goal ?? agent?.name ?? "";
-    toast(TEXT.failedAlert(what, label(S(sid))));
+    tell(TEXT.failedAlert(what, label(S(sid))));
     chime();
     notify(TEXT.failedAlert(what, label(S(sid))), result?.summary ?? agent?.activity ?? "", key, () => (result ? openResult(result) : openSession(sid)));
   }
@@ -89,7 +97,7 @@ function noticeFailures() {
 
 /**
  * A session that finished and wrote something new, without asking (questions are noticed above),
- * gets a toast, unless its panel is open and in view; no desktop notification, as it needs no answer.
+ * gets a toast (not on a phone), unless its panel is open and in view; no desktop notification, as it needs no answer.
  */
 function noticeMessages() {
   const first = ui.heardAt === null;
@@ -100,6 +108,6 @@ function noticeMessages() {
     heardAt.set(s.id, at);
     if (first || !unread(s) || asksOf(s.id).length > 0) continue;
     if (ui.panelSession === s.id && dialog("session").open && !document.hidden) continue;
-    toast(TEXT.newMessage(label(s)));
+    tell(TEXT.newMessage(label(s)));
   }
 }

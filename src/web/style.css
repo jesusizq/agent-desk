@@ -29,6 +29,8 @@
 
 * { box-sizing: border-box; scrollbar-width: thin; }
 html, body { margin: 0; height: 100%; }
+/* Phones inflate text in landscape on their own and do not always undo it on turning back: the sizes are set here. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { font: 0.875rem/1.45 var(--sans); color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased;
   display: flex; flex-direction: column; overflow: hidden; }
 button { font: inherit; color: inherit; cursor: pointer; }

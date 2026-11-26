@@ -345,7 +345,6 @@ describe("page: the answer box and what sessions wrote", SKIP, () => {
 
     it("under a keyboard that covers the page, as iOS's, turns compact, sits on the keyboard, and toasts come from the top", async () => {
       const done = asking("compact", "compact under the keyboard");
-      store.upsertSession({ id: "compact-other", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "another session", state: "working" });
       try {
         const page = await phone(390, 844, coveringKeyboard(844));
         await openPanel(page, "compact under the keyboard");
@@ -361,7 +360,7 @@ describe("page: the answer box and what sessions wrote", SKIP, () => {
         assert.deepEqual(fit, { chips: "none", kind: "none", onKeyboard: 8, roomLeft: true });
         await page.tap("#session .opts button", "Green");
         await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('Green') && m.querySelector('.delivered'))");
-        store.updateSession("compact-other", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Done elsewhere.", at: new Date().toISOString() } }));
+        await page.eval("import('/pieces.js').then((m) => m.toast('Copied: another session'))");
         await page.waitFor("document.querySelector('.toast')?.textContent.includes('another session')");
         assert.deepEqual(
           await page.eval("(() => { const t = document.querySelector('.toast').getBoundingClientRect(); return [t.top >= document.querySelector('#session .dhead').getBoundingClientRect().bottom, t.bottom < 508 / 2]; })()"),
@@ -420,12 +419,19 @@ describe("page: the answer box and what sessions wrote", SKIP, () => {
       });
     }
 
-    it("keeps a toast where it came in when the window it came over closes", async () => {
+    it("raises no toast for a new message on a phone, and keeps a toast where it came in when the window it came over closes", async () => {
       store.upsertSession({ id: "toast-edge", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "a toast's edge", takesMessagesWhileWorking: true });
       store.upsertSession({ id: "toast-edge-other", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "finishing elsewhere", state: "working" });
       const page = await phone();
       await openPanel(page, "a toast's edge");
-      store.updateSession("toast-edge-other", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Finished over there.", at: new Date().toISOString() } }));
+      const at = new Date().toISOString();
+      store.updateSession("toast-edge-other", (s) => ({ ...s, state: "waiting", lastMessage: { text: "Finished over there.", at } }));
+      await page.eval("import('/state.js').then((m) => { window.deskState = m; })");
+      await page.waitFor(`deskState.data.sessions.find((s) => s.id === 'toast-edge-other')?.lastMessage?.at === '${at}'`);
+      await page.eval("new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))");
+      assert.equal(await page.eval<number>("document.querySelectorAll('.toast').length"), 0, "on a phone, a session's new message raises no toast");
+      // A toast answering a tap still comes, over the window from the top.
+      await page.eval("import('/pieces.js').then((m) => m.toast('Copied: finishing elsewhere'))");
       const toast = "[...document.querySelectorAll('.toast')].find((t) => t.textContent.includes('finishing elsewhere'))";
       await page.waitFor(`${toast} && !${toast}.getAnimations().length`);
       const top = await page.eval<number>(`${toast}.getBoundingClientRect().top`);
