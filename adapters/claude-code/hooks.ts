@@ -104,14 +104,11 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // that arrives while the session works is kept, to show later whether that turn took it in.
       const at = new Date().toISOString();
       const wasWorking = store.getSession(sid)?.state === "working";
-      // A suggested compaction is for the context it was written in: what the developer writes next
-      // moves on from it, unless it is that compaction.
-      const compacting = /^\/compact(\s|$)/.test(prompt.trimStart());
-      // A shell command the last reply asked for is for that reply only, as is a suggested compaction.
-      store.updateSession(sid, ({ checkReopened: _reopened, compactInstructions, shellSuggestion: _shell, ...s }) =>
+      // A shell command the last reply asked for is for that reply only. A suggested compaction stays
+      // until one is done or a newer one replaces it: it is offered once, and compacting may come turns later.
+      store.updateSession(sid, ({ checkReopened: _reopened, shellSuggestion: _shell, ...s }) =>
         compact({
           ...s,
-          compactInstructions: compacting ? compactInstructions : undefined,
           state: "working" as const,
           activityAt: at,
           title: s.title ?? (titleFrom(prompt) || undefined),
@@ -1968,8 +1965,8 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
     if (answers.length > 0) {
       const message = answers.map((a) => deliveryText(a, imageFiles(store, a.images))).join("\n\n");
       try {
-        // The developer answered: a compaction or shell command suggested before it is for a context that moved on.
-        store.updateSession(sessionId, ({ compactInstructions: _suggested, shellSuggestion: _shell, ...s }) => ({ ...s, state: "working" }));
+        // The developer answered: a shell command asked for before it is for a reply that moved on.
+        store.updateSession(sessionId, ({ shellSuggestion: _shell, ...s }) => ({ ...s, state: "working" }));
       } catch (error) {
         // The answers are already taken: they must reach the session even if the state cannot be saved.
         return { code: 2, stderr: `${message}\n\n(agent-desk could not mark the session as working: ${(error as Error).message})` };

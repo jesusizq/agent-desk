@@ -91,29 +91,26 @@ describe("suggested compact instructions", () => {
     assert.equal(instructionsOf(store), undefined, "gone once a compaction is done");
   });
 
-  it("are for the context they were written in: gone once the developer writes again, unless it is to compact", async () => {
+  it("stay while the developer writes again or answers from the desk, offered once and used turns later", async () => {
     const { store, transcript, ctx, event } = setup();
     fs.writeFileSync(transcript, "");
-    const suggest = () => handleHook(event("Stop", { last_assistant_message: block("/compact keep the plan") }), ctx);
     const prompt = (text: string) => handleHook(event("UserPromptSubmit", { prompt: text }), ctx);
-
-    suggest();
-    for (const text of ["/compact", "  /compact keep only the plan"]) {
-      prompt(text);
-      assert.equal(instructionsOf(store)?.text, "keep the plan", `${JSON.stringify(text)} is that compaction`);
-    }
-    prompt("/compactify the docs");
-    assert.equal(instructionsOf(store), undefined, "any other prompt moves on from it");
 
     handleHook(event("Stop", { last_assistant_message: `${block("/compact keep the plan")}\n\nShall I go on first?` }), ctx);
     assert.equal(instructionsOf(store)?.text, "keep the plan");
+    for (const text of ["/compact", "  /compact keep only the plan", "/compactify the docs", "not yet, fix the test first"]) {
+      prompt(text);
+      assert.equal(instructionsOf(store)?.text, "keep the plan", `${JSON.stringify(text)} leaves it for a later compaction`);
+    }
+    handleHook(event("Stop", { last_assistant_message: "Fixed, and asked again: Shall I go on?" }), ctx);
+    assert.equal(instructionsOf(store)?.text, "keep the plan", "a turn that does not offer it again keeps it");
     const [q] = store.openQuestions("cc-1");
     assert.ok(q, "the turn's end asks the developer");
     const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 5000 });
     await new Promise((r) => setTimeout(r, 50));
     store.answerFromDesk(q.id, "One more thing first.");
     assert.equal((await waiting).code, 2);
-    assert.equal(instructionsOf(store), undefined, "an answer from the desk moves on from it too");
+    assert.equal(instructionsOf(store)?.text, "keep the plan", "an answer from the desk keeps it too");
   });
 
   it("are read from a session record as one line, whatever it holds, and refused when nothing is left of them", () => {
