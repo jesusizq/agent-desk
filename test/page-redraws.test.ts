@@ -554,6 +554,13 @@ describe("page: a quiet desk and its redraws", SKIP, () => {
         assert.equal(await page.eval<number>("document.querySelectorAll('#session .shell-run').length"), 0, "never while the checks at its turn's end still run");
         unlisten();
         await page.waitFor(`document.querySelector('${block} [data-key=shell]')`);
+        const alive = store.getSession("asks-run")?.process;
+        assert.ok(alive);
+        store.updateSession("asks-run", (s) => ({ ...s, process: { ...alive, start: `${alive.start}0` } })); // its process is gone, the record says waiting
+        await page.waitFor(`!document.querySelector('${block}')`);
+        assert.equal(await page.eval<number>("document.querySelectorAll('#session .shell-run').length"), 0, "never on a session whose process is gone");
+        store.updateSession("asks-run", (s) => ({ ...s, process: alive }));
+        await page.waitFor(`document.querySelector('${block} [data-key=shell]')`);
 
         store.updateSession("asks-run", (s) => ({ ...s, state: "working" }));
         await page.waitFor(`!document.querySelector('${block}')`);

@@ -119,13 +119,13 @@ function markedCommand(shell) {
 
 /**
  * Makes the code block holding the shell command the session asks for runnable (runnableCommand),
- * in the reply that ended its turn and while it waits in tmux, its turn-end checks done; once sent,
+ * in the reply that ended its turn and while it waits live in tmux, its turn-end checks done; once sent,
  * until its outcome has shown.
  * @param {Session} s @param {Node[]} view @param {() => void} redraw
  */
 export function runnableShell(s, view, redraw) {
   // Waiting while the checks at its turn's end still run is not waiting yet: they may send it back to work.
-  const asked = s.tmux && s.state === "waiting" && !data.checking.includes(s.id) ? (s.shellSuggestion?.text ?? "") : "";
+  const asked = s.tmux && s.state === "waiting" && isLive(s) && !data.checking.includes(s.id) ? (s.shellSuggestion?.text ?? "") : "";
   const firing = ui.fired?.key === shownShell.key && shownShell.key.startsWith(`${s.id} shell `) ? shownShell.text : "";
   const sent = sentOf(s, "shell");
   const shell = asked || firing || (sent?.text ?? "");
