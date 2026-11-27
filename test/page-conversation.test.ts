@@ -68,30 +68,38 @@ describe("page: the session panel's conversation", SKIP, () => {
     }, longTalk);
   });
 
-  it("on a phone, holds the jump to the end while a scroll still glides, and hands it back to a touch or the wheel", async () => {
+  it("on a touch phone, stops a glide still going before the jump to the end, and only there", async () => {
     await ownPhone(async (page) => {
+      await page.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
       await openLongTalk(page);
-      /** Scrolls far up, taps the button, then moves the scroll up for a few frames as a glide still going would; `wheel` turns the wheel mid-glide. */
-      const jumpWhileGliding = (wheel: boolean) => page.eval(`new Promise((done) => {
+      /** Taps the button scrolled far up: what the body's overflow is at the jump, and in the frames after. */
+      const jump = () => page.eval<{ at: string; after: string[]; fromEnd: number }>(`new Promise((done) => {
         const b = ${BODY};
         b.scrollTop = b.scrollHeight - b.clientHeight - 2000;
         requestAnimationFrame(() => requestAnimationFrame(() => {
           document.querySelector('#session .to-end').click();
-          let n = 0;
-          const glide = () => {
-            if (${wheel} && n === 1) b.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -300 }));
-            b.scrollTop -= 150;
-            if (++n < 5) requestAnimationFrame(glide);
-            else setTimeout(done, 400);
+          const at = getComputedStyle(b).overflowY;
+          const after = [];
+          const frame = () => {
+            after.push(getComputedStyle(b).overflowY);
+            if (after.length < 4) requestAnimationFrame(frame);
+            else done({ at, after, fromEnd: b.scrollHeight - b.scrollTop - b.clientHeight });
           };
-          requestAnimationFrame(glide);
+          requestAnimationFrame(frame);
         }));
       })`);
-      await jumpWhileGliding(false);
-      assert.ok((await page.eval<number>(FROM_END)) < 2, `the glide does not leave it short of the end: ${await page.eval<number>(FROM_END)} px from it`);
+      // iOS ends a glide only when its element can no longer scroll; a scrollTop set alone loses to it.
+      const touch = await jump();
+      assert.equal(touch.at, "hidden", "at the jump the conversation cannot scroll, which ends a glide on iOS");
+      assert.equal(touch.after.at(-1), "auto", `it scrolls again two frames later: ${touch.after.join(", ")}`);
+      assert.ok(touch.fromEnd < 2, `at the end: ${touch.fromEnd} px from it`);
       assert.equal(await page.eval<boolean>(BUTTON_SHOWN), false);
-      await jumpWhileGliding(true);
-      assert.ok((await page.eval<number>(FROM_END)) > 300, "the wheel takes the scroll back");
+      await page.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+      await page.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "fine" }, { name: "hover", value: "hover" }] });
+      assert.equal(await page.eval<boolean>("matchMedia('(pointer: coarse)').matches"), false);
+      const mouse = await jump();
+      assert.deepEqual([mouse.at, ...mouse.after], ["auto", "auto", "auto", "auto", "auto"], "with a mouse its scrollbar never goes: no flicker");
+      assert.ok(mouse.fromEnd < 2);
     }, longTalk);
   });
 

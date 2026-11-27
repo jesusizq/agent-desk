@@ -2,6 +2,7 @@
 // The session panel's conversation keeps to its newest message whatever changes its size (a phone
 // turned, a picture loaded, a box growing) unless the developer scrolled up to read; then a button brings it down.
 import { dialog, h, icon } from "./dom.js";
+import { COARSE } from "./layout.js";
 import { TEXT } from "./text.js";
 import { ui } from "./state.js";
 
@@ -17,36 +18,20 @@ function toEnd(b) {
 }
 
 /**
- * Brings the conversation to its end and holds it there until it rests: iOS scrolls an element apart
- * from the script, and a scroll still gliding there wins over the one set here. A touch, the wheel or a
- * key hands the scroll back to the developer.
+ * Stops a scroll still gliding, then goes to the end: iOS goes on with a glide over a scrollTop set
+ * from the script, and ends it only when its element can no longer scroll, which it learns at its next
+ * frame. A mouse's or a trackpad's scroll ends with the scrollTop set, and its scrollbar must not flicker.
+ * @param {Element} b
  */
-const SETTLE_MS = 1000;
-let settling = 0;
-let jumping = false;
-/** @param {Element} b */
-function settle(b) {
-  cancelAnimationFrame(settling);
-  jumping = true;
+function jumpToEnd(b) {
   ui.panelStick = true;
-  const until = performance.now() + SETTLE_MS;
-  let resting = 0;
-  const frame = () => {
-    if (!jumping || !b.isConnected) return void (jumping = false);
-    if (fromEnd(b) > 1) (toEnd(b), (resting = 0));
-    else resting++;
-    if (resting < 3 && performance.now() < until) settling = requestAnimationFrame(frame);
-    else jumping = false;
-  };
+  if (!(b instanceof HTMLElement) || !COARSE.matches) return toEnd(b);
+  cancelAnimationFrame(resuming);
+  b.style.overflowY = "hidden";
   toEnd(b);
-  settling = requestAnimationFrame(frame);
+  resuming = requestAnimationFrame(() => (resuming = requestAnimationFrame(() => (b.style.removeProperty("overflow-y"), toEnd(b)))));
 }
-for (const event of ["touchstart", "wheel", "pointerdown", "keydown"])
-  dialog("session").addEventListener(event, (e) => {
-    if (!jumping || (e.target instanceof Element && e.target.closest(".to-end"))) return;
-    jumping = false;
-    cancelAnimationFrame(settling);
-  }, { capture: true, passive: true });
+let resuming = 0;
 
 /** Farther from the end than this the button shows: closer, the end is in sight and the button would cover it. */
 const SHOW_FROM = 240;
@@ -69,7 +54,7 @@ export function toEndButton() {
       onclick: () => {
         const b = body();
         if (!b) return;
-        settle(b);
+        jumpToEnd(b);
         showButton();
       },
     },
@@ -116,7 +101,7 @@ dialog("session").addEventListener(
   "scroll",
   (e) => {
     const b = e.target;
-    if (!(b instanceof Element) || !b.classList.contains("session-body") || ui.panelPart || jumping) return;
+    if (!(b instanceof Element) || !b.classList.contains("session-body") || ui.panelPart) return;
     ui.panelStick = fromEnd(b) < NEAR_END;
     showButton();
   },
