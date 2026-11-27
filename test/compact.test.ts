@@ -295,3 +295,54 @@ describe("suggested compact instructions", () => {
     }
   });
 });
+
+describe("a compaction of the session's context", () => {
+  const compacting = (store: Store) => store.getSession("cc-1")?.compacting;
+  const marks = (store: Store) => store.listMessages("cc-1").filter((m) => m.compaction).map((m) => m.compaction?.trigger ?? "unknown");
+
+  it("asked for while the session waits, shows it at work from PreCompact until it starts again compacted, then marks the conversation and waits", async () => {
+    const { store, transcript, ctx, event } = setup();
+    fs.writeFileSync(transcript, "");
+    handleHook(event("Stop", { last_assistant_message: "Done." }), ctx);
+    assert.equal(store.getSession("cc-1")?.state, "waiting");
+    await recordHandoff(event("PreCompact", { trigger: "manual", custom_instructions: "" }), ctx);
+    assert.equal(compacting(store)?.trigger, "manual");
+    assert.ok(!Number.isNaN(Date.parse(compacting(store)?.since ?? "")));
+    assert.equal(store.getSession("cc-1")?.state, "waiting", "its state, which decides how the desk delivers to it, is left as it was");
+    handleHook(event("SessionStart", { source: "compact" }), ctx);
+    assert.equal(compacting(store), undefined);
+    assert.deepEqual(marks(store), ["manual"]);
+    assert.equal(store.getSession("cc-1")?.state, "waiting");
+  });
+
+  it("started by the provider mid-turn, leaves the session at work once done", async () => {
+    const { store, transcript, ctx, event } = setup();
+    fs.writeFileSync(transcript, "");
+    handleHook(event("UserPromptSubmit", { prompt: "refactor the store" }), ctx);
+    assert.equal(store.getSession("cc-1")?.state, "working");
+    await recordHandoff(event("PreCompact", { trigger: "auto", custom_instructions: null }), ctx);
+    assert.equal(compacting(store)?.trigger, "auto");
+    handleHook(event("SessionStart", { source: "compact" }), ctx);
+    assert.equal(store.getSession("cc-1")?.state, "working", "the turn goes on after an automatic compaction: not waiting");
+    assert.deepEqual([compacting(store), marks(store)], [undefined, ["auto"]]);
+  });
+
+  it("that never ends (cancelled, failed, or its session gone) stops showing at the session's next turn, end of turn, end or start", async () => {
+    for (const next of ["UserPromptSubmit", "Stop", "SessionEnd", "SessionStart"]) {
+      const { store, transcript, ctx, event } = setup();
+      fs.writeFileSync(transcript, "");
+      await recordHandoff(event("PreCompact", { trigger: "manual", custom_instructions: "" }), ctx);
+      assert.ok(compacting(store), next);
+      handleHook(event(next, next === "UserPromptSubmit" ? { prompt: "go on" } : next === "Stop" ? { last_assistant_message: "Done." } : next === "SessionStart" ? { source: "resume" } : {}), ctx);
+      assert.deepEqual([compacting(store), marks(store)], [undefined, []], `${next}: no longer compacting, and nothing compacted`);
+    }
+  });
+
+  it("of a sub-agent's own context is not the session's", async () => {
+    const { store, transcript, ctx, event } = setup();
+    fs.writeFileSync(transcript, "");
+    await recordHandoff(event("PreCompact", { trigger: "auto", custom_instructions: null, agent_id: "a1" }), ctx);
+    handleHook(event("SessionStart", { source: "compact", agent_id: "a1" }), ctx);
+    assert.deepEqual([compacting(store), marks(store)], [undefined, []]);
+  });
+});

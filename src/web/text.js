@@ -22,6 +22,9 @@ const tokens = (n) => `${n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${
 /** What resuming over a cold cache costs: its price when known, else the tokens it rewrites. @param {Metrics} m */
 const resuming = (m) => (m.coldResume?.costUsd !== undefined ? `≈ ${usd(m.coldResume.costUsd)}` : `rewrites ${tokens(m.contextTokens ?? 0)}`);
 const CLEAR = "All clear";
+/** @typedef {import("../core/protocol.ts").CompactionTrigger} CompactionTrigger */
+/** @type {Record<CompactionTrigger, string>} */
+const compactionHow = { manual: "manual", auto: "automatic" };
 /** @param {boolean} resultsToo @param {number} [reviews] reviews open, at the developer's pace */
 const clearRest = (resultsToo, reviews = 0) =>
   reviews ? `nothing needs you · ${reviews === 1 ? "1 review open" : `${reviews} reviews open`}, at your pace` : resultsToo ? "nothing needs you, nothing new to review" : "nothing needs you";
@@ -197,6 +200,8 @@ export const TEXT = {
   flow: "Flow",
   /** @param {string} t how long ago its turn ended */
   waitingForYou: (t) => `Waiting for you${t && t !== NOW ? ` · ${t}` : ""}`,
+  /** @param {string} t how long its context has been compacting */
+  compactingFor: (t) => `Compacting…${t && t !== NOW ? ` · ${t}` : ""}`,
   /** @param {string} t */
   details: "Details",
   conversation: {
@@ -209,6 +214,8 @@ export const TEXT = {
     working: "Its reply appears here when the turn ends. To write to it while it works, use its terminal.",
     /** @param {string} t */
     workingFor: (t) => (t && t !== NOW ? `Working for ${t}` : "Working"),
+    /** @param {string} time @param {CompactionTrigger | undefined} trigger */
+    compacted: (time, trigger) => `Context compacted · ${time}${trigger ? ` (${compactionHow[trigger]})` : ""}`,
     /** @param {number} n */
     agentsAtWork: (n) => `Its turn ended; ${n === 1 ? "1 agent is" : `${n} agents are`} still at work`,
     checking: "Its checks run again on the end of its turn",

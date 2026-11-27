@@ -8,6 +8,7 @@ import {
   ANSWER_SOURCES,
   ATTACHED_IMAGES_MAX,
   CHECK_REASON_MAX,
+  COMPACTION_TRIGGERS,
   DESK_COMMANDS,
   GROUP_SIZE_MAX,
   MESSAGE_AUTHORS,
@@ -95,6 +96,10 @@ export function readSession(value: unknown, where = "session"): Session {
     compactInstructions: optional(f.compactInstructions, `${where}.compactInstructions`, readCompactInstructions),
     shellSuggestion: optional(f.shellSuggestion, `${where}.shellSuggestion`, readShellSuggestion),
     deskSent: optional(f.deskSent, `${where}.deskSent`, readDeskSent),
+    compacting: optional(f.compacting, `${where}.compacting`, (v, w) => {
+      const c = fields(v, w);
+      return { trigger: oneOf(COMPACTION_TRIGGERS)(c.trigger, `${w}.trigger`), since: isoTime(c.since, `${w}.since`) };
+    }),
   });
 }
 
@@ -411,7 +416,7 @@ export function readConversationEntry(value: unknown, where = "message"): Conver
   const f = fields(value, where);
   const from = oneOf(MESSAGE_AUTHORS)(f.from, `${where}.from`);
   if (f.sender !== undefined && from !== "peer" && from !== "agent") throw new InputError(`${where}.sender: only a peer's or an agent's message names its sender, not a ${from}'s`);
-  return compact({
+  const entry = compact({
     id: id(f.id, `${where}.id`),
     sessionId: id(f.sessionId, `${where}.sessionId`),
     from,
@@ -421,7 +426,13 @@ export function readConversationEntry(value: unknown, where = "message"): Conver
     via: optional(f.via, `${where}.via`, oneOf(ANSWER_CHANNELS)),
     images: optional(f.images, `${where}.images`, imageIds),
     step: optional(f.step, `${where}.step`, bool),
+    compaction: optional(f.compaction, `${where}.compaction`, (v, w) => compact({ trigger: optional(fields(v, w).trigger, `${w}.trigger`, oneOf(COMPACTION_TRIGGERS)) })),
   });
+  const extra = (["sender", "via", "images", "step"] as const).filter((k) => entry[k] !== undefined);
+  if (entry.compaction && (from !== "session" || entry.text !== "" || extra.length > 0)) {
+    throw new InputError(`${where}.compaction: a compaction is the session's, with no text and nothing else; got from ${from}, ${entry.text.length} characters of text${extra.length ? `, ${extra.join(", ")}` : ""}`);
+  }
+  return entry;
 }
 
 export function readInboxEntry(value: unknown, where = "inbox entry"): InboxEntry {
@@ -505,7 +516,7 @@ export function readHandoff(value: unknown, where = "handoff"): Handoff {
   return {
     sessionId: id(f.sessionId, `${where}.sessionId`),
     at: isoTime(f.at, `${where}.at`),
-    trigger: oneOf(["manual", "auto"] as const)(f.trigger, `${where}.trigger`),
+    trigger: oneOf(COMPACTION_TRIGGERS)(f.trigger, `${where}.trigger`),
     text: text(f.text, `${where}.text`, HANDOFF_MAX),
   };
 }

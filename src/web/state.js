@@ -158,6 +158,10 @@ export const askingSessions = () => [...new Set(openItems().flatMap((it) => it.q
 export const isNew = (r) => !r.seenAt && (!data.seen || r.at > data.seen.since);
 /** @param {Session} s */
 export const isLive = (s) => s.state !== "ended" && !data.gone.includes(s.id);
+// A compaction cancelled in its terminal tells nothing until the session's next turn: past this, it is over.
+const COMPACTING_SHOWN_MS = 10 * 60_000;
+/** The compaction of its context under way, if any: a session ended or gone compacts nothing. @param {Session} s */
+export const compactingNow = (s) => (s.compacting && isLive(s) && Date.now() - Date.parse(s.compacting.since) < COMPACTING_SHOWN_MS ? s.compacting : null);
 /** Ended with a question open and not looked at since: its question must not vanish unseen. @param {Session} s */
 export const endedUnseen = (s) => s.state === "ended" && s.endedAsking === true && unread(s);
 

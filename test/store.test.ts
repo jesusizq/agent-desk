@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { InputError } from "../src/core/check.ts";
+import { readConversationEntry, readSession } from "../src/core/model.ts";
 import { procInfo } from "../src/core/proc.ts";
 import { StaleReplies, Store } from "../src/store/store.ts";
 import { addSession, PNG, tempHome, testStore } from "./helpers.ts";
@@ -901,6 +902,57 @@ describe("messages", () => {
   });
 });
 
+
+describe("compactions", () => {
+  it("shows one under way on its session from its start, and once done marks the conversation at its end with how it was started", () => {
+    const store = testStore();
+    addSession(store);
+    store.addMessage({ sessionId: "s1", from: "session", text: "Ready to compact." });
+    const started = store.startCompaction("s1", "manual");
+    assert.equal(started.compacting?.trigger, "manual");
+    assert.ok(!Number.isNaN(Date.parse(started.compacting?.since ?? "")));
+    assert.equal(started.state, "working", "its state is its adapter's to say");
+    const mark = store.endCompaction("s1", { compacted: true });
+    assert.deepEqual(mark && { from: mark.from, text: mark.text, compaction: mark.compaction }, { from: "session", text: "", compaction: { trigger: "manual" } });
+    assert.ok((mark?.at ?? "") > (started.compacting?.since ?? ""), "at its end");
+    const s = store.getSession("s1");
+    assert.deepEqual([s?.compacting, s?.messageCount], [undefined, 2], "no longer under way, and counted so a reader fetches the conversation again");
+    assert.deepEqual(store.listMessages("s1").map((m) => m.compaction ?? m.text), ["Ready to compact.", { trigger: "manual" }]);
+  });
+
+  it("ends one the session went on without, leaving nothing in the conversation; and marks one done whose start was not seen", () => {
+    const store = testStore();
+    addSession(store);
+    store.startCompaction("s1", "auto");
+    assert.equal(store.endCompaction("s1", { compacted: false }), undefined);
+    assert.deepEqual([store.getSession("s1")?.compacting, store.listMessages("s1")], [undefined, []]);
+    const before = store.getSession("s1")?.updatedAt;
+    assert.equal(store.endCompaction("s1", { compacted: false }), undefined, "none under way: nothing to end");
+    assert.equal(store.getSession("s1")?.updatedAt, before, "and nothing written");
+    assert.deepEqual(store.endCompaction("s1", { compacted: true })?.compaction, {}, "done, its start unseen: marked without saying how it started");
+  });
+
+  it("refuses a compaction record it cannot show: an unknown trigger, a bad time, a mark with words, an author or images", () => {
+    const store = testStore();
+    addSession(store);
+    const session = store.getSession("s1");
+    for (const bad of [{ trigger: "sometimes", since: "2026-11-27T10:00:00.000Z" }, { trigger: "auto", since: "yesterday" }, { trigger: "auto" }, "auto"]) {
+      assert.throws(() => readSession({ ...session, compacting: bad }), /compacting/, JSON.stringify(bad));
+    }
+    const entry = { id: "m-1", sessionId: "s1", from: "session", text: "", at: "2026-11-27T10:00:00.000Z", compaction: { trigger: "auto" } };
+    assert.deepEqual(readConversationEntry(entry).compaction, { trigger: "auto" });
+    for (const [change, why] of [
+      [{ compaction: { trigger: "later" } }, /compaction\.trigger/],
+      [{ compaction: "auto" }, /compaction/],
+      [{ text: "Compacted!" }, /compaction.*no text/],
+      [{ from: "developer" }, /compaction.*session/],
+      [{ images: ["0123456789abcdef0123456789abcdef"] }, /compaction/],
+      [{ step: true }, /compaction/],
+    ] as const) {
+      assert.throws(() => readConversationEntry({ ...entry, ...change }), why, JSON.stringify(change));
+    }
+  });
+});
 describe("agents and results", () => {
   it("creates an agent working, merges updates and stamps the end once", () => {
     const store = testStore();

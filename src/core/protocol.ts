@@ -70,7 +70,7 @@ export type Session = {
   turnEndedAt?: string;
   /** The session's last message at the end of a turn: shown quietly unless it asks something. */
   lastMessage?: { text: string; at: string };
-  /** How many messages its conversation has received, so a reader sees one added mid-turn. */
+  /** How many entries its conversation has received (messages and compactions), so a reader sees one added mid-turn. */
   messageCount?: number;
   /** When the developer last read this session's conversation on the desk (any device). */
   readAt?: string;
@@ -107,7 +107,17 @@ export type Session = {
    * button as sent and the developer does not send it twice.
    */
   deskSent?: Partial<Record<DeskCommand, { text: string; at: string }>>;
+  /**
+   * A compaction of its context is under way, since `since`: asked for by the developer (`manual`) or
+   * started by its provider (`auto`). Gone once it is done (a `compaction` entry then joins its
+   * conversation) or the session goes on without it (cancelled, failed, ended).
+   */
+  compacting?: { trigger: CompactionTrigger; since: string };
 };
+
+/** How a compaction of a session's context started: asked for by the developer, or by its provider. */
+export const COMPACTION_TRIGGERS = ["manual", "auto"] as const;
+export type CompactionTrigger = (typeof COMPACTION_TRIGGERS)[number];
 
 /** The tmux actions that type a command, marked on their button once the desk sent them. */
 export const DESK_COMMANDS = ["compact", "fresh", "shell"] as const;
@@ -382,6 +392,11 @@ export type ConversationEntry = {
   images?: string[];
   /** For the session's messages: written between its tool calls, not at the end of its turn. */
   step?: boolean;
+  /**
+   * Not a message: the session's context was compacted, done at `at`, with how it started (absent when
+   * its start was not seen). Such an entry is the session's, with an empty text and nothing else.
+   */
+  compaction?: { trigger?: CompactionTrigger };
 };
 
 /** An answer from the desk waiting for its session; `message` when it answers no question the session asked, only carried by `questionId`. */
@@ -499,7 +514,7 @@ export type BranchRow = {
 export type SessionBranches = { sessionId: string; projectId: string; baseBranch?: string; checkedAt: string; rows: BranchRow[]; hidden: number; gone: number };
 
 /** The mechanical half of a session's handoff, recorded by its adapter before its context is compacted. */
-export type Handoff = { sessionId: string; at: string; trigger: "manual" | "auto"; text: string };
+export type Handoff = { sessionId: string; at: string; trigger: CompactionTrigger; text: string };
 
 /**
  * Work left for a new conversation of the project, as its adapter last read it: what it is about

@@ -13,7 +13,7 @@ import { reviewLine, reviewTile } from "./review.js";
 import { imageUrl, post, run } from "./server.js";
 import { baseBranchOf } from "./projects.js";
 import { openSession } from "./session.js";
-import { answeredNow, asksOf, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, openReviews, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
+import { answeredNow, asksOf, compactingNow, data, endedUnseen, inbox, inProject, isLive, isNew, itemKey, itemOf, label, metricsOf, onDesk, openReviews, page, projectColor, S, sessionName, toReview, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -250,7 +250,8 @@ function sessionCard(s, rich) {
   const ctx = m?.contextPercent;
   const working = as.filter((a) => a.state === "working").length;
   const done = as.filter((a) => a.state === "done").length;
-  const since = s.state === "working" ? (s.activityAt ?? s.updatedAt) : (s.lastMessage?.at ?? s.updatedAt);
+  const compacting = compactingNow(s);
+  const since = compacting ? compacting.since : s.state === "working" ? (s.activityAt ?? s.updatedAt) : (s.lastMessage?.at ?? s.updatedAt);
   /** @type {HTMLElement[]} */
   const matters = [];
   if (asking) {
@@ -295,7 +296,7 @@ function sessionCard(s, rich) {
     h(
       "div",
       { class: "s-l1" },
-      asking ? dot("needs") : s.state === "working" || working ? sessionDot(s) : dot("done"),
+      asking ? dot("needs") : compacting || s.state === "working" || working ? sessionDot(s) : dot("done"),
       // The project names the session only while every project is shown; its colour stays.
       h("span", { class: "sname", title: label(s) }, ui.project === null ? [projectMark(s.project.name, "pname sproj"), h("span", { class: "sep" }, "›")] : tagIcon(projectColor(s.project.name)), h("b", {}, sessionName(s))),
       h("span", { class: "s-meta num" }, [ctx !== undefined ? `${Math.round(ctx)}%` : "", ago(since)].filter(Boolean).join(" · ")),
@@ -379,6 +380,8 @@ function workLine(s, m) {
  * @param {Session} s
  */
 function quietLine(s) {
+  const compacting = compactingNow(s);
+  if (compacting) return h("div", { class: "quiet-line num" }, TEXT.compactingFor(ago(compacting.since)));
   if (endedUnseen(s)) return h("div", { class: "quiet-line unread", title: s.lastMessage ? firstLine(s.lastMessage.text) : "" }, h("span", { class: "badge k-new" }, TEXT.endedAsking), s.lastMessage ? firstLine(s.lastMessage.text) : "");
   if (s.state === "waiting" && s.lastMessage && unread(s)) return h("div", { class: "quiet-line unread", title: firstLine(s.lastMessage.text) }, readBadge(s), firstLine(s.lastMessage.text));
   if (s.state === "waiting") return h("div", { class: "quiet-line" }, TEXT.waitingForYou(s.lastMessage ? ago(s.lastMessage.at) : ""));

@@ -11,6 +11,7 @@ import {
   type Agent,
   type Answer,
   type CheckReopened,
+  type CompactionTrigger,
   type InboxEntry,
   type Metrics,
   type MessageAuthor,
@@ -1575,15 +1576,45 @@ export class Store {
    * the session (written after the message, so a reader that sees the count finds the message).
    */
   addMessage(input: { sessionId: string; from: MessageAuthor; sender?: string; text: string; via?: "terminal" | "desk"; images?: string[]; step?: boolean }): ConversationEntry {
+    return this.addEntry(input);
+  }
+
+  /**
+   * The session's context started compacting: it shows as under way until `endCompaction`. A start
+   * seen again replaces the one before.
+   */
+  startCompaction(sessionId: string, trigger: CompactionTrigger): Session {
+    return this.updateSession(sessionId, (s) => ({ ...s, compacting: { trigger, since: this.stamp() } }));
+  }
+
+  /**
+   * The compaction under way is over. Done (`compacted`), it joins the conversation as an entry at this
+   * time with how it started, if that was seen; otherwise (the session went on or ended without it) it
+   * only stops showing, and with none under way and no `change` nothing is written. `change` goes into
+   * the session in the same write, given the record before the compaction is dropped. Returns the entry added.
+   */
+  endCompaction(sessionId: string, { compacted }: { compacted: boolean }, change?: (s: Session) => Session): ConversationEntry | undefined {
+    const started = this.requireSession(sessionId).compacting;
+    const over = (s: Session): Session => {
+      const { compacting: _compacting, ...rest } = change ? change(s) : s;
+      return rest;
+    };
+    if (compacted) return this.addEntry({ sessionId, from: "session", text: "", compaction: compact({ trigger: started?.trigger }) }, over);
+    if (started || change) this.updateSession(sessionId, over);
+    return undefined;
+  }
+
+  /** Adds an entry to the conversation; `change` goes into the session in the same write that counts it. */
+  private addEntry(input: Omit<ConversationEntry, "id" | "at">, change: (s: Session) => Session = (s) => s): ConversationEntry {
     const entry = readConversationEntry(compact({ id: newId("m"), ...input, text: bounded(input.text), at: this.stamp() }));
     this.requireSession(entry.sessionId);
     const file = this.paths.message(entry.sessionId, entry.id);
     writeJson(file, entry);
     try {
-      this.updateSession(entry.sessionId, (s) => ({ ...s, messageCount: (s.messageCount ?? 0) + 1 }));
+      this.updateSession(entry.sessionId, (s) => change({ ...s, messageCount: (s.messageCount ?? 0) + 1 }));
     } catch (error) {
       fs.rmSync(file, { force: true });
-      throw new Error(`could not count a message on session ${entry.sessionId}; the message was not kept`, { cause: error });
+      throw new Error(`could not count a conversation entry on session ${entry.sessionId}; the entry was not kept`, { cause: error });
     }
     const names = listJson(this.paths.messageDir(entry.sessionId));
     for (const old of names.slice(0, Math.max(0, names.length - MESSAGES_KEPT))) fs.rmSync(path.join(this.paths.messageDir(entry.sessionId), old), { force: true });
@@ -1960,8 +1991,10 @@ export class Store {
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
-  private requireSession(sessionId: string): void {
-    if (!this.getSession(sessionId)) throw new InputError(`no session ${sessionId} in the store; it registers when its first hook runs`);
+  private requireSession(sessionId: string): Session {
+    const session = this.getSession(sessionId);
+    if (!session) throw new InputError(`no session ${sessionId} in the store; it registers when its first hook runs`);
+    return session;
   }
 
   /**

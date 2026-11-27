@@ -5,7 +5,7 @@ import { TEXT } from "./text.js";
 import { ago, hm } from "./format.js";
 import { dot } from "./pieces.js";
 import { openProject } from "./projects.js";
-import { S, agentOf, data, waitingOn } from "./state.js";
+import { S, agentOf, compactingNow, data, waitingOn } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Agent} Agent */
@@ -26,9 +26,9 @@ export function agentDot(a, words = false) {
   mark.title = [a.name, onTheMachine(a) ? TEXT.waitsForMachine : TEXT.state[st], words ? spoken(a) : a.activity].filter(Boolean).join(" · ");
   return st === "working" ? h("span", { class: "live" }, mark) : mark;
 }
-/** The session itself at work, before its agents' dots, or waiting on its own job. @param {Session} s */
+/** The session itself at work (compacting its context included), before its agents' dots, or waiting on its own job. @param {Session} s */
 export function sessionDot(s) {
-  if (onItsJob(s)) return dot("waiting");
+  if (!compactingNow(s) && onItsJob(s)) return dot("waiting");
   const mark = dot("working");
   mark.title = TEXT.sessionWorking;
   return h("span", { class: "live" }, mark);
@@ -106,7 +106,7 @@ export const inTrouble = (a) => failedUnseen(a) || a.state === "blocked" || a.st
  * Never while it, or one of its working agents, waits on a job of its own. @param {Session} s
  */
 export function sessionQuiet(s) {
-  if (s.state !== "working" || !s.activityAt || onItsJob(s)) return 0;
+  if (s.state !== "working" || !s.activityAt || onItsJob(s) || compactingNow(s)) return 0;
   const working = sessionAgents(s.id).filter((a) => a.state === "working");
   if (working.some((a) => !a.activityAt || waitingAside(a))) return 0; // an agent that cannot be timed may well be busy
   const last = [s.activityAt, ...working.map((a) => a.activityAt ?? "")].sort().at(-1);

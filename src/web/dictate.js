@@ -401,7 +401,7 @@ export function vocabulary(key, sid, tokens) {
 
 /** The last words said in the box's conversation, at most `budget` tokens of them: the question it answers last. @param {string} key @param {string} sid @param {number} budget */
 function conversationTail(key, sid, budget) {
-  const said = (ui.conversations.get(sid) ?? []).filter((m) => m.from !== "agent").map((m) => m.text);
+  const said = (ui.conversations.get(sid) ?? []).filter((m) => m.from !== "agent" && !m.compaction).map((m) => m.text);
   const q = key.startsWith("answer-") ? data.questions.find((x) => key === `answer-${x.id}`) : undefined;
   if (q && said.at(-1)?.trim() !== q.text.trim()) said.push(q.text);
   /** @type {string[]} */

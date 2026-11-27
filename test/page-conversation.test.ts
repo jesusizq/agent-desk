@@ -182,4 +182,37 @@ describe("page: the session panel's conversation", SKIP, () => {
       await page.waitFor("document.activeElement?.matches('#session .find-bar input')");
     }, longTalk);
   });
+
+  it("shows a compaction under way as work in the session's row and conversation, then a line across the conversation where it ended", async () => {
+    const card = `[...document.querySelectorAll('.scard')].find((c) => c.textContent.includes('compacting its context'))`;
+    await ownDesk(
+      async (page, own) => {
+        await page.waitFor(`${card}?.querySelector('.quiet-line')?.textContent.startsWith('Waiting for you')`);
+        own.startCompaction("compactor", "manual");
+        await page.waitFor(`${card}?.querySelector('.quiet-line')?.textContent === 'Compacting…'`);
+        assert.deepEqual(await page.eval(`(() => { const d = ${card}.querySelector('.s-l1 .live > .dot'); return [d.classList.contains('st-working'), d.title]; })()`), [true, "The session is working"], "its dot at work, named so");
+        await page.click(".scard", "compacting its context");
+        await page.waitFor(`${arrived("session")} && document.querySelector('#session .working-now .msg-meta')?.textContent.trim() === 'Compacting…'`);
+        assert.equal(own.getSession("compactor")?.state, "waiting", "shown at work, its state, and so how the desk delivers to it, unchanged");
+
+        const mark = own.endCompaction("compactor", { compacted: true });
+        await page.waitFor("document.querySelector('#session .cmark') && !document.querySelector('#session .working-now')");
+        assert.deepEqual(
+          await page.eval(`(() => { const m = document.querySelector('#session .cmark'); return [m.textContent, m.getAttribute('role'), m.previousElementSibling?.textContent.includes('Ready for a compaction.')]; })()`),
+          [`Context compacted · ${await page.eval<string>(`new Date(${JSON.stringify(mark?.at)}).toTimeString().slice(0, 5)`)} (manual)`, "note", true],
+          "at its place in time, after what was said before it",
+        );
+        await page.press("Escape");
+
+        // One that never ended (cancelled in its terminal, which tells nothing) stops showing after 10 minutes.
+        own.updateSession("compactor", (s) => ({ ...s, compacting: { trigger: "auto", since: new Date(Date.now() - 11 * 60_000).toISOString() } }));
+        await page.eval("dispatchEvent(new Event('online'))");
+        await page.waitFor(`${card}?.querySelector('.quiet-line')?.textContent.startsWith('Waiting for you')`);
+      },
+      (own) => {
+        own.upsertSession({ id: "compactor", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "compacting its context", state: "waiting" });
+        own.addMessage({ sessionId: "compactor", from: "session", text: "Ready for a compaction." });
+      },
+    );
+  });
 });

@@ -18,7 +18,7 @@ import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
 import { imageUrl, offlineNotice, offlineText, post, run } from "./server.js";
 import { coldResume } from "./suggest.js";
-import { asksOf, data, isLive, isNew, itemsOf, label, metricsOf, midTurn, S, sessionName, ui, unread } from "./state.js";
+import { asksOf, compactingNow, data, isLive, isNew, itemsOf, label, metricsOf, midTurn, S, sessionName, ui, unread } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Session} Session */
 /** @typedef {import("../core/protocol.ts").Result} Result */
@@ -371,7 +371,9 @@ function workingNow(s, list) {
   // A turn's end a check refused before waits while its checks run again: the turn is not over. Only
   // its waiter reads how they end; once none does, the count stays until the next prompt, and says nothing now.
   const checking = !turn && !!s.checkReopened && isLive(s) && data.checking.includes(s.id);
-  if (!turn && !checking && !agents.some((a) => a.state === "working" || a.state === "waiting")) return null;
+  // Compacting, asked for while it waited or by its provider mid-turn, it is at work on that alone.
+  const compacting = compactingNow(s);
+  if (!turn && !checking && !compacting && !agents.some((a) => a.state === "working" || a.state === "waiting")) return null;
   const since = list.findLast((m) => m.from === "developer")?.at;
   return h(
     "div",
@@ -381,10 +383,16 @@ function workingNow(s, list) {
       { class: "msg-meta" },
       h("span", { class: "live" }, dot("working")),
       " ",
-      turn ? TEXT.conversation.workingFor(since ? ago(since) : "") : checking ? TEXT.conversation.checking : TEXT.conversation.agentsAtWork(agents.length),
+      compacting
+        ? TEXT.compactingFor(ago(compacting.since))
+        : turn
+          ? TEXT.conversation.workingFor(since ? ago(since) : "")
+          : checking
+            ? TEXT.conversation.checking
+            : TEXT.conversation.agentsAtWork(agents.length),
       sessionQuiet(s) ? h("span", { class: "astuck" }, ` · ${TEXT.quietFor(sessionQuiet(s))}`) : null,
     ),
-    turn && s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
+    turn && !compacting && s.activity ? h("div", { class: "adoing", title: s.activity }, s.activity) : null,
     (turn || checking) && s.checkReopened ? h("div", { class: "adoing", title: s.checkReopened.reason }, [TEXT.checkReopened(s.checkReopened.times), firstLine(s.checkReopened.reason)].filter(Boolean).join(" · ")) : null,
     agents.length
       ? h(

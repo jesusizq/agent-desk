@@ -216,6 +216,8 @@ export function sentWhileWorking(list, sent) {
 export function conversationView(list, whileWorking = new Set()) {
   /** @param {ConversationEntry} m */
   const message = (m) => {
+    // Not a message: a thin line across the conversation where its context was compacted.
+    if (m.compaction) return h("div", { class: "cmark", role: "note", "data-key": m.id }, h("span", {}, TEXT.conversation.compacted(hm(m.at), m.compaction.trigger)));
     const who = author(m);
     const mark = m.from === "developer" && whileWorking.has(m.id) ? ` · ${TEXT.conversation.whileWorking}` : "";
     return h(

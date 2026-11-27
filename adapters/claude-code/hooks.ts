@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { latestCompactSuggestion, shellSuggestionIn } from "./compact.ts";
 import { bool, compact, fields, type Fields, InputError, list, nonEmpty, optional, text } from "../../src/core/check.ts";
 import { ID_PATTERN, id, newId, slug } from "../../src/core/ids.ts";
-import { type Agent, CHECK_REASON_MAX, type CheckReopened, compactInstructionsLine, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
+import { type Agent, CHECK_REASON_MAX, type CheckReopened, type CompactionTrigger, compactInstructionsLine, FAILURES_KEPT, HANDOFF_MAX, type Review, type SessionProcess, unreadSend } from "../../src/core/model.ts";
 import { fitText, statusLines } from "../../src/core/status.ts";
 import { outerTerminal } from "../../src/core/tmux.ts";
 import { checkedOutBranch, locateProject } from "../../src/project/locate.ts";
@@ -70,7 +70,14 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
   register(input, ctx);
   const sid = input.sessionId;
   const f = input.raw;
+  // A compaction cancelled or failed tells nothing: the session going on or ending without it ends it.
+  if ((input.event === "UserPromptSubmit" || input.event === "Stop" || input.event === "SessionEnd") && !bySubAgent(input)) store.endCompaction(sid, { compacted: false });
   switch (input.event) {
+    case "PreCompact":
+      // A sub-agent compacting its own context: the session is not compacting.
+      if (!bySubAgent(input)) store.startCompaction(sid, compactTrigger(input));
+      return { code: 0 };
+
     case "SessionStart": {
       // A sub-agent compacted its own context: the session's state, suggestion and protocol are not its.
       if (bySubAgent(input)) return { code: 0 };
@@ -78,7 +85,11 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // Started again (resumed, or the plugins reloaded): what its last end left no longer holds, the
       // shell command its last reply asked for included. Once compacted, its suggested instructions too.
       const compacted = optional(f.source, "hook input.source", (v, w) => text(v, w, 100)) === "compact";
-      store.updateSession(sid, ({ endedAt: _endedAt, endedAsking: _endedAsking, shellSuggestion: _shell, compactInstructions, ...s }) => compact({ ...s, state: "waiting" as const, compactInstructions: compacted ? undefined : compactInstructions }));
+      store.endCompaction(sid, { compacted }, ({ endedAt: _endedAt, endedAsking: _endedAsking, shellSuggestion: _shell, compactInstructions, ...s }) => {
+        // An automatic compaction comes mid-turn, and the turn goes on after it; one the developer asked for comes while it waits.
+        const midTurn = compacted && s.state === "working" && s.compacting?.trigger !== "manual";
+        return compact({ ...s, state: midTurn ? ("working" as const) : ("waiting" as const), compactInstructions: compacted ? undefined : compactInstructions });
+      });
       retireContinued(input, ctx, problems);
       recordResumes(input, ctx, problems);
       sweepResumes(input, ctx, problems);
@@ -1896,13 +1907,16 @@ const HANDOFF_GIT_MS = 5_000;
  * given its own instructions keeps them. A failure here prints nothing on stdout and never blocks the
  * compaction (exit code 1, not 2). A sub-agent compacting its own context gets nothing of the session's.
  */
+/** How PreCompact's compaction started: `/compact` (`manual`), or Claude Code's own (`auto`, also any other value). */
+const compactTrigger = (input: Common): CompactionTrigger => (optional(input.raw.trigger, "hook input.trigger", (v, w) => text(v, w, 20)) === "manual" ? "manual" : "auto");
+
 export async function recordHandoff(input: Common, ctx: HookContext): Promise<HookOutput> {
   if (bySubAgent(input)) return { code: 0 };
   const custom = optional(input.raw.custom_instructions, "hook input.custom_instructions", (v, w) => text(v, w, 10_000_000)) ?? "";
   const registered = handleHook(input, ctx);
   const session = ctx.store.getSession(input.sessionId);
   if (!session) throw new Error(`session ${input.sessionId} is not in the store after registering it`);
-  const trigger = optional(input.raw.trigger, "hook input.trigger", (v, w) => text(v, w, 20)) === "manual" ? "manual" : "auto";
+  const trigger = compactTrigger(input);
   const problems: string[] = [];
   // An automatic compaction mid-turn comes before the Stop that would record this turn's suggestion.
   const suggested = custom.trim() !== "" ? "" : (latestCompactSuggestion(readTurnTexts(input, problems)) ?? session.compactInstructions?.text ?? "");
