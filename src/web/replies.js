@@ -127,7 +127,8 @@ export function repliesRow({ disabled, send, insert }) {
   return h("div", { class: "replies", role: "group", "aria-label": TEXT.replies.row }, chips, edit);
 }
 
-/** The editor while it is open: the text as typed, the revision it edits, and why the desk refused it. @type {{ text: string, rev: number, error: string | null, saving: boolean } | null} */
+/** @typedef {{ text: string, rev: number, error: string | null, saving: boolean }} Editor */
+/** The editor while it is open: the text as typed, the revision it edits, and why the desk refused it. @type {Editor | null} */
 let editing = null;
 
 function openEditor() {
@@ -189,7 +190,7 @@ function saveEditor() {
       saved = got.replies;
       savedRev = got.rev;
       unreadable = null;
-      if (editing === ed) dialog("replies-edit").close();
+      if (onScreen(ed)) dialog("replies-edit").close();
     })
     .catch((/** @type {Error} */ e) => {
       const refused = e instanceof DeskError && e.status === 409 ? /** @type {{ stale?: unknown, rev?: unknown }} */ (e.body) : null;
@@ -198,13 +199,18 @@ function saveEditor() {
         ed.rev = /** @type {number} */ (refused.rev);
         loadReplies();
       }
-      if (editing === ed) ed.error = e.message;
+      if (onScreen(ed)) ed.error = e.message;
       else toast(TEXT.replies.notSaved(e.message));
     })
     .finally(() => {
       ed.saving = false;
-      if (editing === ed) drawEditor();
+      if (onScreen(ed)) drawEditor();
       page.render();
     });
 }
-dialog("replies-edit").addEventListener("close", () => (editing = null));
+/** Whether the editor still shows `ed`: its close event comes a task after it closed, so `editing` alone may name one already closed. @param {Editor} ed */
+const onScreen = (ed) => editing === ed && dialog("replies-edit").open;
+// A close event that arrives once the editor was opened again belongs to the editor that closed.
+dialog("replies-edit").addEventListener("close", () => {
+  if (!dialog("replies-edit").open) editing = null;
+});
