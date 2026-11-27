@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, it } from "node:test";
-import { checkExcerpt, deliverWhileWorking, ENVELOPES_REVISED, fromAnother, handleHook, type HookContext, plainSummary, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, stopRounds, turnCheck, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
+import { checkExcerpt, deliverWhileWorking, shownInTerminal, ENVELOPES_REVISED, fromAnother, handleHook, type HookContext, plainSummary, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, stopRounds, turnCheck, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import { slug } from "../src/core/ids.ts";
 import { inToReview, reviewStatus } from "../src/core/model.ts";
@@ -1539,6 +1539,7 @@ describe("answers from the desk", () => {
     assert.equal(out.code, 2);
     assert.match(out.stderr ?? "", /Answer from agent-desk/);
     assert.ok(out.stderr?.endsWith("«Ñandú»\n  exactly this"), "the answer is passed through untouched");
+    assert.equal(out.stdout, undefined, "no systemMessage: a background hook's would reach Claude, not the terminal");
     assert.equal(store.isListening("cc-1"), false);
     assert.equal(store.getSession("cc-1")?.state, "working");
   });
@@ -1595,6 +1596,7 @@ describe("answers from the desk", () => {
     const out = deliverWhileWorking(event("PostToolUse", { tool_name: "Bash" }), store);
     const context = JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
     assert.match(context, /^Message from agent-desk[\s\S]*Verbatim:\nand push it when the tests pass$/);
+    assert.equal(JSON.parse(out.stdout ?? "{}").systemMessage, "agent-desk: and push it when the tests pass", "the terminal shows the developer what reached the session");
     assert.ok(!fs.existsSync(store.paths.inboxMarker), "nothing left: the hook goes quiet");
     assert.deepEqual(deliverWhileWorking(event("PostToolUse", { tool_name: "Bash" }), store), { code: 0 }, "delivered once");
   });
@@ -1612,6 +1614,15 @@ describe("answers from the desk", () => {
     const out = deliverWhileWorking(event("PostToolUse", { tool_name: "Bash" }), store);
     const context = JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
     assert.match(context, /^Answer from agent-desk[\s\S]*\nYour question: Keep the old endpoint\?\nTheir answer, verbatim:\nNo {2}— drop it$/);
+    assert.equal(JSON.parse(out.stdout ?? "{}").systemMessage, 'agent-desk, answer to "Keep the old endpoint?": No  — drop it');
+  });
+
+  it("shows in the terminal each desk entry handed over mid-turn, its text verbatim, its question cut to one short line", () => {
+    const long = `${"Which of the three layouts should the settings page use".repeat(2)}?\nDetails follow.`;
+    assert.equal(shownInTerminal({ questionId: "q-1", question: "", answer: "  ship it\n  now", at: "", message: true }), "agent-desk:   ship it\n  now");
+    assert.equal(shownInTerminal({ questionId: "q-1", question: "", answer: "like this", at: "", images: ["i-1", "i-2"], message: true }), "agent-desk: like this (+2 images)");
+    assert.equal(shownInTerminal({ questionId: "q-1", question: long, answer: "B", at: "", images: ["i-1"] }), `agent-desk, answer to "${long.slice(0, 79)}…": B (+1 image)`);
+    assert.equal(shownInTerminal({ questionId: "q-1", question: "\n  Ship it today?  \nWhy: the fix is ready.", answer: "Yes", at: "" }), 'agent-desk, answer to "Ship it today?": Yes', "its first line with words in it");
   });
 
   it("refuses a reply while the session is not listening, leaving nothing open", () => {
@@ -1927,6 +1938,19 @@ describe("checks at a turn's end (Stop hooks that refuse it)", () => {
       { refusals: [REASON], said: [], finishedAt: at(12) },
       { refusals: [], said: [GAVE_UP], finishedAt: at(23) },
     ]);
+  });
+
+  it("does not read what a desk delivery mid-turn showed the developer as a Stop check's words", () => {
+    const file = transcript([
+      rows.prompt("fix the table", at(10)),
+      { ...base, type: "assistant", message: { role: "assistant", type: "message", content: [{ type: "tool_use", id: "t2", name: "Bash", input: { command: "ls" } }] }, timestamp: at(11) },
+      { ...base, type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "a.ts" }] }, timestamp: at(12) },
+      { ...base, type: "attachment", attachment: { type: "hook_system_message", content: "agent-desk: and push it", hookName: "PostToolUse:Bash", toolUseID: "t2", hookEvent: "PostToolUse" }, timestamp: at(12) },
+      { ...base, type: "attachment", attachment: { type: "hook_additional_context", content: ["Message from agent-desk: …"], hookName: "PostToolUse:Bash", toolUseID: "t2", hookEvent: "PostToolUse" }, timestamp: at(12) },
+      rows.said("Pushed.", at(13)),
+      rows.summary([], at(14)),
+    ]);
+    assert.deepEqual(stopRounds(file), [{ refusals: [], said: [], finishedAt: at(14) }]);
   });
 
   it("maps the rounds to how the checks ended the turn", () => {

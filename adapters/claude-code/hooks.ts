@@ -10,6 +10,7 @@ import { outerTerminal } from "../../src/core/tmux.ts";
 import { checkedOutBranch, locateProject } from "../../src/project/locate.ts";
 import { sessionStatus } from "../../src/project/refresh.ts";
 import { isCode, withLock } from "../../src/store/fsx.ts";
+import type { InboxEntry } from "../../src/core/protocol.ts";
 import type { AgentFields, Store, TurnCheck } from "../../src/store/store.ts";
 import { publishOpenedPages } from "./pages.ts";
 import { inHandoffs, refreshResumes, resumesIdOf, sweepStaleResumes } from "./resumes.ts";
@@ -1869,8 +1870,7 @@ function freeName(store: Store, sessionId: string, base: string): string {
 }
 
 function firstLine(value: string): string {
-  const line = value.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
-  return line.length > 200 ? `${line.slice(0, 199)}…` : line;
+  return bounded(value.split("\n").find((l) => l.trim() !== "")?.trim() ?? "", 200);
 }
 
 /**
@@ -1985,6 +1985,7 @@ export async function waitForAnswer(sessionId: string, store: Store, options: Wa
         // The answers are already taken: they must reach the session even if the state cannot be saved.
         return { code: 2, stderr: `${message}\n\n(agent-desk could not mark the session as working: ${(error as Error).message})` };
       }
+      // No systemMessage: from a background (asyncRewake) hook it reaches Claude, not the developer's terminal.
       return { code: 2, stderr: message };
     }
     return undefined;
@@ -2214,7 +2215,17 @@ export function deliverWhileWorking(input: Common, store: Store): HookOutput {
     // An answer names the question it answers, as at the turn's end: a bare "No" would read as about the work at hand.
     .map((e) => (e.message ? `Message from agent-desk: the developer wrote this to you on the desk page while you worked. Act on it as if they had typed it in the terminal now. Verbatim:\n${e.answer}${attachedText(imageFiles(store, e.images))}` : deliveryText(e, imageFiles(store, e.images))))
     .join("\n\n");
-  return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } }) };
+  // additionalContext is not shown in the terminal; a synchronous hook's systemMessage is, and Claude does not read it.
+  const systemMessage = entries.map(shownInTerminal).join("\n");
+  return { code: 0, stdout: JSON.stringify({ systemMessage, hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } }) };
+}
+
+/** The line the terminal shows the developer for what the desk handed the session: their text verbatim. */
+export function shownInTerminal(entry: InboxEntry): string {
+  const count = entry.images?.length ?? 0;
+  const images = count === 0 ? "" : count === 1 ? " (+1 image)" : ` (+${count} images)`;
+  if (entry.message) return `agent-desk: ${entry.answer}${images}`;
+  return `agent-desk, answer to "${bounded(firstLine(entry.question), 80)}": ${entry.answer}${images}`;
 }
 
 /** The answer goes to Claude exactly as the developer typed it, framed so it is read as their reply. */
