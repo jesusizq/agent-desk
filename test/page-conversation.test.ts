@@ -13,6 +13,10 @@ const frames = (page: Page) => page.eval("new Promise((r) => requestAnimationFra
 /** A waiting session with a conversation long enough to scroll many screens. */
 function longTalk(own: Store): void {
   own.upsertSession({ id: "long-talk", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "long talk", state: "waiting" });
+  // Taller than any screen, with a word three times far apart.
+  const lines = Array.from({ length: 90 }, (_, i) => `Line ${i} of the plan for the panel.`);
+  for (const at of [5, 45, 85]) lines[at] = `Line ${at}: the swipe gestures go here.`;
+  own.addMessage({ sessionId: "long-talk", from: "session", text: lines.join("\n\n") });
   for (let i = 0; i < 40; i++) own.addMessage({ sessionId: "long-talk", from: i % 2 ? "developer" : "session", text: `Round ${i}: the migration of the orders table, its indexes and the backfill of the totals, checked against a copy of production before going on to the next table.` });
   own.addMessage({ sessionId: "long-talk", from: "session", text: "Checking the schema", step: true });
   own.addMessage({ sessionId: "long-talk", from: "session", text: "The trigger on refunds needs a rewrite", step: true });
@@ -158,6 +162,18 @@ describe("page: the session panel's conversation", SKIP, () => {
       await page.waitFor(`${count} === '1 of 1'`);
       assert.match(await page.eval<string>(nowIn), /trigger on refunds/, "a match in folded steps opens their fold");
       assert.ok(await page.eval<boolean>(inSight));
+      await page.eval(clear);
+      await page.type("gestures");
+      await page.waitFor(`${count} === '3 of 3'`); // three times in one message: each is a match
+      assert.match(await page.eval<string>(nowIn), /Line 85:/);
+      const wordInSight = "(() => { const [r] = [...CSS.highlights.get('find-now')]; const box = r.getBoundingClientRect(); const b = document.querySelector('#session .session-body').getBoundingClientRect(); const foot = document.querySelector('#session .chat-footer').getBoundingClientRect().top; return r.toString() === 'gestures' && box.top >= b.top && box.bottom <= foot; })()";
+      assert.ok(await page.eval<boolean>(wordInSight), "the word itself is in sight, not its message's top");
+      await page.press("Enter");
+      await page.waitFor(`${count} === '2 of 3'`);
+      assert.ok(await page.eval<boolean>(wordInSight), "the earlier one in the same message too");
+      await page.press("Enter");
+      await page.waitFor(`${count} === '1 of 3'`);
+      assert.ok(await page.eval<boolean>(wordInSight));
       await page.press("Escape");
       await page.waitFor("!document.querySelector('#session .find-bar')");
       assert.equal(await page.eval<boolean>("document.getElementById('session').open"), true, "Escape closes the search, not the panel");

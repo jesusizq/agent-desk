@@ -16,7 +16,7 @@ const TYPING_MS = 150;
 export const find = {
   open: false,
   query: "",
-  /** @type {string[]} the ids of the messages that match, oldest first */ hits: [],
+  /** @type {{ id: string, n: number }[]} each match: its message and which of its matches, oldest first */ hits: [],
   /** which of them is shown, -1 for none */ at: -1,
 };
 
@@ -46,9 +46,15 @@ function search(sid) {
   if (searched.list === list && searched.q === q) return;
   const was = searched.q === q ? find.hits[find.at] : undefined;
   searched = { list, q };
-  find.hits = q.length < MIN_LETTERS ? [] : (list ?? []).filter((m) => foldedOf(m).includes(q)).map((m) => m.id);
+  /** @type {{ id: string, n: number }[]} */
+  const hits = [];
+  if (q.length >= MIN_LETTERS) for (const m of list ?? []) {
+    const f = foldedOf(m);
+    for (let i = f.indexOf(q), n = 0; i >= 0; i = f.indexOf(q, i + q.length), n++) hits.push({ id: m.id, n });
+  }
+  find.hits = hits;
   // A new message that matches does not move the one being read; a new query starts from the newest.
-  const kept = was ? find.hits.indexOf(was) : -1;
+  const kept = was ? hits.findIndex((x) => x.id === was.id && x.n === was.n) : -1;
   find.at = kept >= 0 ? kept : find.hits.length - 1;
 }
 
@@ -83,7 +89,8 @@ function go(sid, step) {
 
 /** Opens the fold the shown match is in, then brings it to the middle of what the answer box leaves in sight. @param {string} sid */
 function show(sid) {
-  const id = find.hits[find.at];
+  const hit = find.hits[find.at];
+  const id = hit?.id;
   const list = ui.conversations.get(sid) ?? [];
   const g = groupsOf(list).find((x) => x.run.some((m) => m.id === id));
   if (g && g.kind !== "message" && !ui.stepsOpen.has(g.key)) ui.stepsOpen.add(g.key);
@@ -97,10 +104,13 @@ function show(sid) {
   const box = b.getBoundingClientRect();
   const foot = b.querySelector(".chat-footer")?.getBoundingClientRect().top ?? box.bottom;
   const top = Math.max(box.top, b.querySelector(".pchips")?.getBoundingClientRect().bottom ?? box.top);
-  const r = el.getBoundingClientRect();
+  // The match itself, not its message, which may be taller than the room: the words drawn, else the message.
+  const md = el.querySelector(".md");
+  const ranges = md && hit ? rangesOf(md, fold(find.query.trim())) : [];
+  const word = ranges[Math.min(hit?.n ?? 0, ranges.length - 1)];
+  const r = (word ?? el).getBoundingClientRect();
   const room = Math.max(0, foot - top);
-  // A message taller than the room shows from its top, where the reading starts.
-  b.scrollTop += r.height > room ? r.top - top - 8 : r.top + r.height / 2 - (top + room / 2);
+  b.scrollTop += r.top + r.height / 2 - (top + room / 2);
   // A match already in place moves nothing, and no scroll event says where the conversation rests.
   ui.panelStick = fromEnd(b) < NEAR_END;
 }
@@ -113,12 +123,16 @@ export function paintFind() {
   if (!find.open || q.length < MIN_LETTERS || !b || !find.hits.length) return void (CSS.highlights.delete("find"), CSS.highlights.delete("find-now"));
   const all = new Highlight();
   const now = new Highlight();
-  const hits = new Set(find.hits);
+  const hits = new Set(find.hits.map((x) => x.id));
   const current = find.hits[find.at];
   for (const msg of b.querySelectorAll(".msg[data-key]")) {
     const id = msg.getAttribute("data-key") ?? "";
     const md = hits.has(id) ? msg.querySelector(".md") : null;
-    if (md) for (const r of rangesOf(md, q)) (id === current ? now : all).add(r);
+    if (!md) continue;
+    const ranges = rangesOf(md, q);
+    // The text searched and the words drawn may count differently (Markdown): the last drawn stands in.
+    const shown = current?.id === id ? Math.min(current.n, ranges.length - 1) : -1;
+    ranges.forEach((r, i) => (i === shown ? now : all).add(r));
   }
   CSS.highlights.set("find", all);
   CSS.highlights.set("find-now", now);
