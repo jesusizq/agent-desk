@@ -44,7 +44,7 @@ function historyEntries() {
   /** @type {Omit<Entry, "where" | "hay">[]} */
   const results = data.results.map((r) => ({ at: r.at, sid: r.sessionId, type: "result", kind: r.status === "failed" ? "failed" : "result", title: r.title, note: r.summary, result: r }));
   // A review closed, sent or not: when, by which session if one closed it, and why; and a round
-  // answered in the session's terminal, which left To review then.
+  // answered in the session's terminal after it was opened on the desk, which left To review then.
   /** @type {Omit<Entry, "where" | "hay">[]} */
   const closed = data.reviews.flatMap((r) => {
     /** @type {Omit<Entry, "where" | "hay">[]} */

@@ -570,11 +570,12 @@ export type Review = {
   sends: ReviewSend[];
   /** Last read through `agent-desk review <id>`. */
   collected?: { at: string; sessionId: string; round: number };
-  /** First opened on the desk ("New" until then). */
+  /** When its latest round was first opened on the desk ("New" until then); a next round resets what counts. */
   openedAt?: string;
   /**
-   * The developer wrote to the session in its terminal while it waited on this round, not sent: taken
-   * as their answer (probable), so the round leaves To review; a next round brings the review back.
+   * The developer wrote to the session in its terminal while it waited on this round, after opening it
+   * on the desk, and did not send it: taken as their answer (probable), so the round leaves To review;
+   * a next round brings the review back. Written only once that round was opened (`openedAt`).
    */
   answered?: { at: string; round: number };
   /** Left To review; it stays in History. */

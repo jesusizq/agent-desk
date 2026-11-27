@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { renderOptionsPage } from "../src/cli/review-options.ts";
 import { inlinePage } from "../src/cli/review-page.ts";
 import { InputError } from "../src/core/check.ts";
-import { inToReview, parseProgress, REVIEW_ROUNDS_KEPT, REVIEW_STATE_MAX, reviewLine, reviewStatus } from "../src/core/model.ts";
+import { inToReview, parseProgress, readReview, REVIEW_ROUNDS_KEPT, REVIEW_STATE_MAX, reviewLine, reviewStatus } from "../src/core/model.ts";
 import { OPTIONS_KEY, optionsText, readOptionMarks } from "../src/core/options.ts";
 import { reviewCsp } from "../src/server/security.ts";
 import { reviewDocument } from "../src/server/server.ts";
@@ -43,9 +43,12 @@ describe("reviews in the store", () => {
     assert.notEqual(store.publishReview({ sessionId: "s2", title: "Proposals", html: PAGE }).id, id, "nor one of another project");
   });
 
-  it("takes what is typed to the waiting session as its latest round's answer, until a next round or a send", () => {
+  it("takes what is typed to the waiting session as its latest round's answer once it was opened, until a next round or a send", () => {
     const { store, id } = withReview();
     store.upsertSession({ id: "s2", provider: "Test", project: { name: "shop", dir: "/work/shop" } });
+    assert.deepEqual(store.answerReviewsInTerminal("s1"), [], "a round never opened on the desk was never seen: nothing typed answers it");
+    assert.equal(inToReview(store.getReview(id) ?? assert.fail()), true);
+    store.markReviewOpened(id);
     assert.deepEqual(store.answerReviewsInTerminal("s2"), [], "another session's prompt answers nothing of it");
     const [answered] = store.answerReviewsInTerminal("s1");
     assert.equal(answered?.answered?.round, 1);
@@ -57,16 +60,72 @@ describe("reviews in the store", () => {
     const next = store.publishReview({ sessionId: "s1", title: "Proposals", html: PAGE });
     assert.equal(next.id, id, "its next round continues it");
     assert.equal(inToReview(next), true, "and is in To review again");
+    assert.deepEqual(store.answerReviewsInTerminal("s1"), [], "until its new round is opened too");
     assert.deepEqual(store.reviewState(id).data, { "card-1": "yes" });
+    store.markReviewOpened(id);
     store.sendReview(id, "other", store.reviewState(id).rev);
     assert.deepEqual(store.answerReviewsInTerminal("s1"), [], "a round sent from the desk is answered there");
     store.publishReview({ sessionId: "s1", title: "Proposals", html: PAGE });
-    store.answerReviewsInTerminal("s1");
+    store.markReviewOpened(id);
+    assert.equal(store.answerReviewsInTerminal("s1").length, 1);
     store.sendReview(id, "other", store.reviewState(id).rev);
     assert.equal(inToReview(store.getReview(id) ?? assert.fail()), true, "sent from the desk after its terminal answer, it is back");
     store.closeReview(id);
-    store.publishReview({ sessionId: "s1", title: "Other", html: PAGE });
+    store.markReviewOpened(store.publishReview({ sessionId: "s1", title: "Other", html: PAGE }).id);
     assert.deepEqual(store.answerReviewsInTerminal("s1").map((r) => r.title), ["Other"], "a closed review is left as it is");
+  });
+
+  it("keeps in To review a round an older store marked answered in the terminal without its being opened", () => {
+    const { store, id } = withReview();
+    // What the desk wrote before a round had to be opened to be answered.
+    const mark = (review: object) => {
+      const file = store.paths.review(id);
+      fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...review }));
+      return store.getReview(id) ?? assert.fail();
+    };
+    const round = store.getReview(id)?.rounds.at(-1) ?? assert.fail();
+    const later = (ms: number) => new Date(Date.parse(round.at) + ms).toISOString();
+    for (const [how, review] of [
+      ["never opened", { answered: { at: later(1000), round: 1 } }],
+      ["opened only after the prompt", { answered: { at: later(1000), round: 1 }, openedAt: later(2000) }],
+      ["opened before this round was published", { answered: { at: later(1000), round: 1 }, openedAt: later(-1000) }],
+    ] as const) {
+      const marked = mark(review);
+      assert.equal(marked.answered, undefined, `${how}: read as no mark`);
+      assert.equal(inToReview(marked), true, how);
+      assert.equal(reviewStatus(marked), "open", how);
+    }
+    assert.equal(inToReview(mark({ openedAt: later(500) })), false, "opened before the prompt, it was answered");
+  });
+
+  it("drops an older store's untrusted mark where reviews are read, and from the file at the review's next write", () => {
+    const { store, id } = withReview();
+    const file = store.paths.review(id);
+    const round = store.getReview(id)?.rounds.at(-1) ?? assert.fail();
+    const mark = { at: new Date(Date.parse(round.at) + 1000).toISOString(), round: 1 };
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), answered: mark }));
+    assert.equal(store.getReview(id)?.answered, undefined, "get");
+    assert.equal(store.listReviews().find((r) => r.id === id)?.answered, undefined, "list");
+    assert.deepEqual(readReview(JSON.parse(fs.readFileSync(file, "utf8")), file).answered, undefined, "read from the file");
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).answered, mark, "reading writes nothing");
+    store.markReviewOpened(id);
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).answered, undefined, "gone at the next write");
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), answered: { ...mark, at: new Date(Date.now() + 1000).toISOString() } }));
+    assert.equal(store.getReview(id)?.answered?.round, 1, "a mark taken after the opening is kept");
+  });
+
+  it("takes a prompt as the answer of a round an older store marked without its being opened, once it is opened", () => {
+    const { store, id } = withReview();
+    const file = store.paths.review(id);
+    const round = store.getReview(id)?.rounds.at(-1) ?? assert.fail();
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), answered: { at: new Date(Date.parse(round.at) + 500).toISOString(), round: 1 } }));
+    store.markReviewOpened(id);
+    assert.equal(inToReview(store.getReview(id) ?? assert.fail()), true, "the old mark answers nothing");
+    const [answered] = store.answerReviewsInTerminal("s1");
+    assert.equal(answered?.answered?.round, 1);
+    assert.equal(inToReview(answered ?? assert.fail()), false, "the prompt after opening it answers it");
+    assert.equal(reviewStatus(answered), "answered in the terminal");
+    assert.deepEqual(store.answerReviewsInTerminal("s1"), [], "once");
   });
 
   it("closes a review once, keeping why and by whom, and refuses a reason that is not one line", () => {

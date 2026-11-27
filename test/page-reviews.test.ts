@@ -1,8 +1,10 @@
 // The page in a real headless Chrome, over the demo store: reviews.
+import * as fs from "node:fs";
 import * as http from "node:http";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, it } from "node:test";
+import { handleHook, readHookInput } from "../adapters/claude-code/hooks.ts";
 import { Store } from "../src/store/store.ts";
 import { arrived, base, browser, cardOf, elsewhere, fetchNow, open, pages, setupPage, SKIP, STILL, store } from "./page-harness.ts";
 import { renderOptionsPage } from "../src/cli/review-options.ts";
@@ -444,6 +446,40 @@ if (!localStorage.getItem("left")) { localStorage.setItem("left", "1"); setTimeo
       assert.deepEqual(store.reviewState(r.id).data, { answers: '{"2":"yes"}' });
       await page.waitFor("document.querySelector('.rv-saved').textContent.startsWith('Saved')");
       store.closeReview(r.id);
+    });
+
+    it("keeps a review never opened in To review whatever is typed to its session, and takes the prompt after opening it as its answer", async () => {
+      const dir = "/home/demo/Projects/web-shop";
+      const live = { store, env: { TERM_PROGRAM: "vscode", CLAUDE_PROJECT_DIR: dir }, sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
+      const hook = (hook_event_name: string, extra: Record<string, unknown>) =>
+        handleHook(readHookInput(JSON.stringify({ session_id: "rv-terminal", cwd: dir, hook_event_name, permission_mode: "auto", ...extra })), live);
+      hook("UserPromptSubmit", { prompt: "make an autocorrect test page" });
+      const r = store.publishReview({ sessionId: "rv-terminal", title: "Autocorrect test", html: reviewHtml(3) });
+      hook("Stop", { last_assistant_message: "It is in To review." });
+      hook("UserPromptSubmit", { prompt: "now look at the build warnings" });
+      // A round an older desk marked answered in the terminal without its being opened shows again.
+      const old = publish("rv-terminal-old", "Old autocorrect test");
+      const file = store.paths.review(old.id);
+      fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), answered: { at: new Date().toISOString(), round: 1 } }));
+      const page = await open();
+      await page.waitFor(`${tile("Autocorrect test")} && ${tile("Old autocorrect test")}`);
+      assert.equal(store.getReview(r.id)?.answered, undefined);
+      // Seen on the desk, the review is what the next prompt answers.
+      await openReview("Autocorrect test", page);
+      await page.click(".rv-back");
+      // The page records the opening without waiting for it: the prompt comes after the store has it.
+      for (const end = Date.now() + 5000; store.getReview(r.id)?.openedAt === undefined && Date.now() < end; ) await new Promise((done) => setTimeout(done, 50));
+      assert.ok(store.getReview(r.id)?.openedAt, "the opening reached the store");
+      hook("Stop", { last_assistant_message: "Done." });
+      hook("UserPromptSubmit", { prompt: "keep 1 and 3" });
+      await page.waitFor(`!${tile("Autocorrect test")} && ${tile("Old autocorrect test")}`);
+      assert.equal(store.getReview(r.id)?.answered?.round, 1);
+      await page.click("#views button", "History");
+      const answered = (title: string) => `[...document.querySelectorAll('.hitem')].some((h) => h.textContent.includes(${JSON.stringify(title)}) && h.textContent.includes('Round 1 answered in the terminal'))`;
+      await page.waitFor(answered("Autocorrect test"));
+      assert.equal(await page.eval<boolean>(answered("Old autocorrect test")), false, "a mark on a round never opened answers nothing");
+      store.closeReview(r.id);
+      store.closeReview(old.id);
     });
 
     it("closes a review from its tile without opening it, only on a second click, and shows it closed in History", async () => {

@@ -53,6 +53,7 @@ import {
   REVIEW_ROUNDS_KEPT,
   REVIEW_STATE_MAX,
   REVIEW_SUMMARY_MAX,
+  latestRoundOpened,
   reviewKey,
   reviewLine,
   reviewNote,
@@ -1421,13 +1422,14 @@ export class Store {
 
   /**
    * The developer wrote to `sessionId` in its terminal while it waited: each open review whose latest
-   * round that session published, and that was not sent since, takes it as that round's answer.
+   * round that session published, that the developer opened on the desk and that was not sent since,
+   * takes it as that round's answer. A round never opened was never seen: nothing typed answers it.
    */
   answerReviewsInTerminal(sessionId: string, problems?: string[]): Review[] {
     const at = this.stamp();
     const waiting = (r: Review) => {
       const latest = r.rounds.at(-1);
-      return !r.closedAt && latest?.sessionId === sessionId && latest.at <= at && r.answered?.round !== latest.n && !r.sends.some((x) => x.at >= latest.at) ? latest : undefined;
+      return !r.closedAt && latest?.sessionId === sessionId && latest.at <= at && latestRoundOpened(r, at) && r.answered?.round !== latest.n && !r.sends.some((x) => x.at >= latest.at) ? latest : undefined;
     };
     return this.listReviews(problems)
       .filter((r) => waiting(r))

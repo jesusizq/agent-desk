@@ -520,12 +520,20 @@ review, never in Needs you; nothing sounds or is pushed.
   300 characters at most, no control characters). Closing a closed review changes nothing and says
   so; reading a review never closes it. Its title published again starts a new review.
 - **Answered in the terminal.** A prompt the developer types to a waiting session (not a slash
-  command) is taken as the answer to each open review whose latest round that session published and
-  that was not sent since (`Store.answerReviewsInTerminal`, from Claude Code's `UserPromptSubmit`):
-  probable, as for a question. The round is recorded (`answered`); it leaves To review and `agent-desk
-  status`, `agent-desk reviews` shows it as `answered in the terminal`, and History as that round
-  answered. It is not closed: its next round continues it, with its saved state, and is in To review
-  again. Sent from the desk afterwards, it is in To review again unless that send closed it.
+  command) is taken as the answer to each open review whose latest round that session published, that
+  the developer opened on the desk before the prompt (`openedAt` at or after that round) and that was
+  not sent since (`Store.answerReviewsInTerminal`, from Claude Code's `UserPromptSubmit`): probable,
+  as for a question. A round never opened was never seen, so nothing typed answers it: it stays in To
+  review until it is sent or closed. The round is recorded (`answered`); it leaves To review and
+  `agent-desk status`, `agent-desk reviews` shows it as `answered in the terminal`, and History as
+  that round answered. It is not closed: its next round continues it, with its saved state, and is in
+  To review again. Sent from the desk afterwards, it is in To review again unless that send closed
+  it. An `answered` on a round not opened before it is read as none (`readReview`, through
+  `answerAfterOpening`), so it counts for none of this, leaves the file at the review's next write, and
+  the first prompt after the round is opened writes a new one. Only stores written before opening was
+  required hold one, and one exception is kept on purpose: such a mark on round N, once round N+1 was opened,
+  can no longer be told apart (`openedAt` is that round's) and is trusted, so History keeps earlier
+  rounds' real answers. The desk never writes a mark like that now.
 - **Inlining** reads the page in one pass, linear in its size: a comment, tag, quote, `<script>` or
   `<style>` never closed leaves the rest of the page as it is, and past 25 MB with its images the
   publish stops with an error.

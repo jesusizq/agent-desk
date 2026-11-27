@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { checkExcerpt, deliverWhileWorking, ENVELOPES_REVISED, fromAnother, handleHook, type HookContext, plainSummary, waitForDialog, readablePrompt, readHookInput, splitLastParagraph, splitQuestion, stopRounds, turnCheck, turnTexts, waitForAnswer, waitForPermission } from "../adapters/claude-code/hooks.ts";
 import { metricsFromStatusLine, sessionNameFromStatusLine } from "../adapters/claude-code/statusline.ts";
 import { slug } from "../src/core/ids.ts";
+import { inToReview, reviewStatus } from "../src/core/model.ts";
 import type { Store } from "../src/store/store.ts";
 import { PNG, tempHome, testStore } from "./helpers.ts";
 
@@ -128,11 +129,12 @@ describe("Claude Code hooks", () => {
     assert.throws(() => store.unanswered("cc-1", decisions[0]?.id), /holds the answers of review/);
   });
 
-  it("takes a prompt typed to the session waiting on its review as the round's answer, not a slash command or one typed mid-turn", () => {
+  it("takes a prompt typed to the session waiting on its review as the round's answer once it was opened, not a slash command or one typed mid-turn", () => {
     const store = testStore();
     const live = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
     handleHook(event("UserPromptSubmit", { prompt: "make the proposals page" }), live);
     const review = store.publishReview({ sessionId: "cc-1", title: "Proposals", html: "<html></html>" });
+    store.markReviewOpened(review.id);
     handleHook(event("UserPromptSubmit", { prompt: "and the footer too" }), live);
     assert.equal(store.getReview(review.id)?.answered, undefined, "typed while the session works");
     handleHook(event("Stop", { last_assistant_message: "It is in To review." }), live);
@@ -141,6 +143,21 @@ describe("Claude Code hooks", () => {
     handleHook(event("Stop", { last_assistant_message: "Compacted." }), live);
     handleHook(event("UserPromptSubmit", { prompt: "2, 3 and 4 no; iterate from here" }), live);
     assert.equal(store.getReview(review.id)?.answered?.round, 1);
+    assert.equal(inToReview(store.getReview(review.id) ?? assert.fail()), false, "it leaves To review");
+  });
+
+  it("leaves in To review a review never opened, whatever is typed to the session waiting on it", () => {
+    const store = testStore();
+    const live = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
+    handleHook(event("UserPromptSubmit", { prompt: "make the autocorrect test page" }), live);
+    const review = store.publishReview({ sessionId: "cc-1", title: "Autocorrect test", html: "<html></html>" });
+    handleHook(event("Stop", { last_assistant_message: "It is in To review." }), live);
+    // Typed 32 s after the page was published, about something else, before the developer saw it.
+    handleHook(event("UserPromptSubmit", { prompt: "now look at the build warnings" }), live);
+    const now = store.getReview(review.id) ?? assert.fail();
+    assert.equal(now.answered, undefined);
+    assert.equal(reviewStatus(now), "open");
+    assert.deepEqual(store.listReviews().filter(inToReview).map((r) => r.id), [review.id]);
   });
 
   it("inside tmux, events that do not look up the pane keep the terminal found with it", () => {

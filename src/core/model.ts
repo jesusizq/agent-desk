@@ -624,7 +624,7 @@ export function readReview(value: unknown, where = "review"): Review {
   const project = fields(f.project, `${where}.project`);
   const rounds = list(f.rounds, `${where}.rounds`, readReviewRound, 10_000);
   if (rounds.length === 0) throw new InputError(`${where}.rounds: a review has at least one round`);
-  return compact({
+  const review: Review = compact({
     id: id(f.id, `${where}.id`),
     title: reviewTitle(f.title, `${where}.title`),
     project: { name: label(project.name, `${where}.project.name`), dir: nonEmpty(project.dir, `${where}.project.dir`, 4096) },
@@ -642,6 +642,10 @@ export function readReview(value: unknown, where = "review"): Review {
     closedReason: optional(f.closedReason, `${where}.closedReason`, reviewReason),
     closedBy: optional(f.closedBy, `${where}.closedBy`, id),
   });
+  // A mark written before opening was required answers nothing: read as none, it is gone at the review's next write.
+  if (review.answered === undefined || answerAfterOpening(review)) return review;
+  const { answered: _answered, ...unanswered } = review;
+  return unanswered;
 }
 
 function readAnswered(value: unknown, where: string): { at: string; round: number } {
@@ -734,7 +738,25 @@ export function reviewLine(review: Pick<Review, "id" | "title">, round: number, 
 
 export const REVIEW_STATUSES = ["open", "sent, not read", "read", "answered in the terminal", "closed"] as const;
 
-/** Its latest round was answered in the session's terminal (`Review.answered`) and not sent from the desk since. */
+/** Its latest round was opened on the desk by `at` (`openedAt` is set at the first opening of each round). */
+export function latestRoundOpened(review: Review, at: string): boolean {
+  const latest = review.rounds.at(-1);
+  return latest !== undefined && review.openedAt !== undefined && review.openedAt >= latest.at && review.openedAt <= at;
+}
+
+/**
+ * `answered` was taken after the developer opened that round on the desk: a mark on a round never
+ * opened (written before that was required) answers nothing. Once a later round was opened,
+ * `openedAt` is that round's and the mark is trusted.
+ */
+function answerAfterOpening(review: Review): boolean {
+  const answered = review.answered;
+  if (answered === undefined || review.openedAt === undefined) return false;
+  if (review.openedAt < (review.rounds.find((r) => r.n === answered.round)?.at ?? "")) return false;
+  return review.openedAt <= answered.at || answered.round !== review.rounds.at(-1)?.n;
+}
+
+/** Its latest round, opened on the desk, was answered in the session's terminal (`Review.answered`) and not sent from the desk since. */
 export function answeredInTerminal(review: Review): boolean {
   const answered = review.answered;
   return answered !== undefined && answered.round === review.rounds.at(-1)?.n && !review.sends.some((x) => x.at > answered.at);
