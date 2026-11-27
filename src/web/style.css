@@ -356,6 +356,9 @@ dialog.zoom { width: 100vw; height: 100vh; max-width: none; max-height: none; bo
 mark { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 2px; }
 h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 
+.boot-failed { position: fixed; inset: 50% 16px auto; transform: translateY(-50%); z-index: 20; max-width: 30rem; margin: 0 auto; padding: 18px 20px; display: grid; gap: 12px; justify-items: start;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); }
+.boot-failed p { margin: 0; }
 #toasts { position: fixed; inset: auto auto 26px 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 10; pointer-events: none;
   margin: 0; padding: 0; border: 0; background: none; overflow: visible; }
 #toasts:not(:popover-open) { display: none; }

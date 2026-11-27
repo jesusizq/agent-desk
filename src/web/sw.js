@@ -47,8 +47,48 @@ sw.addEventListener("fetch", (e) => {
   if (e.request.method === "POST" && saving) return e.respondWith(saveReview(e.request, saving));
   if (e.request.method !== "GET") return;
   if (review) return e.respondWith(networkOrSaved(e, url.pathname, () => reviewOffline(review)));
+  if (url.pathname === "/" && e.request.mode === "navigate") return e.respondWith(deskPage(e));
   if (KEPT.test(url.pathname)) e.respondWith(networkOrSaved(e, url.pathname));
 });
+
+/** Why the desk cannot be shown, on a page of the worker's own: the browser's error page says nothing of what to check. */
+const UNREACHABLE = {
+  offline: ["Can't reach the computer", "Check that Tailscale is connected on this device and that the computer is on."],
+  asleep: ["The computer does not answer", "It may be asleep, or its Tailscale off. Waiting for it."],
+  down: ["The desk is not running", "The computer answers, the desk on it does not: start it there."],
+};
+/** The page, or the saved desk, or why neither can be shown; no saved copy means none to show meanwhile. @param {FetchEvent} e */
+async function deskPage(e) {
+  const stop = new AbortController();
+  const answer = networkOrSaved(e, "/", savedCopy, stop.signal);
+  answer.catch(() => {}); // answered by the page below meanwhile: a later failure has nobody waiting
+  try {
+    // A little past the wait for the network, so a saved copy answers first when there is one.
+    const res = await Promise.race([answer, new Promise((/** @type {(v: null) => void} */ done) => setTimeout(() => done(null), NO_ANSWER_MS + 500))]);
+    if (!res) {
+      stop.abort();
+      return unreachable("asleep");
+    }
+    return DESK_DOWN.has(res.status) ? unreachable("down") : res;
+  } catch {
+    return unreachable("offline");
+  }
+}
+/** Fixed text, no session's: it tries again on its own every 10 s, and on a tap. @param {keyof typeof UNREACHABLE} why */
+function unreachable(why) {
+  const [title, text] = UNREACHABLE[why];
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><meta http-equiv="refresh" content="10"><title>Agent Desk: ${title}</title><style>
+body { margin: 0; min-height: 100dvh; display: grid; place-items: center; font: 16px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }
+main { max-width: 26rem; padding: 24px; display: grid; gap: 12px; }
+h1 { font-size: 1.25rem; margin: 0; }
+p { margin: 0; opacity: .8; }
+a { justify-self: start; padding: 10px 16px; border-radius: 8px; border: 1px solid; color: inherit; text-decoration: none; }
+</style></head><body><main data-unreachable="${why}"><h1>${title}</h1><p>${text}</p><p>This device has no saved copy of the desk to show meanwhile.</p><a href="/">Try again</a></main></body></html>`;
+  return new Response(html, {
+    status: 503,
+    headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  });
+}
 
 async function dropOtherCaches() {
   for (const name of await caches.keys()) if (name !== CACHE) await caches.delete(name);
@@ -57,12 +97,14 @@ async function dropOtherCaches() {
 /**
  * @param {FetchEvent} e @param {string} key
  * @param {(key: string) => Promise<Response | undefined>} [saved] what answers when the network does not: the copy kept for `key`, or one built
+ * @param {AbortSignal} [stop] the caller gave up on the answer
  */
-async function networkOrSaved(e, key, saved = savedCopy) {
+async function networkOrSaved(e, key, saved = savedCopy, stop) {
   const { request } = e;
   // Given up on, a hung request is ended: the browser would hold later ones to the same address behind it.
   const giveUp = new AbortController();
   request.signal.addEventListener("abort", () => giveUp.abort());
+  stop?.addEventListener("abort", () => giveUp.abort());
   const network = fetch(request, { signal: giveUp.signal }).then(async (res) => {
     // The PIN page is not the desk, and says this device's unlock ended: what it kept goes too.
     // A failed delete is logged, not thrown: thrown, it would have the saved copy answer instead of the PIN page.

@@ -25,6 +25,7 @@ import { type Access, deskOrigin, IMAGE_HEADERS, originAllowed, reachOf, remoteF
 const WEB_DIR = path.join(import.meta.dirname, "..", "web");
 const STATIC: Record<string, string> = {
   "/app.js": "text/javascript; charset=utf-8",
+  "/boot.js": "text/javascript; charset=utf-8",
   "/agents.js": "text/javascript; charset=utf-8",
   "/alerts.js": "text/javascript; charset=utf-8",
   "/answer.js": "text/javascript; charset=utf-8",

@@ -251,6 +251,7 @@ if ("serviceWorker" in navigator) {
 }
 renderDisplay();
 render();
+dispatchEvent(new Event("agent-desk:started")); // boot.js: the modules loaded and ran
 await refresh();
 route();
 follow();

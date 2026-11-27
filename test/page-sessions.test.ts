@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { PNG, serve, tempHome } from "./helpers.ts";
 import { Store } from "../src/store/store.ts";
-import { arrived, base, browser, cardOf, elsewhere, fetchNow, open, pages, setupPage, SKIP, STILL, store } from "./page-harness.ts";
+import { arrived, base, browser, cardOf, DRAWN, elsewhere, fetchNow, open, pages, setupPage, SKIP, STILL, store } from "./page-harness.ts";
 import { type Page } from "./browser.ts";
 
 describe("page: sessions, the unlock, the connection and the event stream", SKIP, () => {
@@ -638,6 +638,27 @@ describe("page: sessions, the unlock, the connection and the event stream", SKIP
     await page.waitFor(`document.querySelector('#session').textContent.includes('Redraw the panel')`);
     assert.equal(await page.eval<number>(`${box}.scrollTop`), top, "a redraw keeps the draft's scroll");
     assert.equal(await page.eval<boolean>(`document.activeElement === ${box}`), true);
+  });
+
+  it("says why the page did not start when one of its files does not load, instead of staying blank", async () => {
+    const page = await browser.newPage(390, 844);
+    try {
+      // The desk started before a file was added: the page asks for a module the desk does not serve.
+      await page.send("Network.enable");
+      await page.send("Network.setBypassServiceWorker", { bypass: true });
+      await page.send("Network.setBlockedURLs", { urls: ["*/follow.js"] });
+      await page.goto(base + "/");
+      await page.waitFor("document.querySelector('#boot-failed')?.textContent.includes('could not load all its files')");
+      assert.ok(await page.eval<boolean>("!!document.querySelector('#boot-failed button')"), "with a way to reload");
+      assert.equal(await page.eval<number>("document.querySelectorAll('.scard').length"), 0, "the desk did not start");
+      page.errors.length = 0; // the blocked file is this test's doing
+      await page.send("Network.setBlockedURLs", { urls: [] });
+      await page.goto(base + "/");
+      await page.waitFor(DRAWN);
+      assert.equal(await page.eval<boolean>("!!document.querySelector('#boot-failed')"), false, "started, the page says nothing of it");
+    } finally {
+      await page.close();
+    }
   });
 
 });

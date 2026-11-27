@@ -213,6 +213,23 @@ describe("service worker", { skip: chrome ? false : "no Chrome found (set AGENT_
     assert.equal(await load(), "desk", "no answer at all shows the saved desk once the wait ends");
   });
 
+  it("with nothing saved, says why the desk cannot be shown instead of the browser's error page, and the desk once it answers", async () => {
+    unlockEnds = undefined;
+    const { page, load, fetched } = await openDesk();
+    await page.eval("caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))))");
+    const shown = () => page.eval<[string, string]>("[document.querySelector('main')?.dataset.unreachable ?? '', document.querySelector('meta[http-equiv=refresh]')?.content ?? '']");
+    mode = "dropped";
+    assert.equal(await load(), "Agent Desk: Can't reach the computer");
+    assert.deepEqual(await shown(), ["offline", "10"], "it tries again on its own");
+    assert.equal(await fetched("/"), "failed", "only the page's own load gets it, not a request of the page");
+    mode = "gateway";
+    assert.equal(await load(), "Agent Desk: The desk is not running");
+    mode = "hung";
+    assert.equal(await load(), "Agent Desk: The computer does not answer", "once the wait ends");
+    mode = "up";
+    assert.equal(await load(), "desk");
+  });
+
   it("passes on an answer that began within its wait however long it takes to arrive, and keeps it once whole", async () => {
     unlockEnds = undefined;
     const { fetched } = await openDesk();
