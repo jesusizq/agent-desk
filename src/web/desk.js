@@ -427,8 +427,9 @@ export function board() {
     reviewColumn(),
   );
 }
-// The board's shape and its cards follow the window: crossing into one column, or out of it, redraws them.
-ONE_COLUMN.addEventListener("change", () => page.renderView({ instant: true }));
+// The board's shape and its cards follow the window: crossing into one column, or out of it, redraws them,
+// and every reply box (a panel's, the arrival bubble's): where its saved replies sit follows it too.
+ONE_COLUMN.addEventListener("change", () => page.render({ instant: true }));
 
 // The right column's width, set by dragging the line before it; kept in this browser.
 const SIDE_KEY = "agent-desk:side-width";

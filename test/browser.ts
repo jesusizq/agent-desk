@@ -299,8 +299,8 @@ export class Page {
   }
 
   /** A real key press. */
-  async press(key: "Escape" | "Enter" | "ArrowLeft" | "ArrowRight"): Promise<void> {
-    const code = { Escape: 27, Enter: 13, ArrowLeft: 37, ArrowRight: 39 }[key];
+  async press(key: "Escape" | "Enter" | "ArrowLeft" | "ArrowRight" | "Tab"): Promise<void> {
+    const code = { Escape: 27, Enter: 13, ArrowLeft: 37, ArrowRight: 39, Tab: 9 }[key];
     for (const type of ["rawKeyDown", "keyUp"]) await this.send("Input.dispatchKeyEvent", { type, key, code: key, windowsVirtualKeyCode: code });
   }
 }

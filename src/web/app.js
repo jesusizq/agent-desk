@@ -130,7 +130,7 @@ document.addEventListener("keydown", (e) => {
   const i = list.findIndex((it) => it.key === ui.sel);
   if (/^[1-9]$/.test(e.key)) {
     // 1–9 pick an option of the large card's first open question, never send it: its box takes the focus, and Enter sends.
-    const box = document.querySelector(".next .answer:has(> .opts) > textarea");
+    const box = document.querySelector(".next .answer:has(> .opts) > .compose > textarea");
     if (box && pickOption(box, Number(e.key))) e.preventDefault();
     return;
   }

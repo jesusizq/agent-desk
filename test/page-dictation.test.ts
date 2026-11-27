@@ -107,6 +107,32 @@ describe("page: dictation", SKIP, () => {
     );
   });
 
+  it("on a phone, records in the box's row of buttons, between the plus and Send, leaving the text its whole width, down to 320 px", async () => {
+    const fake = fakeWhisper({ text: "Vale." });
+    await ownDesk(
+      async (page) => {
+        await page.send("Emulation.setDeviceMetricsOverride", { width: 320, height: 640, deviceScaleFactor: 1, mobile: true });
+        await page.eval(FAKE_MIC);
+        await page.click(".tabbar button", "Sessions");
+        await openPanel(page);
+        await page.waitFor(mic);
+        const shape = `(() => {
+          const r = (s) => document.querySelector('#session .chat-footer ' + s).getBoundingClientRect();
+          const c = r('.compose'), box = r('textarea'), add = r('.add-image'), m = r('.mic'), send = r('.send');
+          return { text: box.width, row: [add.right <= m.left, m.right <= send.left, m.top === send.top, m.top >= box.bottom - 1, send.right <= c.right], within: c.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth };
+        })()`;
+        const idle = await page.eval<{ text: number }>(shape);
+        await page.click("#session .chat-footer button.mic");
+        await page.waitFor(`document.querySelector('#session button.mic.recording') && document.querySelector('#session button.mic .mic-time').textContent === '0:01'`);
+        assert.deepEqual(await page.eval(shape), { text: idle.text, row: [true, true, true, true, true], within: true }, "the wider mic takes room from the row, not from the text");
+        await page.click("#session .chat-footer button.mic");
+        await page.waitFor(`${box}.value.includes("Vale.") && !document.querySelector('#session button.mic.transcribing')`);
+      },
+      atWork,
+      { phone: true, speech: engineFor(fake.home) },
+    );
+  });
+
   it("drops a recording whose box closes, and frees the mics", async () => {
     const fake = fakeWhisper();
     await ownDesk(

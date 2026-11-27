@@ -567,11 +567,13 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .touch-only { display: none; }
 .answer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; margin-top: 4px; }
 .answer .opts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
-.answer .row { display: contents; }
+/* Beside a wide box, the composer's parts are the grid's own cells: the images, then the saved replies, then the box. */
+.answer .compose { display: contents; }
 /* The buttons keep their size at the box's foot while the box grows with the draft. */
 .answer .send-col { grid-column: 2; align-self: end; display: flex; align-items: stretch; gap: 6px; }
 .answer .send-col > * { min-height: 42px; }
 .answer .send-col .icon-btn { height: auto; }
+.answer .send-col .spacer, .answer .add-image .i-plus { display: none; }
 /* Dictation: recording, the mic turns red with a ring as wide as the voice is loud and the time beside it; then it pulses while the text is written. */
 .answer .mic { gap: 6px; font-variant-numeric: tabular-nums; }
 .answer .mic .mic-time:empty { display: none; }
@@ -582,7 +584,7 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
   .answer .mic.transcribing svg { animation: mic-pulse 1s ease-in-out infinite alternate; }
 }
 @keyframes mic-pulse { to { opacity: .35; } }
-.answer .row .primary { padding: 8px 16px; justify-content: center; }
+.answer .send-col .primary { padding: 8px 16px; justify-content: center; }
 /* Sending keeps the button's size: both labels share one cell, and a ring takes the icon's place. */
 .answer .send .send-lbl, .answer .send .send-i { display: inline-grid; }
 .answer .send .send-lbl > *, .answer .send .send-i > * { grid-area: 1 / 1; justify-self: center; }
@@ -991,14 +993,35 @@ dialog.sess .dhead .find-open[aria-pressed="true"] { border-color: color-mix(in 
   .md :is(th, td) { overflow-wrap: break-word; }
   .qcode { max-height: min(220px, 40dvh); }
 
-  /* The answer box: Send sits beside the text, so the keyboard cannot hide one without the other.
+  /* The answer box: Send sits right under the text, in the same box, so the keyboard cannot hide one without the other.
      Options are rows a thumb can hit: a long one takes the line, short ones (Allow, Deny) share it. */
   .answer .opts button { flex: 1 1 auto; text-align: left; }
   .answer .decide button { flex: 1 1 0; min-height: 44px; }
-  /* A chat app's composer: a rounded one-line box, and round buttons with an icon only (their name stays for screen readers). */
-  .answer textarea { min-height: 44px; padding: 10px 14px; line-height: 1.4; border-radius: 22px; scroll-margin: 16px; }
-  .answer .send-col > *, .answer .send-col .icon-btn { width: 44px; height: 44px; min-height: 44px; min-width: 44px; padding: 0; border-radius: 999px; justify-content: center; }
+  /* A chat app's composer: one rounded box, focused as a whole, holding the images, the text the whole width, and a row
+     of round buttons with an icon only (their name stays for screen readers): add images at the left, the mic and Send at the right. */
+  .answer .compose { grid-column: 1 / -1; display: flex; flex-direction: column; min-width: 0; padding: 4px 6px 6px;
+    border: 1px solid var(--border); border-radius: 22px; background: var(--surface); transition: border-color var(--dur-1), box-shadow var(--dur-1); }
+  .answer .compose:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  .answer.off .compose { background: var(--surface-2); }
+  .answer .replies, .answer .send-hint { order: 0; }
+  /* One row that scrolls sideways; its padding leaves room for each picture's cross. */
+  .answer .compose .attached { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 10px 8px 4px; }
+  /* As wide as a cross's 44 px reach: a portrait screenshot, drawn ~30 px, would lay it over the cross before it. */
+  .answer .compose .thumb { flex: none; }
+  .answer .compose .thumb img { min-width: 44px; }
+  /* A picture's cross stays small; a finger gets 44 px around it. */
+  .answer .compose .thumb .icon-btn { min-height: 22px; min-width: 22px; }
+  /* Within the row, which scrolls and so clips: from its top edge down, and from its end padding over the picture. */
+  .answer .compose .thumb .icon-btn::after { content: ""; position: absolute; inset: -4px -2px -20px -22px; }
+  .answer .compose textarea, .answer.off .compose textarea { min-height: 36px; padding: 8px 10px 4px; line-height: 1.4; border: 0; border-radius: 0; background: transparent; scroll-margin: 16px; }
+  .answer .compose textarea:is(:focus, :focus-visible) { outline: 0; }
+  .answer .send-col { align-self: stretch; align-items: center; }
+  .answer .send-col .spacer { display: block; flex: 1; }
+  .answer .send-col > :not(.spacer), .answer .send-col .icon-btn { width: 44px; height: 44px; min-height: 44px; min-width: 44px; padding: 0; border-radius: 999px; justify-content: center; }
+  .answer .send-col .mic:not(.recording, .starting) { border-color: transparent; }
   .answer .send-col .mic.recording { width: auto; padding: 0 12px; }
+  .answer .add-image .i-image { display: none; }
+  .answer .add-image .i-plus { display: inline-block; width: 20px; height: 20px; }
   .answer .send .send-lbl { display: none; }
   .answer .send svg.i { width: 18px; height: 18px; }
   .scard .mini { width: 34px; }

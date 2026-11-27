@@ -4,7 +4,7 @@ import { h, icon, md, mdBlocks, onKept } from "./dom.js";
 import { TEXT } from "./text.js";
 import { boxesOf, conversationView, deliver, landed, leftTheBox, loadConversation, markSending } from "./conversation.js";
 import { headline } from "./format.js";
-import { COARSE, fitBox } from "./layout.js";
+import { COARSE, fitBox, ONE_COLUMN } from "./layout.js";
 import { dot, toast } from "./pieces.js";
 import { imageUrl, post, routeOf, run, saveDrafts, uploadImage } from "./server.js";
 import { repliesRow, shownReplies } from "./replies.js";
@@ -162,7 +162,7 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
     return parts.every((p) => options.includes(p)) ? parts : null;
   };
   /** The option buttons on the page, which are this drawing's or the kept ones. */
-  const syncPressed = () => box.parentElement?.querySelectorAll(":scope > .opts > button").forEach((b, i) => b.setAttribute("aria-pressed", String(picked(box.value)?.includes(options[i] ?? "") === true)));
+  const syncPressed = () => box.closest(".answer")?.querySelectorAll(":scope > .opts > button").forEach((b, i) => b.setAttribute("aria-pressed", String(picked(box.value)?.includes(options[i] ?? "") === true)));
   /** One option picked, or with `several` added or taken out; anything else written is replaced. @param {string} o @param {boolean} focus */
   const pick = (o, focus) => {
     const had = picked(box.value) ?? [];
@@ -250,6 +250,15 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
   });
   const chosen = picked(box.value) ?? [];
   const busy = ui.sending.has(key);
+  // A permission's box holds a reason to deny it: a saved reply is not one.
+  // Calm: a question's card shows them only when there are some and it can take one now; the panel's own box always, so its foot never jumps.
+  const replies =
+    !decide && (key.startsWith("message-") || (off === null && shownReplies().length > 0))
+      ? repliesRow({ disabled: off !== null || busy || uploading, send: (e, reply) => send(e, reply, !byFinger(e), true), insert })
+      : null;
+  // Beside a wide box the saved replies are drawn between its images and its text, above a phone's rounded box:
+  // the page holds them in the order drawn, which the Tab key follows. The text box keeps its parent in both.
+  const wide = !ONE_COLUMN.matches;
   // One choice is sent as soon as it is clicked, verbatim, as Send sends it; several are ticked, then sent.
   const opts = options.map((o, i) =>
     h(
@@ -310,67 +319,67 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
           ),
         )
       : null,
-    attached.length || uploading
-      ? h(
-          "div",
-          { class: "attached" },
-          attached.map((id) =>
-            h(
-              "span",
-              { class: "thumb", "data-key": id },
-              h("img", { src: imageUrl(id), alt: TEXT.attachedImage }),
-              h("button", { class: "icon-btn", title: TEXT.removeImage, "aria-label": TEXT.removeImage, onclick: () => (ui.draftImages.set(key, attached.filter((x) => x !== id)), saveDrafts(), page.render()) }, icon("x")),
-            ),
-          ),
-          uploading ? h("span", { class: "faint" }, TEXT.attaching) : null,
-        )
-      : null,
-    // A permission's box holds a reason to deny it: a saved reply is not one.
-    // Calm: a question's card shows them only when there are some and it can take one now; the panel's own box always, so its foot never jumps.
-    !decide && (key.startsWith("message-") || (off === null && shownReplies().length > 0))
-      ? repliesRow({ disabled: off !== null || busy || uploading, send: (e, reply) => send(e, reply, !byFinger(e), true), insert })
-      : null,
-    box,
+    wide ? null : replies,
+    // What is sent, in one piece: its images, its text and the buttons that add to it and send it (on a phone, one rounded box).
     h(
       "div",
-      { class: "row" },
+      { class: "compose" },
+      attached.length || uploading
+        ? h(
+            "div",
+            { class: "attached" },
+            attached.map((id) =>
+              h(
+                "span",
+                { class: "thumb", "data-key": id },
+                h("img", { src: imageUrl(id), alt: TEXT.attachedImage }),
+                h("button", { class: "icon-btn", title: TEXT.removeImage, "aria-label": TEXT.removeImage, onclick: () => (ui.draftImages.set(key, attached.filter((x) => x !== id)), saveDrafts(), page.render()) }, icon("x")),
+              ),
+            ),
+            uploading ? h("span", { class: "faint" }, TEXT.attaching) : null,
+          )
+        : null,
+      wide ? replies : null,
+      box,
       decide
         ? null
         : h(
-        "div",
-        { class: "send-col" },
-        images
-          ? [
-              h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true, onchange: (e) => e.currentTarget instanceof HTMLInputElement && attach([...(e.currentTarget.files ?? [])]) }),
-              h("button", { class: "icon-btn", title: TEXT.attachImage, "aria-label": TEXT.attachImage, disabled: off !== null, onclick: pickFiles }, icon("image")),
-            ]
-          : null,
-        micButton(key, sid, off !== null || ui.sending.has(key)),
-        h(
-          "button",
-          {
-            class: "primary send",
-            title: off ?? TEXT.send,
-            "aria-label": TEXT.send,
-            "aria-busy": ui.sending.has(key) ? "true" : null,
-            disabled: off !== null || uploading,
-            // The focus stays in the box, so a phone's keyboard stays up for the next message.
-            onmousedown: (e) => e.preventDefault(),
-            onclick: send,
-          },
-          h("span", { class: "send-i" }, icon("send"), h("span", { class: "spin", "aria-hidden": "true" })),
-          h("span", { class: "send-lbl", "aria-hidden": "true" }, h("span", {}, TEXT.sendShort), h("span", {}, TEXT.sending)),
-        ),
-      ),
-      h(
-        "span",
-        { class: "faint send-hint" },
-        off ?? [
-          h("span", { class: "keys-only" }, `${decide ? TEXT.permission.keys : options.length ? TEXT.optionKeys : TEXT.sendKeys} `),
-          options.length && !several ? TEXT.optionSends : hint,
-          images ? ` ${TEXT.pasteImages}` : "",
-        ],
-      ),
+            "div",
+            { class: "send-col" },
+            images
+              ? [
+                  h("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true, onchange: (e) => e.currentTarget instanceof HTMLInputElement && attach([...(e.currentTarget.files ?? [])]) }),
+                  // A picture beside a desktop's box, a plus at the left of a phone's.
+                  h("button", { class: "icon-btn add-image", title: TEXT.attachImage, "aria-label": TEXT.attachImage, disabled: off !== null, onclick: pickFiles }, icon("image", "i i-image"), icon("plus", "i i-plus")),
+                ]
+              : null,
+            h("span", { class: "spacer" }),
+            micButton(key, sid, off !== null || ui.sending.has(key)),
+            h(
+              "button",
+              {
+                class: "primary send",
+                title: off ?? TEXT.send,
+                "aria-label": TEXT.send,
+                "aria-busy": ui.sending.has(key) ? "true" : null,
+                disabled: off !== null || uploading,
+                // The focus stays in the box, so a phone's keyboard stays up for the next message.
+                onmousedown: (e) => e.preventDefault(),
+                onclick: send,
+              },
+              h("span", { class: "send-i" }, icon("send"), h("span", { class: "spin", "aria-hidden": "true" })),
+              h("span", { class: "send-lbl", "aria-hidden": "true" }, h("span", {}, TEXT.sendShort), h("span", {}, TEXT.sending)),
+            ),
+          ),
+    ),
+    h(
+      "span",
+      { class: "faint send-hint" },
+      off ?? [
+        h("span", { class: "keys-only" }, `${decide ? TEXT.permission.keys : options.length ? TEXT.optionKeys : TEXT.sendKeys} `),
+        options.length && !several ? TEXT.optionSends : hint,
+        images ? ` ${TEXT.pasteImages}` : "",
+      ],
     ),
   );
 }

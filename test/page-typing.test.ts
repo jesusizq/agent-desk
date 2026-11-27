@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { arrived, base, browser, coveringKeyboard, DRAWN, elsewhere, fetchNow, open, openDialogs, pages, setupPage, SKIP, STILL, store } from "./page-harness.ts";
 import { type Page } from "./browser.ts";
+import { PNG } from "./helpers.ts";
 
 describe("page: the answer box and what sessions wrote", SKIP, () => {
   setupPage();
@@ -283,6 +284,106 @@ describe("page: the answer box and what sessions wrote", SKIP, () => {
       await page.press("Escape");
     });
 
+    it("one rounded box holds the images, the text the whole width and the buttons under it, focused whole, within a 320 px screen", async () => {
+      store.upsertSession({ id: "one-box", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "one box on a phone", takesMessagesWhileWorking: true });
+      const stop = store.listen("one-box");
+      try {
+        const page = await phone();
+        await openPanel(page, "one box on a phone");
+        const shape = `(() => {
+          const r = (s) => { const b = document.querySelector('#session .chat-footer ' + s)?.getBoundingClientRect(); return b && { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width }; };
+          const c = r('.compose'), box = r('textarea'), add = r('.add-image'), send = r('.send'), img = r('.attached img');
+          return c && {
+            textWhole: box.l >= c.l && box.r <= c.r && box.w >= c.w - 30,
+            buttonsUnder: add.t >= box.b - 1 && send.t === add.t && add.b <= c.b && send.b <= c.b,
+            addLeft: add.l - c.l <= 12, sendRight: c.r - send.r <= 12,
+            imageAbove: img ? img.b <= box.t && img.l >= c.l && img.r <= c.r : null,
+            within: c.r <= innerWidth && document.documentElement.scrollWidth <= innerWidth,
+            cross: img ? (() => {
+              // The cross's 44 px for a finger, from its ::after: whole inside the row of pictures, which scrolls and so clips.
+              const row = document.querySelector('#session .chat-footer .attached'), x = row.querySelector('.thumb .icon-btn');
+              const b = x.getBoundingClientRect(), a = getComputedStyle(x, '::after'), edge = parseFloat(getComputedStyle(x).borderTopWidth), o = row.getBoundingClientRect();
+              const l = b.left + edge + parseFloat(a.left), t = b.top + edge + parseFloat(a.top), w = parseFloat(a.width), hh = parseFloat(a.height);
+              const corners = [[l + 1, t + 1], [l + w - 1, t + 1], [l + 1, t + hh - 1], [l + w - 1, t + hh - 1]];
+              return { drawn: [b.width, b.height], size: [w, hh], inside: l >= o.left && l + w <= o.right && t >= o.top && t + hh <= o.bottom,
+                reached: corners.every(([cx, cy]) => document.elementFromPoint(cx, cy) === x), sideways: row.scrollWidth > row.clientWidth };
+            })() : null,
+          };
+        })()`;
+        const cross = { drawn: [22, 22], size: [44, 44], inside: true, reached: true, sideways: false };
+        assert.deepEqual(await page.eval(shape), { textWhole: true, buttonsUnder: true, addLeft: true, sendRight: true, imageAbove: null, within: true, cross: null });
+        const compose = "document.querySelector('#session .chat-footer .compose')";
+        assert.deepEqual(
+          await page.eval(`(() => { const add = ${compose}.querySelector('.add-image'); return [getComputedStyle(${compose}).borderRadius, add.getAttribute('aria-label'), getComputedStyle(add.querySelector('.i-plus')).display !== 'none', getComputedStyle(add.querySelector('.i-image')).display, ${compose}.querySelector('.send').disabled]; })()`),
+          ["22px", "Attach images", true, "none", false],
+          "round, a plus that keeps its name, and Send as clickable as ever with the box empty",
+        );
+        await page.tap("#session .chat-footer textarea");
+        await page.waitFor(`document.activeElement === ${compose}.querySelector('textarea')`);
+        assert.deepEqual(await page.eval(`[getComputedStyle(${compose}).boxShadow !== 'none', getComputedStyle(${compose}.querySelector('textarea')).outlineStyle]`), [true, "none"], "the ring is the whole box's, not the text's");
+        await page.eval(`(() => {
+          const png = Uint8Array.from(atob(${JSON.stringify(PNG.toString("base64"))}), (c) => c.charCodeAt(0));
+          const data = new DataTransfer();
+          data.items.add(new File([png], "shot.png", { type: "image/png" }));
+          document.querySelector("#session .chat-footer textarea").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+        })()`);
+        await page.waitFor(`${compose}.querySelector('.attached img')?.complete`);
+        assert.deepEqual(await page.eval(shape), { textWhole: true, buttonsUnder: true, addLeft: true, sendRight: true, imageAbove: true, within: true, cross });
+        await page.send("Emulation.setDeviceMetricsOverride", { width: 320, height: 640, deviceScaleFactor: 1, mobile: true });
+        await page.waitFor(`${compose}.getBoundingClientRect().right <= 320`);
+        assert.deepEqual(await page.eval(shape), { textWhole: true, buttonsUnder: true, addLeft: true, sendRight: true, imageAbove: true, within: true, cross });
+        // A phone's portrait screenshot, about 30 px wide at 64 tall: its cross's 44 px must not reach over the cross before it.
+        await page.eval(`(() => {
+          const c = document.createElement("canvas");
+          c.width = 118; c.height = 256;
+          c.getContext("2d").fillRect(0, 0, 118, 256);
+          const png = Uint8Array.from(atob(c.toDataURL("image/png").split(",")[1]), (ch) => ch.charCodeAt(0));
+          const data = new DataTransfer();
+          data.items.add(new File([png], "portrait.png", { type: "image/png" }));
+          document.querySelector("#session .chat-footer textarea").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+        })()`);
+        await page.waitFor(`[...${compose}.querySelectorAll('.attached img')].filter((i) => i.complete).length === 2`);
+        assert.deepEqual(
+          await page.eval(`[...${compose}.querySelectorAll('.attached .thumb .icon-btn')].map((x) => {
+            const b = x.getBoundingClientRect();
+            return [[b.left + 1, b.top + 1], [b.right - 1, b.top + 1], [b.left + 1, b.bottom - 1], [b.right - 1, b.bottom - 1]].every(([cx, cy]) => document.elementFromPoint(cx, cy) === x);
+          })`),
+          [true, true],
+          "each cross, drawn whole, removes its own picture",
+        );
+        await page.press("Escape");
+      } finally {
+        stop();
+      }
+    });
+
+    it("beside a wide box, Tab goes through the images, the saved replies and the text in the order drawn, and a phone's width keeps the text box", async () => {
+      store.upsertSession({ id: "wide-keys", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "keys beside a wide box", takesMessagesWhileWorking: true });
+      const page = await open();
+      await page.click(".scard", "keys beside a wide box");
+      await page.waitFor(`${arrived("session")} && document.querySelector('#session .session-body')?.dataset.fetched === 'yes'`);
+      await page.eval(`(() => {
+        const data = new DataTransfer();
+        data.items.add(new File([Uint8Array.from(atob(${JSON.stringify(PNG.toString("base64"))}), (c) => c.charCodeAt(0))], "shot.png", { type: "image/png" }));
+        document.querySelector("#session .chat-footer textarea").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      })()`);
+      const answer = "document.querySelector('#session .chat-footer .answer')";
+      await page.waitFor(`${answer}.querySelector('.attached img')?.complete`);
+      const top = (s: string) => `${answer}.querySelector('${s}').getBoundingClientRect().top`;
+      assert.equal(await page.eval(`${top(".attached")} < ${top(".replies")} && ${top(".replies")} < ${top("textarea")}`), true, "drawn: the images, the saved replies, the text");
+      await page.eval(`${answer}.querySelector('.attached .icon-btn').focus()`);
+      const at = () => page.eval<string>("document.activeElement.closest('.replies') ? 'replies' : document.activeElement.tagName");
+      await page.press("Tab");
+      assert.equal(await at(), "replies", "from a picture's cross to the saved replies under it");
+      for (let i = 0; i < 20 && (await at()) === "replies"; i++) await page.press("Tab");
+      assert.equal(await at(), "TEXTAREA", "then to the text");
+
+      await page.eval(`window.kept = ${answer}.querySelector('textarea')`);
+      await page.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      await page.waitFor(`${answer}.querySelector(':scope > .replies + .compose > .attached')`);
+      assert.equal(await page.eval(`${answer}.querySelector('textarea') === kept && document.activeElement === kept`), true, "on a phone's width, the same box, still focused");
+    });
+
     it("a tapped option is sent at once without raising the keyboard; a tap on the box does", async () => {
       const done = asking("picking", "picking on a phone");
       try {
@@ -355,9 +456,9 @@ describe("page: the answer box and what sessions wrote", SKIP, () => {
         const fit = await page.eval<Record<string, unknown>>(`(() => {
           const foot = document.querySelector('#session .chat-footer');
           return { chips: getComputedStyle(document.querySelector('#session .pchips')).display, kind: getComputedStyle(document.querySelector('#session .panel-question > .meta')).display,
-            onKeyboard: 508 - ${box}.getBoundingClientRect().bottom, roomLeft: foot.getBoundingClientRect().height < 508 * 0.45 };
+            onKeyboard: 508 - ${box}.closest('.compose').getBoundingClientRect().bottom, roomLeft: foot.getBoundingClientRect().height < 508 * 0.45 };
         })()`);
-        assert.deepEqual(fit, { chips: "none", kind: "none", onKeyboard: 8, roomLeft: true });
+        assert.deepEqual(fit, { chips: "none", kind: "none", onKeyboard: 8, roomLeft: true }, "the composer, the box and its buttons, sits on the keyboard");
         await page.tap("#session .opts button", "Green");
         await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.textContent.includes('Green') && m.querySelector('.delivered'))");
         await page.eval("import('/pieces.js').then((m) => m.toast('Copied: another session'))");
@@ -383,11 +484,13 @@ describe("page: the answer box and what sessions wrote", SKIP, () => {
         await page.waitFor("document.documentElement.hasAttribute('data-compact')");
         for (let i = 0; i < 9; i++) await page.type(`Line ${i} of a long draft\n`);
         const fit = await page.eval<Record<string, unknown>>(`(() => {
-          const foot = document.querySelector('#session .chat-footer'), box = foot.querySelector('textarea'), send = foot.querySelector('.send');
+          const foot = document.querySelector('#session .chat-footer'), compose = foot.querySelector('.compose'), box = foot.querySelector('textarea'), send = foot.querySelector('.send');
           return { footScrolls: foot.scrollHeight - foot.clientHeight, question: foot.querySelector('.qtext').getBoundingClientRect().top >= foot.getBoundingClientRect().top,
-            boxOnKeyboard: 407 - Math.round(box.getBoundingClientRect().bottom), sendOnKeyboard: 407 - Math.round(send.getBoundingClientRect().bottom), boxScrolls: box.scrollHeight > box.clientHeight };
+            composeOnKeyboard: 407 - Math.round(compose.getBoundingClientRect().bottom), sendOnKeyboard: 407 - Math.round(send.getBoundingClientRect().bottom),
+            boxEndOverSend: Math.round(send.getBoundingClientRect().top - box.getBoundingClientRect().bottom), boxScrolls: box.scrollHeight > box.clientHeight };
         })()`);
-        assert.deepEqual(fit, { footScrolls: 0, question: true, boxOnKeyboard: 8, sendOnKeyboard: 8, boxScrolls: true });
+        // The composer's border 8 px above the keyboard, Send inside it, the text's end right over the buttons.
+        assert.deepEqual(fit, { footScrolls: 0, question: true, composeOnKeyboard: 8, sendOnKeyboard: 15, boxEndOverSend: 0, boxScrolls: true });
         await page.press("Escape");
       } finally {
         done();

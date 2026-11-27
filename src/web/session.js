@@ -12,7 +12,7 @@ import { conversationView, loadConversation, outgoingView, sentWhileWorking } fr
 import { ago, duration, firstLine, gb, stamp } from "./format.js";
 import { closeFind, find, findBar, openFind, paintFind } from "./find.js";
 import { fromEnd as distanceToEnd, followPanel, NEAR_END, toEndButton } from "./follow.js";
-import { fitNewBoxes, showNeedsYou } from "./layout.js";
+import { fitNewBoxes, ONE_COLUMN, showNeedsYou } from "./layout.js";
 import { badge, bar, dialogHead, dot, goLink, kindOf, LOCAL_URL, localLink, planGauge, suggestionChip, where } from "./pieces.js";
 import { mergedOf, openProject, projectOf } from "./projects.js";
 import { openResult } from "./result.js";
@@ -290,6 +290,7 @@ function panelShows(s) {
     [...ui.stepsOpen],
     [...ui.contextOpen],
     shownReplies(), // the chips above the box
+    ONE_COLUMN.matches, // where they sit: beside a wide box, between its images and its text
     shownMic(), // the mic beside it
     Math.floor(Date.now() / 60_000), // times shown as "for 5 min"
   ]);
