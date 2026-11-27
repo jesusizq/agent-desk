@@ -60,11 +60,15 @@ describe("page: answering what a session asks", SKIP, () => {
     it("allows a permission prompt with one click, and denies it with the reason written, if any", async () => {
       const done = asking("permitting", "permission prompts");
       try {
+        // A card on its way out keeps `.next` until it folds away: the one shown is the only one left.
+        const atRest = (text: string) => `document.querySelectorAll('.next').length === 1 && document.querySelector('.next').textContent.includes(${JSON.stringify(text)}) && !document.querySelector('.next').getAnimations({ subtree: true }).length`;
+        // The answered card stays 650 ms, then leaves and the rows move up: a row aimed at before then is clicked on its neighbour.
+        const answeredGone = (text: string) => `![...document.querySelectorAll('.next')].some((c) => c.textContent.includes(${JSON.stringify(text)})) && !document.querySelector('[data-leaving]')`;
         const prompt = (text: string) => hookWaits("permitting", store.ask({ sessionId: "permitting", kind: "permission", text, options: ["Allow", "Deny"] }));
         prompt("Bash: rm -rf build");
         const page = await open();
         await page.click(".qrow", "Bash: rm -rf build");
-        await page.waitFor("document.querySelector('.next')?.textContent.includes('rm -rf build') && !document.querySelector('.next').getAnimations({ subtree: true }).length");
+        await page.waitFor(atRest("rm -rf build"));
         assert.equal(await page.eval<boolean>("!!document.querySelector('.next .opts')"), false, "no options to pick: two buttons that decide");
         assert.equal(await page.eval<string>("document.querySelector('.next textarea').placeholder"), "Reason for denying (optional)");
         assert.equal(await page.eval<boolean>("document.querySelector('.next .send-hint').textContent.includes('exactly as written')"), false);
@@ -77,16 +81,18 @@ describe("page: answering what a session asks", SKIP, () => {
         const row = "[...document.querySelectorAll('.qrow')].find((r) => r.textContent.includes('make deploy'))";
         await page.waitFor(row);
         assert.equal(await page.eval<string>(`${row}.querySelector('.qs').textContent`), "web-shop › permission prompts", "a permission row counts no options");
+        await page.waitFor(answeredGone("rm -rf build"));
         await page.click(".qrow", "make deploy");
-        await page.waitFor("document.querySelector('.next')?.textContent.includes('make deploy') && !document.querySelector('.next').getAnimations({ subtree: true }).length");
+        await page.waitFor(atRest("make deploy"));
         await page.click(".next textarea");
         await page.type("not on main");
         await page.click(".next .deny");
         assert.deepEqual(await answers("permitting", 1), ["not on main"], "the reason goes with Deny, as written");
 
         prompt("Bash: npm publish");
+        await page.waitFor(answeredGone("make deploy"));
         await page.click(".qrow", "npm publish");
-        await page.waitFor("document.querySelector('.next')?.textContent.includes('npm publish') && !document.querySelector('.next').getAnimations({ subtree: true }).length");
+        await page.waitFor(atRest("npm publish"));
         await page.click(".next textarea");
         await page.type("Allow");
         await page.click(".next .deny");
