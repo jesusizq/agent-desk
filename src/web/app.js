@@ -102,6 +102,17 @@ addEventListener("error", (e) => {
 });
 addEventListener("unhandledrejection", (e) => toast(TEXT.pageError(e.reason instanceof Error ? e.reason.message : String(e.reason))));
 
+// Files dropped where no reply box takes them would open in place of the desk: refused there.
+// A box's own handlers run first, on the way up, and take a drag of images by preventing it.
+document.addEventListener("dragover", (e) => {
+  if (e.defaultPrevented || !e.dataTransfer?.types.includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "none";
+});
+document.addEventListener("drop", (e) => {
+  if (!e.defaultPrevented && e.dataTransfer?.types.includes("Files")) e.preventDefault();
+});
+
 watchPush(renderAlerts);
 headerMenu("alerts", "alerts-menu", renderAlerts);
 renderAlerts();

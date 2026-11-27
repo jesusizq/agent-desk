@@ -687,6 +687,129 @@ describe("page: sessions, the unlock, the connection and the event stream", SKIP
     assert.ok(store.imageFile(entry?.images?.[0] ?? ""), "the image is in the store");
   });
 
+  it("counts the images still on their way toward the 10 a message takes", async () => {
+    store.upsertSession({ id: "dropping-fast", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "screenshots dropped fast", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "screenshots dropped fast");
+    await page.waitFor(`${arrived("session")} && document.querySelector('#session .session-body')?.dataset.fetched === 'yes'`);
+    // Every image stays on its way until `release()`.
+    await page.eval(`(() => {
+      const real = window.fetch;
+      window.held = [];
+      window.fetch = (url, init) => new URL(String(url), location.href).pathname === "/api/images" ? new Promise((go) => window.held.push(() => go(real(url, init)))) : real(url, init);
+      window.release = () => window.held.forEach((go) => go());
+    })()`);
+    const drop = (from: number) =>
+      page.eval(`(() => {
+        const data = new DataTransfer();
+        for (let i = ${from}; i < ${from} + 6; i++) data.items.add(new File([Uint8Array.from(atob(${JSON.stringify(PNG.toString("base64"))}), (c) => c.charCodeAt(0)), new Uint8Array([i])], "shot-" + i + ".png", { type: "image/png" }));
+        document.querySelector("#session .chat-footer textarea").dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+      })()`);
+    await drop(0);
+    await page.waitFor("window.held.length === 6");
+    await drop(6);
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('At most 10 images'))");
+    assert.equal(await page.eval<number>("window.held.length"), 10, "the six on their way leave room for four");
+    await page.eval("window.release()");
+    await page.waitFor("document.querySelectorAll('#session .chat-footer .attached img').length === 10");
+    await page.click("#session .chat-footer .primary");
+    await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.querySelectorAll('.msg-imgs img').length === 10 && m.querySelector('.delivered'))");
+    assert.equal(store.takeInbox("dropping-fast")[0]?.images?.length, 10);
+  });
+
+  it("takes images dropped onto the box, which lights up while they are over it; leaves other files out and text to the box", async () => {
+    store.upsertSession({ id: "dropping", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "dropped screenshots", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "dropped screenshots");
+    await page.waitFor(`${arrived("session")} && document.querySelector('#session .session-body')?.dataset.fetched === 'yes'`);
+    const png = PNG.toString("base64");
+    /** A drag event on the box, as the browser sends one: its files (name, type) and text. */
+    const drag = (type: string, files: [string, string][], text = "") =>
+      page.eval<{ prevented: boolean; lit: boolean; border: string }>(`(() => {
+        const data = new DataTransfer();
+        for (const [name, type] of ${JSON.stringify(files)}) data.items.add(new File([Uint8Array.from(atob(${JSON.stringify(png)}), (c) => c.charCodeAt(0))], name, { type }));
+        if (${JSON.stringify(text)}) data.setData("text/plain", ${JSON.stringify(text)});
+        const box = document.querySelector("#session .chat-footer textarea");
+        const e = new DragEvent(${JSON.stringify(type)}, { dataTransfer: data, bubbles: true, cancelable: true });
+        box.dispatchEvent(e);
+        return { prevented: e.defaultPrevented, lit: box.closest(".compose").classList.contains("drop-over"), border: getComputedStyle(box).borderTopColor };
+      })()`);
+    const thumbs = "document.querySelectorAll('#session .chat-footer .attached img').length";
+    const shot: [string, string] = ["shot.png", "image/png"];
+
+    const resting = (await drag("dragleave", [])).border;
+    const over = await drag("dragover", [shot]);
+    assert.deepEqual({ ...over, border: over.border !== resting }, { prevented: true, lit: true, border: true }, "an image over the box: it takes it, and its border says so");
+    assert.equal((await drag("dragleave", [shot])).lit, false, "gone from the box: no longer lit");
+    await drag("dragover", [shot]);
+    assert.deepEqual(await drag("drop", [shot]), { prevented: true, lit: false, border: resting }, "dropped: the browser opens nothing");
+    await page.waitFor(`${thumbs} === 1 && document.querySelector('#session .attached img').complete`);
+
+    // Beside a wide box the saved replies lie between the pictures and the text: crossing them, the box stays lit.
+    await drag("dragover", [shot]);
+    assert.equal(
+      await page.eval(`(() => {
+        const img = document.querySelector("#session .chat-footer .attached img"), chip = document.querySelector("#session .chat-footer .replies .chip");
+        img.dispatchEvent(new DragEvent("dragleave", { relatedTarget: chip, bubbles: true }));
+        return img.closest(".compose").classList.contains("drop-over");
+      })()`),
+      true,
+      "from a picture to the saved replies: still lit",
+    );
+    await drag("dragleave", []);
+
+    /** A drag as Safari shows it until the drop: it carries files, but lists none of them. */
+    const hidden = (type: string) =>
+      page.eval<{ prevented: boolean; lit: boolean; effect: string }>(`(() => {
+        const box = document.querySelector("#session .chat-footer textarea");
+        const e = new DragEvent(${JSON.stringify(type)}, { bubbles: true, cancelable: true });
+        const data = { types: ["Files"], items: [], files: [], dropEffect: "none" };
+        Object.defineProperty(e, "dataTransfer", { value: data });
+        box.dispatchEvent(e);
+        return { prevented: e.defaultPrevented, lit: box.closest(".compose").classList.contains("drop-over"), effect: data.dropEffect };
+      })()`);
+    assert.deepEqual(await hidden("dragover"), { prevented: true, lit: true, effect: "copy" }, "files it cannot see yet may be images: lit, and dropped as a copy");
+    const dropped = await hidden("drop");
+    assert.deepEqual([dropped.prevented, dropped.lit], [true, false], "and the drop takes only the images among them");
+    assert.equal(await page.eval<number>(thumbs), 1);
+
+    /** A file dragged onto a part of the page that is no box. */
+    const outside = (type: string, where: string) =>
+      page.eval<boolean>(`(() => {
+        const data = new DataTransfer();
+        data.items.add(new File([Uint8Array.from(atob(${JSON.stringify(png)}), (c) => c.charCodeAt(0))], "shot.png", { type: "image/png" }));
+        const e = new DragEvent(${JSON.stringify(type)}, { dataTransfer: data, bubbles: true, cancelable: true });
+        document.querySelector(${JSON.stringify(where)}).dispatchEvent(e);
+        return e.defaultPrevented;
+      })()`);
+    for (const where of ["#session .chat-footer .send-hint", "#session .session-body", "header.top"])
+      assert.deepEqual([await outside("dragover", where), await outside("drop", where)], [true, true], `dropped on ${where}: the browser opens nothing`);
+    assert.equal(await page.eval<number>(thumbs), 1, "and nothing is attached");
+
+    const notes: [string, string] = ["notes.pdf", "application/pdf"];
+    assert.deepEqual(await drag("dragover", [notes]), { prevented: true, lit: false, border: resting }, "a file it does not take: not lit, and not dropped");
+    assert.equal((await drag("drop", [notes])).prevented, true, "never opened in place of the desk");
+    const text = await drag("dragover", [], "some words");
+    assert.deepEqual([text.prevented, text.lit, (await drag("drop", [], "some words")).prevented], [false, false, false], "text dragged in is the box's as always");
+
+    const many = Array.from({ length: 10 }, (_, i): [string, string] => [`shot-${i}.jpg`, "image/jpeg"]);
+    await drag("drop", many);
+    await page.waitFor(`${thumbs} === 10 && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('At most 10 images'))`);
+    await page.click("#session .chat-footer .primary");
+    await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.querySelectorAll('.msg-imgs img').length === 10 && m.querySelector('.delivered'))");
+    assert.equal(store.takeInbox("dropping")[0]?.images?.length, 10, "sent with the message, as pasted ones are");
+
+    // A permission prompt's box takes no images, and the browser opens none dropped there.
+    const asked = store.ask({ sessionId: "dropping", kind: "permission", text: "Bash: rm -rf dist", options: ["Allow", "Deny"] });
+    try {
+      await page.waitFor("document.querySelector('#session .chat-footer .decide')");
+      assert.deepEqual(await drag("dragover", [shot]), { prevented: true, lit: false, border: resting });
+      assert.equal((await drag("drop", [shot])).prevented, true);
+    } finally {
+      store.dismiss(asked.id);
+    }
+  });
+
   it("on a phone, shows the project's name whole and keeps a long draft where it is written", async () => {
     store.upsertSession({ id: "long-draft", provider: "Test", project: { name: "invoices-api", dir: "/home/demo/Projects/invoices-api" }, title: "a session whose title is far too long for a phone", takesMessagesWhileWorking: true });
     const page = await open(390, 844);

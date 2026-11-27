@@ -642,6 +642,8 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer.off textarea { background: var(--surface-2); cursor: default; }
 .answer.off .opts button { color: var(--muted); cursor: default; }
 .answer textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); outline-offset: 0; }
+/* An image dragged over the box: the box says it takes it. */
+.answer .compose.drop-over textarea { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
 .next .actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 a.primary, a.secondary, a.row-go { text-decoration: none; }
 .problems { color: var(--danger); }
@@ -1003,7 +1005,8 @@ dialog.sess .dhead .find-open[aria-pressed="true"] { border-color: color-mix(in 
     border: 1px solid var(--border); border-radius: 22px; background: var(--surface); transition: border-color var(--dur-1), box-shadow var(--dur-1); }
   .answer .compose:focus-within { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
   .answer.off .compose { background: var(--surface-2); }
-  .answer .replies, .answer .send-hint { order: 0; }
+  .answer .compose.drop-over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+  .answer .compose.drop-over textarea { background: transparent; }
   /* One row that scrolls sideways; its padding leaves room for each picture's cross. */
   .answer .compose .attached { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 10px 8px 4px; }
   /* As wide as a cross's 44 px reach: a portrait screenshot, drawn ~30 px, would lay it over the cross before it. */
