@@ -16,6 +16,38 @@ function toEnd(b) {
   b.scrollTop = b.scrollHeight - b.clientHeight;
 }
 
+/**
+ * Brings the conversation to its end and holds it there until it rests: iOS scrolls an element apart
+ * from the script, and a scroll still gliding there wins over the one set here. A touch, the wheel or a
+ * key hands the scroll back to the developer.
+ */
+const SETTLE_MS = 1000;
+let settling = 0;
+let jumping = false;
+/** @param {Element} b */
+function settle(b) {
+  cancelAnimationFrame(settling);
+  jumping = true;
+  ui.panelStick = true;
+  const until = performance.now() + SETTLE_MS;
+  let resting = 0;
+  const frame = () => {
+    if (!jumping || !b.isConnected) return void (jumping = false);
+    if (fromEnd(b) > 1) (toEnd(b), (resting = 0));
+    else resting++;
+    if (resting < 3 && performance.now() < until) settling = requestAnimationFrame(frame);
+    else jumping = false;
+  };
+  toEnd(b);
+  settling = requestAnimationFrame(frame);
+}
+for (const event of ["touchstart", "wheel", "pointerdown", "keydown"])
+  dialog("session").addEventListener(event, (e) => {
+    if (!jumping || (e.target instanceof Element && e.target.closest(".to-end"))) return;
+    jumping = false;
+    cancelAnimationFrame(settling);
+  }, { capture: true, passive: true });
+
 /** Farther from the end than this the button shows: closer, the end is in sight and the button would cover it. */
 const SHOW_FROM = 240;
 /** Not while a confirmation is open: its Run sits near the end, where the button would cover it. */
@@ -37,8 +69,7 @@ export function toEndButton() {
       onclick: () => {
         const b = body();
         if (!b) return;
-        ui.panelStick = true;
-        toEnd(b);
+        settle(b);
         showButton();
       },
     },
@@ -85,7 +116,7 @@ dialog("session").addEventListener(
   "scroll",
   (e) => {
     const b = e.target;
-    if (!(b instanceof Element) || !b.classList.contains("session-body") || ui.panelPart) return;
+    if (!(b instanceof Element) || !b.classList.contains("session-body") || ui.panelPart || jumping) return;
     ui.panelStick = fromEnd(b) < NEAR_END;
     showButton();
   },

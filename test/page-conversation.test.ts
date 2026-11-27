@@ -68,6 +68,33 @@ describe("page: the session panel's conversation", SKIP, () => {
     }, longTalk);
   });
 
+  it("on a phone, holds the jump to the end while a scroll still glides, and hands it back to a touch or the wheel", async () => {
+    await ownPhone(async (page) => {
+      await openLongTalk(page);
+      /** Scrolls far up, taps the button, then moves the scroll up for a few frames as a glide still going would; `wheel` turns the wheel mid-glide. */
+      const jumpWhileGliding = (wheel: boolean) => page.eval(`new Promise((done) => {
+        const b = ${BODY};
+        b.scrollTop = b.scrollHeight - b.clientHeight - 2000;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          document.querySelector('#session .to-end').click();
+          let n = 0;
+          const glide = () => {
+            if (${wheel} && n === 1) b.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -300 }));
+            b.scrollTop -= 150;
+            if (++n < 5) requestAnimationFrame(glide);
+            else setTimeout(done, 400);
+          };
+          requestAnimationFrame(glide);
+        }));
+      })`);
+      await jumpWhileGliding(false);
+      assert.ok((await page.eval<number>(FROM_END)) < 2, `the glide does not leave it short of the end: ${await page.eval<number>(FROM_END)} px from it`);
+      assert.equal(await page.eval<boolean>(BUTTON_SHOWN), false);
+      await jumpWhileGliding(true);
+      assert.ok((await page.eval<number>(FROM_END)) > 300, "the wheel takes the scroll back");
+    }, longTalk);
+  });
+
   it("finds in the conversation: each match in turn, accents aside, inside a fold too, marked, and Escape closes only the search", async () => {
     await ownDesk(async (page) => {
       await openLongTalk(page);
