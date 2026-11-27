@@ -437,6 +437,25 @@ export const TEXT = {
     /** @param {number} n */
     goneAgents: (n) => `${plural(n, "finished agent", "finished agents")}: branch already gone, integrated or deleted`,
   },
+  replies: {
+    row: "Saved replies",
+    /** @param {string} reply */
+    use: (reply) => `Send “${reply}”; hold or right-click to edit it first`,
+    edit: "Edit replies",
+    add: "Save replies…",
+    title: "Saved replies",
+    /** @param {number} max @param {number} chars */
+    lead: (max, chars) => `One per line, up to ${max}, each up to ${chars} characters. A tap sends one as written; a long press or right-click puts it in the box to change first.`,
+    field: "Replies",
+    placeholder: "go on\ncommit and push\nreview it with a subagent",
+    /** @param {string} why */
+    unreadable: (why) => `The replies saved before could not be read (${why}): saving replaces them.`,
+    /** @param {string} why */
+    notSaved: (why) => `The saved replies were not saved: ${why}`,
+    cancel: "Cancel",
+    save: "Save",
+    saving: "Saving…",
+  },
   past: {
     title: "Decided before",
     /** @param {string} day */

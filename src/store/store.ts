@@ -33,6 +33,7 @@ import {
   readInboxEntry,
   readMetrics,
   readPlanHistory,
+  readSavedReplies,
   type PlanWindow,
   readConversationEntry,
   readHandoff,
@@ -111,6 +112,19 @@ export type MarkedSeen = { seen: number; missing: string[]; failed: { id: string
 /** A review's line could not reach the session that published it; the message says why. */
 export class Undeliverable extends InputError {
   override name = "Undeliverable";
+}
+
+/** The saved replies and the revision they are at. */
+export type SavedReplies = { replies: string[]; rev: number };
+
+/** The saved replies were saved from an editor opened on an older revision of them (another device saved since). */
+export class StaleReplies extends InputError {
+  override name = "StaleReplies";
+  readonly rev: number;
+  constructor(message: string, rev: number) {
+    super(message);
+    this.rev = rev;
+  }
 }
 
 /** A review was sent from a view of it older than its saved state: what the developer saw is not what would be recorded. */
@@ -1483,6 +1497,43 @@ export class Store {
     return raw === undefined ? undefined : readSeen(raw, this.paths.seen);
   }
 
+
+  // ── Saved replies ───────────────────────────────────────────────────────
+
+  /**
+   * The developer's saved replies and their revision, raised by every save (0 before any, and for a
+   * file kept before it had one); a file that cannot be read reads as none at revision 0, with why in `problems`.
+   */
+  savedReplies(problems: string[]): SavedReplies {
+    const file = this.paths.replies;
+    try {
+      const raw = readJson(file);
+      if (raw === undefined) return { replies: [], rev: 0 };
+      const f = fields(raw, file);
+      return { replies: readSavedReplies(f.replies, `${file}: replies`), rev: f.rev === undefined ? 0 : int(f.rev, `${file}: rev`) };
+    } catch (error) {
+      // Every reason names the file: readJson's and the checks' own.
+      problems.push((error as Error).message);
+      return { replies: [], rev: 0 };
+    }
+  }
+
+  /**
+   * Replaces the saved replies with `replies`, checked, when they were edited from revision `seenRev`;
+   * refused with `StaleReplies`, the file unchanged, when another device saved since. Returns them as kept.
+   */
+  saveReplies(replies: unknown, seenRev: number): SavedReplies {
+    const kept = readSavedReplies(replies, "replies");
+    const file = this.paths.replies;
+    return withLock(file, () => {
+      // An unreadable file is the one a save replaces: the editor already showed why it could not be read.
+      const { rev } = this.savedReplies([]);
+      if (rev !== seenRev) throw new StaleReplies(`the saved replies changed on another device since this editor opened (revision ${rev}, edited from ${seenRev}); your text is kept: save again to replace them with it`, rev);
+      const next = { replies: kept, rev: rev + 1 };
+      writeJson(file, next);
+      return next;
+    });
+  }
 
   // ── Conversation ────────────────────────────────────────────────────────
 

@@ -9,7 +9,7 @@ import { FRESH_COMMAND, sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "..
 import { ID_PATTERN, id } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
-import { type Agent, COMPACT_INSTRUCTIONS_MAX, type DeskCommand, type DeskHistory, type DeskState, type DiskWarning, imageIds, type LiveState, type ProjectScan, type Question, type ReviewState, reviewNote, type Session, SHELL_SUGGESTION_MAX, type SessionBranches } from "../core/model.ts";
+import { type Agent, COMPACT_INSTRUCTIONS_MAX, type DeskCommand, type DeskHistory, type DeskState, type DiskWarning, imageIds, type LiveState, type ProjectScan, type Question, readSavedReplies, type ReviewState, reviewNote, type Session, SHELL_SUGGESTION_MAX, type SessionBranches } from "../core/model.ts";
 import { MACHINE, type MachineSources, machineWarnings } from "../core/machine.ts";
 import { agentsAtLoadGate } from "../project/busy.ts";
 import { OPTIONS_TEXT_MAX, optionsText } from "../core/options.ts";
@@ -17,7 +17,7 @@ import { liveServices } from "../core/ports.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { isCode } from "../store/fsx.ts";
-import { heldOf, IMAGE_MAX_BYTES, IMAGE_TYPES, MissingError, readReviewChange, StaleReview, type Store, Undeliverable } from "../store/store.ts";
+import { heldOf, IMAGE_MAX_BYTES, IMAGE_TYPES, MissingError, readReviewChange, StaleReplies, StaleReview, type Store, Undeliverable } from "../store/store.ts";
 import { type FeedOptions, StateFeed } from "./feed.ts";
 import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
 import { type Access, deskOrigin, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, reviewHeaders, send, sendJson, writeAllowed } from "./security.ts";
@@ -44,6 +44,7 @@ const STATIC: Record<string, string> = {
   "/notice.js": "text/javascript; charset=utf-8",
   "/pieces.js": "text/javascript; charset=utf-8",
   "/projects.js": "text/javascript; charset=utf-8",
+  "/replies.js": "text/javascript; charset=utf-8",
   "/push.js": "text/javascript; charset=utf-8",
   "/result.js": "text/javascript; charset=utf-8",
   "/review.js": "text/javascript; charset=utf-8",
@@ -288,6 +289,12 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     // A remote device's stream ends with its unlock, as its next request would.
     if (route === "/api/events") return req.method === "GET" ? feed.stream(res, unlockEnds) : sendJson(res, 405, { error: "method not allowed" });
     if (route === "/api/push/key") return sendJson(res, 200, { key: new Push(store.paths.push).publicKey() });
+    if (route === "/api/replies") {
+      const problems: string[] = [];
+      const saved = store.savedReplies(problems);
+      for (const p of problems) process.stderr.write(`agent-desk: saved replies unreadable, shown as none: ${p}\n`);
+      return sendJson(res, 200, problems.length ? { ...saved, problem: problems.join("; ") } : saved);
+    }
     const conversation = /^\/api\/sessions\/([^/]+)\/messages$/.exec(route);
     if (conversation?.[1]) {
       if (!ID_PATTERN.test(conversation[1])) return sendJson(res, 400, { error: "invalid id" });
@@ -309,7 +316,8 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     return sendJson(res, 404, { error: "not found" });
   }
 
-  if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" });
+  // The saved replies are replaced whole, the one write that is a PUT.
+  if (req.method !== (route === "/api/replies" ? "PUT" : "POST")) return sendJson(res, 405, { error: "method not allowed" });
   // A device already unlocked may still show an old PIN page (a phone restoring a tab): nothing to do.
   if (route === "/api/unlock" && remote) return sendJson(res, 200, { unlocked: true });
   if (!writeAllowed(req, access, reach.from, secret)) return sendJson(res, 403, { error: "forbidden: this request lacks the page's secret or comes from another origin; reload the page" });
@@ -326,6 +334,16 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     }
   }
   if (route === "/api/images") return attachImage(store, req, res);
+  if (route === "/api/replies") {
+    try {
+      const f = fields(await readBody(req), "body");
+      return sendJson(res, 200, store.saveReplies(readSavedReplies(f.replies, "replies"), int(f.rev, "rev")));
+    } catch (error) {
+      if (error instanceof StaleReplies) return sendJson(res, 409, { error: error.message, stale: true, rev: error.rev });
+      if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
+      throw error;
+    }
+  }
   if (route === "/api/push/subscribe" || route === "/api/push/unsubscribe") {
     try {
       const body = await readBody(req);

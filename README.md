@@ -172,6 +172,11 @@ like it (plain word matching, nothing leaves the machine) are printed by `agent-
 its card as **Decided before**, with date and answer. One click sends that answer again, verbatim;
 nothing is answered without you. Details in [docs/protocol.md](docs/protocol.md#past-decisions).
 
+What you send again and again ("go on", "commit and push") is saved once as a **saved reply**: a
+chip above every box that writes to a session, the same on the phone and the computer. A tap sends
+it as written; a long press or right-click puts it in the box to change first. **Edit replies**
+changes them, one per line, 20 at most.
+
 ## Reviews
 
 A session that makes an HTML page for you to review or choose from publishes it instead of opening

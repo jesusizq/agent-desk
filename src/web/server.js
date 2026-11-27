@@ -133,9 +133,9 @@ async function replyOf(res) {
   const error = "error" in answer && typeof answer.error === "string" ? answer.error : null;
   throw new DeskError(error ?? `${res.status} ${res.statusText}`, res.status, answer);
 }
-/** A write to the desk, returning what it answers. @param {string} route @param {unknown} [body] */
-export async function postJson(route, body = {}) {
-  return replyOf(await write(route, { method: "POST", headers: { "Content-Type": "application/json", "X-Agent-Desk-Secret": secret }, body: JSON.stringify(body) }));
+/** A write to the desk, returning what it answers. @param {string} route @param {unknown} [body] @param {"POST" | "PUT"} [method] */
+export async function postJson(route, body = {}, method = "POST") {
+  return replyOf(await write(route, { method, headers: { "Content-Type": "application/json", "X-Agent-Desk-Secret": secret }, body: JSON.stringify(body) }));
 }
 /** A read from the desk. @param {string} route */
 export const getJson = async (route) => replyOf(await write(route));

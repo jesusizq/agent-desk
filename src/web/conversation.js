@@ -26,7 +26,7 @@ export function markSending(key, sending) {
     const button = answer?.querySelector(".send");
     if (sending) button?.setAttribute("aria-busy", "true");
     else button?.removeAttribute("aria-busy");
-    for (const b of answer?.querySelectorAll(".decide button, .opts.sends button") ?? []) if (b instanceof HTMLButtonElement) b.disabled = sending || off;
+    for (const b of answer?.querySelectorAll(".decide button, .opts.sends button, .replies button.reply") ?? []) if (b instanceof HTMLButtonElement) b.disabled = sending || off;
   }
 }
 
@@ -65,10 +65,13 @@ export function deliver(out, onSent) {
       (/** @type {Error} */ e) => {
         out.state = "failed";
         out.error = e.message;
-        out.fromBox = false;
         // Its text is the failed message's now, kept on the device with it: the box is free for the next one.
-        if (ui.drafts.get(out.key) === out.text) ui.drafts.delete(out.key);
-        if (out.images.length && (ui.draftImages.get(out.key) ?? []).join() === out.images.join()) ui.draftImages.delete(out.key);
+        // A saved reply never left the box, so a draft that merely equals it stays.
+        if (out.fromBox) {
+          if (ui.drafts.get(out.key) === out.text) ui.drafts.delete(out.key);
+          if (out.images.length && (ui.draftImages.get(out.key) ?? []).join() === out.images.join()) ui.draftImages.delete(out.key);
+        }
+        out.fromBox = false;
         saveDrafts();
       },
     )

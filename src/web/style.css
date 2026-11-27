@@ -609,6 +609,15 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .past-row:not([disabled]):is(:hover, :focus-visible) .opt-go { opacity: 1; }
 @media (hover: none) { .past-row .opt-go { opacity: .7; } }
 .past-row .opt-go svg.i { width: 14px; height: 14px; }
+/* Saved replies: a tap sends one, a long press puts it in the box; the text a finger holds is not selected. */
+.answer .replies { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.replies > .chip { padding: 3px 10px; max-width: 16em; color: var(--text); cursor: pointer; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.replies > .chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.replies > .chip[disabled] { color: var(--muted); cursor: default; }
+.replies > .reply-edit { color: var(--faint); }
+.replies > .reply-edit .i { width: 13px; height: 13px; }
+.replies > .reply-edit.icon-only { padding-inline: 8px; }
+.replies-error { margin: -6px 0 0; color: var(--danger); font-size: 0.8125rem; line-height: 1.45; }
 .answer .opts .tick { display: inline-grid; place-items: center; width: 14px; height: 14px; margin-right: 8px; vertical-align: -1px; border: 1.5px solid var(--border-strong); border-radius: 4px;
   transition: background-color var(--dur-2), border-color var(--dur-2); }
 .answer .opts button[aria-pressed="true"] .tick { background: var(--accent); border-color: var(--accent); }
@@ -1026,6 +1035,9 @@ dialog.sess .dhead .find-open[aria-pressed="true"] { border-color: color-mix(in 
   dialog .session-body .pchips { top: -12px; margin: -12px calc(-1 * var(--pad-r)) 0 calc(-1 * var(--pad-l)); padding: 8px var(--pad-r) 8px var(--pad-l);
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   dialog .session-body .pchips > * { flex: none; }
+  /* The saved replies too: one line a finger scrolls sideways, which sends nothing. */
+  .answer .replies { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+  .answer .replies > * { flex: none; }
   .chat-footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
   .ppart > .flow-sec { order: 1; } /* on a small screen the list comes first, the flow after it */
   .ppart > .back + .flow-sec { margin-top: 16px; }
@@ -1199,6 +1211,8 @@ dialog.sess .dhead .find-open[aria-pressed="true"] { border-color: color-mix(in 
   .col-foot:has(> .keys-only:only-child) { display: none; }
   /* The session panel's chips keep one height, the buttons among them a finger's reach in an invisible margin. */
   .pchips > .chip { min-height: 32px; }
+  /* In a row that scrolls, which would clip a margin outside it. */
+  .replies > .chip { min-height: 36px; }
   .pchips button.chip { position: relative; }
   .pchips button.chip::after { content: ""; position: absolute; inset: -6px 0; }
   /* To review's own Mark all as seen (desk.js, one column only): a finger's height, which the head's ellipsis would

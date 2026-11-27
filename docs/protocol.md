@@ -30,6 +30,7 @@ first, and a file that fails is reported on the page ("N unreadable files"), nev
 | `reviews/<review>/state.json` | `ReviewState`: the page's `localStorage` (`data`, string to string), the text it copied (`summary`) and `rev`, one more at each accepted write; never in `DeskState` | the page |
 | `seen.json` | when the developer last marked everything as seen, which earlier versions of the page did: results recorded before it are still not new; nothing writes it now, each result keeps its own `seenAt` | earlier versions of the page |
 | `plan.json` | per plan window label (`5 h`, `7 d`, as the provider names it), its windows oldest first, the last the current one: `resetsAt` and a sample (`at`, `percent`) each time the percentage rose a point or more. A new reset time starts a window; the last four finished windows are kept, none that reset more than 35 days earlier. A label holding one window object instead of a list (the format of earlier installs) is read as its current window | the server, from the freshest metrics |
+| `replies.json` | `{ "replies": ["…"], "rev": n }`: the developer's saved replies, at most 20, each trimmed, non-empty, at most 500 characters, one line (the editor holds one per line) with no control character but tab and no bidi or invisible one (`\p{Cf}`, default-ignorable code points such as U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF, lone surrogates, U+2800: the same set `compactInstructionsLine` removes), no duplicates (`readSavedReplies`, whose refusals name a reply by its line in the editor, from 1); `rev`, raised by each save, 0 in a file written before it was kept. An unreadable file reads as none at `rev` 0, its reason logged by the server and shown in the editor; a save replaces it | the page (`PUT /api/replies`) |
 | `secret` | per-install secret for the page's writes | the server, on first start |
 | `compile-cache/` | Node's compiled code of the desk's own TypeScript, kept between runs so a hook does not strip its types again (about 60 ms of each hook, measured 2026-11-17); Node checks each file's source and recompiles what changed | `bin/compile-cache.mjs`, preloaded by every command |
 
@@ -648,6 +649,8 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/push/subscribe` (a `PushSubscription` as JSON), `POST /api/push/unsubscribe` `{ "endpoint": "…" }` | the phone that gets "N need you" when a question opens; only `https://*.push.apple.com`, `https://fcm.googleapis.com` and `https://updates.push.services.mozilla.com` endpoints are accepted |
 | `GET /images/<id>` | a stored image, served with `Content-Security-Policy: default-src 'none'; sandbox` |
 | `POST /api/images` (the image itself, `Content-Type: image/*`, 20 MB at most) | keeps an image pasted or picked on the page; returns `{ "id": "…" }` |
+| `GET /api/replies` | `{ replies, rev, problem? }`: the saved replies (`replies.json`) and their revision, `problem` saying why the file could not be read when it could not (then `replies` is empty). The page fetches them when it starts, after a save and when its window comes to the front |
+| `PUT /api/replies` `{ "replies": ["…"], "rev": n }` | replaces the saved replies with these, checked as `replies.json` is (400 `{ error }` naming the reply's line and why otherwise; nothing changes then), when `rev` is the revision kept; returns `{ replies, rev }` as kept. 409 `{ error, stale: true, rev }`, nothing changed, when another device saved since the editor opened at `rev`: the editor keeps its text, shows why and fetches the list again, and a second Save from the `rev` it was told replaces that list. The editor sends its lines without the empty ones and shows them so, so the line a refusal names is the one shown. A `POST` there is 405 |
 | `POST /api/questions/<id>/answer` `{ "text": "…", "images"?: ["<id>"] }` | answer from the page, with up to 10 attached images |
 | `POST /api/questions/<id>/dismiss` | close without answering |
 | `POST /api/sessions/<id>/message` `{ "text": "…", "images"?: ["<id>"] }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
@@ -659,7 +662,7 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/reviews/<id>/send` `{ "to": "session" \| "other", "rev": n, "note"?: "…", "options"?: "…" }` | returns `{ line }` (the line, then the note); 409 `{ error, stale: true, rev }` when the state changed since the desk showed it at `rev`, 409 `{ error }` when the session takes no message now |
 | `POST /api/reviews/<id>/opened`, `POST /api/reviews/<id>/close` | opened on the desk (`openedAt`, set again when a newer round came since); leaves To review (stays in History) |
 
-Every `POST` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header
+Every `POST` and `PUT` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header
 `X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most, except an image and a review's state.
 
 ### How the page follows the store

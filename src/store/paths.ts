@@ -24,6 +24,8 @@ export class StorePaths {
   /** The VAPID key and the phones subscribed to push. */
   get push() { return path.join(this.home, "push.json"); }
   get plan() { return path.join(this.home, "plan.json"); }
+  /** The developer's saved replies, the same on every device. */
+  get replies() { return path.join(this.home, "replies.json"); }
   get sessionsDir() { return path.join(this.home, "sessions"); }
   get questionsDir() { return path.join(this.home, "questions"); }
   get resultsDir() { return path.join(this.home, "results"); }

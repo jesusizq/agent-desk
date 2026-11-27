@@ -512,6 +512,89 @@ describe("server", () => {
   });
 });
 
+describe("saved replies", () => {
+  const saved = async () => (await (await fetch(base + "/api/replies")).json()) as { replies: string[]; rev: number; problem?: string };
+  /** A save from the page: `rev`, the revision it edited from, that of the list kept now unless given. */
+  const put = async (body: unknown, headers: Record<string, string> = {}, rev?: number) =>
+    fetch(base + "/api/replies", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Origin: base, "X-Agent-Desk-Secret": secret, ...headers },
+      body: JSON.stringify(typeof body === "object" && body !== null && !Array.isArray(body) && !("rev" in body) ? { ...body, rev: rev ?? (await saved()).rev } : body),
+    });
+
+  it("are replaced whole by the page and read back by every device, trimmed and without duplicates, at a new revision each time", async () => {
+    assert.deepEqual(await saved(), { replies: [], rev: 0 }, "none before any is saved");
+    const res = await put({ replies: ["  sigue ", "haz commit y push", "sigue", "revísalo con un subagente"] });
+    assert.equal(res.status, 200);
+    const kept = ["sigue", "haz commit y push", "revísalo con un subagente"];
+    assert.deepEqual(await res.json(), { replies: kept, rev: 1 }, "it answers with the list as kept and its revision");
+    assert.deepEqual(await saved(), { replies: kept, rev: 1 });
+    assert.equal(fs.statSync(store.paths.replies).mode & 0o777, 0o600);
+    assert.equal((await put({ replies: ["sigue"] })).status, 200);
+    assert.deepEqual(await saved(), { replies: ["sigue"], rev: 2 }, "a save replaces the list, it does not add to it");
+  });
+
+  it("refuses a list it would not keep, saying why by the line of the editor, and keeps the one before", async () => {
+    assert.equal((await put({ replies: ["sigue"] })).status, 200);
+    const before = await saved();
+    const bad: [unknown, RegExp][] = [
+      [{ replies: ["ok", ""] }, /replies, line 2: a saved reply must not be empty/],
+      [{ replies: ["x".repeat(501)] }, /at most 500 characters/],
+      [{ replies: Array.from({ length: 21 }, (_, i) => `reply ${i}`) }, /at most 20 saved replies, got 21/],
+      [{ replies: ["a\u001bb"] }, /replies, line 1: a saved reply is one line with no control character but tab and no bidi or invisible one/],
+      [{ replies: ["sigue", "haz esto\ny esto"] }, /replies, line 2: a saved reply is one line/],
+      [{ replies: ["sigue", "ok", "rm\u202e -rf"] }, /replies, line 3: .*no bidi or invisible one/],
+      [{ replies: ["\u200bsigue"] }, /replies, line 1: .*no bidi or invisible one/],
+      [{ replies: ["sigue"], rev: "1" }, /rev: expected an integer/],
+      [{ replies: "sigue" }, /replies: expected a list/],
+      [{}, /replies: expected a list/],
+      [["sigue"], /body: expected an object/],
+    ];
+    for (const [body, why] of bad) {
+      const res = await put(body);
+      assert.equal(res.status, 400, JSON.stringify(body).slice(0, 40));
+      assert.match(((await res.json()) as { error: string }).error, why);
+    }
+    assert.deepEqual(await saved(), before);
+  });
+
+  it("refuses with 409 a save edited from a revision another device has saved over, the file unchanged", async () => {
+    assert.equal((await put({ replies: ["sigue"] })).status, 200);
+    const { rev } = await saved();
+    assert.equal((await put({ replies: ["from the phone"] }, {}, rev)).status, 200, "another device saves first");
+    const file = fs.readFileSync(store.paths.replies, "utf8");
+    const late = await put({ replies: ["from the laptop"] }, {}, rev);
+    assert.equal(late.status, 409);
+    const body = (await late.json()) as { error: string; stale: boolean; rev: number };
+    assert.deepEqual({ stale: body.stale, rev: body.rev }, { stale: true, rev: rev + 1 }, "it says so, with the revision kept now");
+    assert.match(body.error, /changed on another device/);
+    assert.equal(fs.readFileSync(store.paths.replies, "utf8"), file, "the file is unchanged");
+    assert.deepEqual(await saved(), { replies: ["from the phone"], rev: rev + 1 });
+    assert.equal((await put({ replies: ["from the laptop"] }, {}, body.rev)).status, 200, "saved again from that revision, it applies");
+    assert.deepEqual(await saved(), { replies: ["from the laptop"], rev: rev + 2 });
+  });
+
+  it("are written only from the page: its secret, its exact origin, and only by PUT", async () => {
+    assert.equal((await put({ replies: ["sigue"] })).status, 200);
+    const before = await saved();
+    assert.equal((await put({ replies: ["rm -rf"] }, { "X-Agent-Desk-Secret": "wrong" })).status, 403, "behind the secret");
+    assert.equal((await put({ replies: ["rm -rf"] }, { Origin: "http://evil.example" })).status, 403, "and the page's origin");
+    const noSecret = await fetch(base + "/api/replies", { method: "PUT", headers: { "Content-Type": "application/json", Origin: base }, body: JSON.stringify({ replies: ["rm -rf"], rev: before.rev }) });
+    assert.equal(noSecret.status, 403, "without the secret at all");
+    assert.equal((await post("/api/replies", { replies: ["rm -rf"], rev: before.rev })).status, 405, "a POST is not how they are saved");
+    assert.deepEqual(await saved(), before, "none of them changed the list");
+  });
+
+  it("reads an unreadable file as none at revision 0, and says why", async () => {
+    fs.writeFileSync(store.paths.replies, "{ not json", { mode: 0o600 });
+    const shown = await saved();
+    assert.deepEqual([shown.replies, shown.rev], [[], 0]);
+    assert.match(shown.problem ?? "", /replies\.json: not valid JSON/);
+    assert.equal((await put({ replies: ["sigue"] }, {}, 0)).status, 200, "a save replaces it");
+    assert.deepEqual(await saved(), { replies: ["sigue"], rev: 1 });
+  });
+});
+
 describe("remote access through Tailscale Serve", () => {
   it("accepts the tailnet name only with the configured Tailscale user, and its https origin for writes", async () => {
     const store = testStore();
@@ -540,6 +623,14 @@ describe("remote access through Tailscale Serve", () => {
       const write = { Host: remote.host, "Tailscale-User-Login": remote.user, "Content-Type": "application/json", "X-Agent-Desk-Secret": secret, Cookie: cookie };
       assert.equal(await call("POST", "/api/results/seen", { ...write, Origin: `https://${remote.host}` }, NO_IDS), 200);
       assert.equal(await call("POST", "/api/results/seen", { ...write, Origin: `http://${remote.host}` }, NO_IDS), 403);
+      const replies = JSON.stringify({ replies: ["sigue"], rev: 0 });
+      const { Cookie: _, ...locked } = write;
+      assert.equal(await call("GET", "/api/replies", { ...locked }), 401, "the saved replies only behind the PIN");
+      assert.equal(await call("PUT", "/api/replies", { ...locked, Origin: `https://${remote.host}` }, replies), 401, "and saved only behind it");
+      assert.equal(await call("PUT", "/api/replies", { ...write, Origin: `http://${remote.host}` }, replies), 403, "from the tailnet's https origin only");
+      assert.deepEqual(store.savedReplies([]), { replies: [], rev: 0 }, "nothing saved so far");
+      assert.equal(await call("PUT", "/api/replies", { ...write, Origin: `https://${remote.host}` }, replies), 200);
+      assert.deepEqual(store.savedReplies([]), { replies: ["sigue"], rev: 1 }, "saved from the phone, for every device");
     } finally {
       server.close();
     }

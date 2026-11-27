@@ -141,6 +141,9 @@ export function shellSuggestionLine(value: string): string {
   return compactInstructionsLine(t) === t ? t : "";
 }
 
+/** Bidi, format and blank characters and lone surrogates: the page would show other words than those sent. */
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cs}\u2800]/u;
+
 /** The most instructions a compaction is given, in characters. */
 export const COMPACT_INSTRUCTIONS_MAX = 10_000;
 /** And in UTF-8 bytes: tmux refuses a command of more than about 16 KiB ("command too long"). */
@@ -157,7 +160,7 @@ export function compactInstructionsLine(value: string, max = COMPACT_INSTRUCTION
   const one = value
     .replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/g, " ")
     .replace(new RegExp(CONTROL.source, "gu"), "")
-    .replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cs}\u2800]/gu, "") // bidi, format and blank ones, lone surrogates: the page would show other words than those sent
+    .replace(new RegExp(INVISIBLE.source, "gu"), "")
     .replace(/\s+/g, " ")
     .trim();
   let chars = 0;
@@ -538,6 +541,31 @@ function readResumeNote(value: unknown, where: string): ResumeNote {
 
 export function readSeen(value: unknown, where = "seen"): Seen {
   return { since: isoTime(fields(value, where).since, `${where}.since`) };
+}
+
+/** Saved replies: the phrases the developer sends sessions again and again, sent from the desk with one tap. */
+export const SAVED_REPLIES_MAX = 20;
+export const SAVED_REPLY_MAX = 500;
+/**
+ * The saved replies, checked: each trimmed, non-empty, at most SAVED_REPLY_MAX characters, one line
+ * (the editor holds one per line) with no control character but tab and no bidi or invisible one;
+ * duplicates dropped, the first kept. A refusal names the reply by its line in the editor, from 1.
+ */
+export function readSavedReplies(value: unknown, where: string): string[] {
+  const replies = [
+    ...new Set(
+      list(value, where, (v) => v).map((v, i) => {
+        const w = `${where}, line ${i + 1}`;
+        const reply = text(v, w).trim();
+        if (reply === "") throw new InputError(`${w}: a saved reply must not be empty`);
+        if (reply.length > SAVED_REPLY_MAX) throw new InputError(`${w}: a saved reply holds at most ${SAVED_REPLY_MAX} characters, this one ${reply.length}`);
+        if (CONTROL.test(reply.replaceAll("\t", "")) || INVISIBLE.test(reply)) throw new InputError(`${w}: a saved reply is one line with no control character but tab and no bidi or invisible one`);
+        return reply;
+      }),
+    ),
+  ];
+  if (replies.length > SAVED_REPLIES_MAX) throw new InputError(`${where}: at most ${SAVED_REPLIES_MAX} saved replies, got ${replies.length}; remove some`);
+  return replies;
 }
 
 /** The plan windows' history (src/core/limits.ts), checked; a label holding one window is the format before past windows were kept. */

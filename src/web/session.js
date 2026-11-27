@@ -5,6 +5,7 @@ import { arrive } from "./motion.js";
 import { TEXT } from "./text.js";
 import { agentRows, agentsPart, failedUnseen, sessionAgents, sessionQuiet } from "./agents.js";
 import { askBody, replyBox } from "./answer.js";
+import { shownReplies } from "./replies.js";
 import { controlSection, forgetButton, runnableShell } from "./control.js";
 import { conversationView, loadConversation, outgoingView } from "./conversation.js";
 import { ago, duration, firstLine, gb, stamp } from "./format.js";
@@ -287,6 +288,7 @@ function panelShows(s) {
     ui.offline && offlineText(),
     [...ui.stepsOpen],
     [...ui.contextOpen],
+    shownReplies(), // the chips above the box
     Math.floor(Date.now() / 60_000), // times shown as "for 5 min"
   ]);
 }

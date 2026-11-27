@@ -7,6 +7,7 @@ import { headline } from "./format.js";
 import { COARSE, fitBox } from "./layout.js";
 import { dot, toast } from "./pieces.js";
 import { imageUrl, post, routeOf, run, saveDrafts, uploadImage } from "./server.js";
+import { repliesRow, shownReplies } from "./replies.js";
 import { ATTACHED_IMAGES_MAX, data, page, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -99,18 +100,23 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
   /**
    * @param {Event} e @param {string} [text] what to send: the box's text unless a decision says otherwise
    * @param {boolean} [focusNext] answered, the next question's box takes the focus (by keys or a mouse, never under a finger: it would raise the keyboard)
+   * @param {boolean} [alone] a saved reply: its text only, without the images attached, and a message's box keeps what it holds
    */
-  const send = (e, text = decide ? denial(decide, box.value) : box.value, focusNext = e instanceof KeyboardEvent) => {
+  const send = (e, text = decide ? denial(decide, box.value) : box.value, focusNext = e instanceof KeyboardEvent, alone = false) => {
+    const images = alone ? [] : attached;
     // Read now, not as last drawn: a second click before the redraw must not send twice.
-    if (off || (!text.trim() && attached.length === 0) || ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0) return;
+    if (off || (!text.trim() && images.length === 0) || ui.sending.has(key) || (ui.uploading.get(key) ?? 0) > 0) return;
     // An answered card leaves, and the keyboard with it; a message's box stays, as in a chat app.
     const answer = key.startsWith("answer-");
+    const keepsBox = alone && !answer;
     const from = (e.currentTarget instanceof Element ? e.currentTarget : box).closest("#arrival, #session")?.id ?? "desk";
     const delivered = () => {
-      ui.drafts.delete(key);
-      ui.draftImages.delete(key);
-      saveDrafts();
-      empty();
+      if (!keepsBox) {
+        ui.drafts.delete(key);
+        ui.draftImages.delete(key);
+        saveDrafts();
+        empty();
+      }
       landed(key, sid);
       if (!answer || !focusNext) return;
       if (from === "arrival") ui.arrivalFocus = true;
@@ -119,14 +125,14 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
     if (answer) box.blur();
     if (from === "session") {
       // In the conversation, as a chat app: the text leaves the box for a bubble that says how its delivery goes.
-      const fromBox = text === box.value;
+      const fromBox = !keepsBox && text === box.value;
       if (fromBox) empty();
-      deliver({ id: `out-${++outgoingSeq}`, key, sid, text, images: attached, state: "sending", before: 0, fromBox }, delivered);
+      deliver({ id: `out-${++outgoingSeq}`, key, sid, text, images, state: "sending", before: 0, fromBox }, delivered);
       return;
     }
     ui.sending.add(key);
     markSending(key, true);
-    run(post(route, attached.length ? { text, images: attached } : { text }).then(delivered), () => {
+    run(post(route, images.length ? { text, images } : { text }).then(delivered), () => {
       ui.sending.delete(key);
       markSending(key, false);
     });
@@ -158,6 +164,17 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
     if (option === undefined || picked(box.value) === null) return false;
     pick(option, true);
     return true;
+  };
+  /** A saved reply put in the box to change before sending: after what it holds, on a line of its own. @param {string} reply */
+  const insert = (reply) => {
+    if (off || box.readOnly) return;
+    box.value = box.value === "" || box.value.endsWith("\n") ? box.value + reply : `${box.value}\n${reply}`;
+    ui.drafts.set(key, box.value);
+    saveDrafts();
+    syncPressed();
+    fitBox(box);
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
   };
   // What is on its way stays as sent: an edit made meanwhile would be lost with the draft.
   /** The box on the page: this new one, or the one being typed in that `patch` kept. @type {HTMLTextAreaElement} */
@@ -290,6 +307,11 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
           ),
           uploading ? h("span", { class: "faint" }, TEXT.attaching) : null,
         )
+      : null,
+    // A permission's box holds a reason to deny it: a saved reply is not one.
+    // Calm: a question's card shows them only when there are some and it can take one now; the panel's own box always, so its foot never jumps.
+    !decide && (key.startsWith("message-") || (off === null && shownReplies().length > 0))
+      ? repliesRow({ disabled: off !== null || busy || uploading, send: (e, reply) => send(e, reply, !byFinger(e), true), insert })
       : null,
     box,
     h(

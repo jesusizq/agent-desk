@@ -19,6 +19,7 @@ import { openResult } from "./result.js";
 import { openReview, renderReview } from "./review.js";
 import { follow } from "./live.js";
 import { refresh } from "./server.js";
+import { loadReplies } from "./replies.js";
 import { openSession, renderPanel } from "./session.js";
 import { EDGE_PX, sessionSwipe } from "./swipe.js";
 import { data, inFlight, itemKey, openItems, page, S, ui } from "./state.js";
@@ -254,6 +255,7 @@ if ("serviceWorker" in navigator) {
 renderDisplay();
 render();
 dispatchEvent(new Event("agent-desk:started")); // boot.js: the modules loaded and ran
+loadReplies();
 await refresh();
 route();
 follow();
@@ -261,6 +263,8 @@ watchAway();
 followKeyboard();
 // A phone puts a hidden tab's timers to sleep: coming back, the desk is fetched at once, not at the next tick.
 document.addEventListener("visibilitychange", () => document.hidden || refresh());
+// Saved on another device meanwhile: fetched again when the desk comes back to the front, not at each change.
+addEventListener("focus", loadReplies);
 addEventListener("pageshow", (e) => /** @type {PageTransitionEvent} */ (e).persisted && refresh());
 for (const change of ["online", "offline"]) addEventListener(change, () => (render(), refresh()));
 setInterval(render, TICK_MS);

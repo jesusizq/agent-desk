@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { InputError } from "../src/core/check.ts";
 import { procInfo } from "../src/core/proc.ts";
-import { Store } from "../src/store/store.ts";
+import { StaleReplies, Store } from "../src/store/store.ts";
 import { addSession, PNG, tempHome, testStore } from "./helpers.ts";
 
 const run = promisify(execFile);
@@ -30,6 +30,82 @@ describe("store files", () => {
     assert.equal(store.secret(), secret);
     assert.equal(new Store(store.paths.home).secret(), secret);
     assert.equal(fs.statSync(store.paths.secret).mode & 0o777, 0o600);
+  });
+
+  it("keeps the saved replies whole, 0600, trimmed and without duplicates, raising their revision at each save", () => {
+    const store = testStore();
+    const problems: string[] = [];
+    assert.deepEqual(store.savedReplies(problems), { replies: [], rev: 0 }, "none before any is saved");
+    const kept = ["sigue", "haz commit y push", "revísalo\tcon un subagente y dime"];
+    assert.deepEqual(store.saveReplies([" sigue ", "haz commit y push", "sigue", "revísalo\tcon un subagente y dime"], 0), { replies: kept, rev: 1 });
+    assert.deepEqual(new Store(store.paths.home).savedReplies(problems), { replies: kept, rev: 1 }, "read back as kept");
+    assert.equal(fs.statSync(store.paths.replies).mode & 0o777, 0o600);
+    assert.deepEqual(fs.readdirSync(store.paths.home).filter((n) => n.includes("replies")), ["replies.json"], "no temp or lock file left beside it");
+    assert.deepEqual(problems, []);
+    const most = Array.from({ length: 20 }, (_, i) => `${i}`.padEnd(500, "x"));
+    assert.deepEqual(store.saveReplies([...most, most[0]], 1), { replies: most, rev: 2 }, "20 of 500 characters, a duplicate dropped before they are counted");
+    assert.deepEqual(store.saveReplies([], 2), { replies: [], rev: 3 }, "and all removed");
+  });
+
+  it("refuses saved replies it would not keep, saying why by the line of the editor, and keeps those before", () => {
+    const store = testStore();
+    store.saveReplies(["sigue"], 0);
+    const before = fs.readFileSync(store.paths.replies, "utf8");
+    const bad: [unknown, RegExp][] = [
+      [["ok", "  "], /replies, line 2: a saved reply must not be empty/],
+      [["x".repeat(501)], /replies, line 1: a saved reply holds at most 500 characters, this one 501/],
+      [Array.from({ length: 21 }, (_, i) => `reply ${i}`), /replies: at most 20 saved replies, got 21/],
+      [["a\u0007b"], /replies, line 1: a saved reply is one line with no control character but tab and no bidi or invisible one/],
+      [["ok", "a\nb"], /replies, line 2: a saved reply is one line/],
+      [["a\rb"], /is one line/],
+      [["a\u2028b"], /is one line/],
+      [["a\u2029b"], /is one line/],
+      [["a\u0085b"], /is one line/],
+      ...["\u200b", "\u200d", "\u200e", "\u200f", "\u202a", "\u202e", "\u2066", "\u2069", "\ufeff", "\ud800"].map((c): [unknown, RegExp] => [["sigue", "ok", `rm${c} -rf`], /replies, line 3: .*no bidi or invisible one/]),
+      [[42], /replies, line 1: expected text/],
+      ["sigue", /replies: expected a list/],
+      [undefined, /replies: expected a list/],
+    ];
+    for (const [replies, why] of bad) assert.throws(() => store.saveReplies(replies, 1), (e: unknown) => e instanceof InputError && why.test(e.message), JSON.stringify(replies)?.slice(0, 40));
+    assert.equal(fs.readFileSync(store.paths.replies, "utf8"), before, "the file is unchanged");
+    assert.deepEqual(store.savedReplies([]), { replies: ["sigue"], rev: 1 });
+  });
+
+  it("refuses saved replies edited from an older revision than the one kept, the file unchanged", () => {
+    const store = testStore();
+    // A file kept before replies had a revision reads as revision 0.
+    fs.writeFileSync(store.paths.replies, '{"replies":["sigue"]}', { mode: 0o600 });
+    assert.deepEqual(store.savedReplies([]), { replies: ["sigue"], rev: 0 });
+    assert.deepEqual(store.saveReplies(["sigue", "haz commit"], 0), { replies: ["sigue", "haz commit"], rev: 1 }, "saved from what it showed");
+    const before = fs.readFileSync(store.paths.replies, "utf8");
+    for (const seen of [0, 2]) {
+      assert.throws(
+        () => store.saveReplies(["mine"], seen),
+        (e: unknown) => e instanceof StaleReplies && e.rev === 1 && /changed on another device .*\(revision 1, edited from \d\)/.test(e.message),
+        `edited from ${seen}`,
+      );
+    }
+    assert.equal(fs.readFileSync(store.paths.replies, "utf8"), before, "the file is unchanged");
+    assert.deepEqual(store.saveReplies(["mine"], 1), { replies: ["mine"], rev: 2 }, "saved again from the revision kept, it applies");
+  });
+
+  it("reads an unreadable saved replies file as none at revision 0, saying why", () => {
+    const store = testStore();
+    for (const [content, why] of [
+      ["{ not json", /replies\.json: not valid JSON/],
+      ['{"replies":"sigue"}', /replies\.json: replies: expected a list/],
+      ['["sigue"]', /replies\.json: expected an object/],
+      ['{"replies":[""]}', /must not be empty/],
+      ['{"replies":["a\\nb"]}', /replies\.json: replies, line 1: a saved reply is one line/],
+      ['{"replies":["sigue"],"rev":-1}', /replies\.json: rev: expected an integer/],
+    ] as const) {
+      fs.writeFileSync(store.paths.replies, content);
+      const problems: string[] = [];
+      assert.deepEqual(store.savedReplies(problems), { replies: [], rev: 0 }, content);
+      assert.equal(problems.length, 1, content);
+      assert.match(problems[0] ?? "", why);
+    }
+    assert.deepEqual(store.saveReplies(["sigue"], 0), { replies: ["sigue"], rev: 1 }, "a save replaces it");
   });
 
   it("refuses ids that would leave the store", () => {

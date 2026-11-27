@@ -257,6 +257,7 @@ const ICONS = {
   branch: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9c0 4-4 5-8 6l-2 1"/>',
   archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
   history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
+  pencil: '<path d="M12 20h9"/><path d="M16.4 3.6a2 2 0 0 1 2.9 2.9L7 18.8 3 20l1.2-4z"/>',
 };
 /** @typedef {keyof typeof ICONS} IconName */
 
@@ -381,7 +382,7 @@ export const DRAFTS_KEY = "agent-desk:drafts";
 export const REVIEWS_KEY = "agent-desk:reviews";
 
 /** The page's windows (index.html): a backdrop click, going back to Needs you and the arrival bubble treat them alike. */
-export const WINDOWS = /** @type {const} */ (["result", "session", "zoom", "review", "review-send", "strip-alerts"]);
+export const WINDOWS = /** @type {const} */ (["result", "session", "zoom", "review", "review-send", "strip-alerts", "replies-edit"]);
 
 /**
  * The head of an open window, under which a bubble or toast comes in from the top. A sheet gives none:
