@@ -4,8 +4,9 @@ import { h, icon, mdBlocks } from "./dom.js";
 import { TEXT } from "./text.js";
 import { hm } from "./format.js";
 import { toast } from "./pieces.js";
-import { imageUrl, post, routeOf, run, saveDrafts } from "./server.js";
-import { ATTACHED_IMAGES_MAX, data, page, ui } from "./state.js";
+import { imageDeleted, imageUrl, post, routeOf, run, saveDrafts } from "./server.js";
+import { data, page, ui } from "./state.js";
+import { ATTACHED_IMAGES_MAX } from "./image-rules.js";
 import { zoom } from "./zoom.js";
 
 /** @typedef {import("../core/protocol.ts").ConversationEntry} ConversationEntry */
@@ -283,8 +284,38 @@ export function outgoingView(sid) {
     );
 }
 
-/** Images the developer attached on the desk, as thumbnails that open the zoom. @param {string[]} ids */
+/**
+ * Images the developer attached on the desk, as thumbnails that open the zoom; one the desk deleted
+ * (a day after the session it was sent to ended) as a placeholder of the thumbnail's height.
+ * @param {string[]} ids
+ */
 export function attachedImages(ids) {
-  const gallery = ids.map((id) => ({ src: imageUrl(id), caption: "" }));
-  return h("div", { class: "msg-imgs" }, gallery.map((p, i) => h("img", { src: p.src, alt: TEXT.attachedImage, onclick: () => zoom(gallery, i) })));
+  const kept = ids.filter((id) => !ui.deletedImages.has(id));
+  const gallery = kept.map((id) => ({ src: imageUrl(id), caption: "" }));
+  return h(
+    "div",
+    { class: "msg-imgs" },
+    ids.map((id) =>
+      ui.deletedImages.has(id)
+        ? h("span", { class: "img-gone" }, TEXT.imageDeleted)
+        : h("img", { src: imageUrl(id), alt: TEXT.attachedImage, onclick: () => zoom(gallery, kept.indexOf(id)), onerror: () => checkDeleted(id) }),
+    ),
+  );
+}
+
+/** Images whose failed load is being asked about. @type {Set<string>} */
+const asking = new Set();
+/** An attached image failed to load: drawn as deleted when the desk answers it does not have it. @param {string} id */
+function checkDeleted(id) {
+  if (asking.has(id)) return;
+  asking.add(id);
+  imageDeleted(id)
+    .then((deleted) => {
+      if (!deleted) return;
+      ui.deletedImages.add(id);
+      page.render();
+    })
+    // Out of reach: the desk's offline notice says so, and the image is asked about again at its next failed load.
+    .catch((/** @type {Error} */ error) => console.warn(`agent-desk: could not ask the desk about image ${id}:`, error.message))
+    .finally(() => asking.delete(id));
 }

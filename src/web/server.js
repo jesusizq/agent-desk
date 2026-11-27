@@ -284,6 +284,9 @@ export async function uploadImage(file) {
 /** Where the desk serves an image kept in the store. @param {string} id */
 export const imageUrl = (id) => `/images/${encodeURIComponent(id)}`;
 
+/** The desk answers it does not have the image (404): deleted, not out of reach, which throws. @param {string} id */
+export const imageDeleted = async (id) => (await write(imageUrl(id))).status === 404;
+
 /** The route a draft's key sends to (an answer to its question, a message to its session), or null for no such key. @param {string} key */
 export function routeOf(key) {
   const [, kind, id] = /^(answer|message)-(.+)$/.exec(key) ?? [];

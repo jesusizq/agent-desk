@@ -285,6 +285,7 @@ function panelShows(s) {
     ui.conversations.get(s.id)?.length,
     ui.conversations.get(s.id)?.at(-1)?.id, // at the store's cap a new message drops the oldest: the length stays
     [...ui.draftImages, ...ui.uploading, ...ui.sending], // the box below: images attached, a message on its way
+    ui.deletedImages.size, // attached images the desk answered it does not have, drawn as placeholders
     [...ui.outbox.values()].filter((o) => o.sid === s.id).map((o) => [o.id, o.state, o.error]),
     ui.offline && offlineText(),
     [...ui.stepsOpen],

@@ -1,5 +1,7 @@
 // The page in a real headless Chrome: the session panel's conversation follows its end, and finds in it.
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { describe, it } from "node:test";
 import { arrived, ownDesk, ownPhone, setupPage, SKIP, STILL } from "./page-harness.ts";
 import { type Page } from "./browser.ts";
@@ -212,6 +214,49 @@ describe("page: the session panel's conversation", SKIP, () => {
       (own) => {
         own.upsertSession({ id: "compactor", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "compacting its context", state: "waiting" });
         own.addMessage({ sessionId: "compactor", from: "session", text: "Ready for a compaction." });
+      },
+    );
+  });
+
+  it("shows an attached image the desk deleted as «Image deleted», in the conversation and the history, the size of a thumbnail", async () => {
+    const gone: string[] = [];
+    await ownDesk(
+      async (page) => {
+        await page.eval("location.hash = '#s=pictures'");
+        const placeholders = (where: string) => page.eval<string[]>(`[...document.querySelectorAll('${where} .msg-imgs .img-gone')].map((p) => p.textContent)`);
+        await page.waitFor(`${arrived("session")} && document.querySelectorAll('#session .msg-imgs .img-gone').length === 2`);
+        assert.deepEqual(await placeholders("#session"), ["Image deleted", "Image deleted"], "the message's and the answer's");
+        const sizes = await page.eval<{ kept: number[]; gone: number[] }>(`(() => {
+          const box = (el) => { const r = el.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; };
+          const kept = document.querySelector('#session .msg-imgs img');
+          return { kept: kept.complete && kept.naturalWidth > 0 ? box(kept) : [], gone: box(document.querySelector('#session .msg-imgs .img-gone')) };
+        })()`);
+        assert.equal(sizes.kept[1], 72, "the image still kept shows as before");
+        assert.deepEqual(sizes.gone, [96, 72], "the placeholder takes a thumbnail's room");
+        const colour = () => page.eval<string>("getComputedStyle(document.querySelector('#session .img-gone')).color");
+        assert.equal(await colour(), "rgb(104, 112, 131)", "the faint text of the light theme");
+        await page.eval("document.documentElement.dataset.theme = 'dark'");
+        assert.equal(await colour(), "rgb(129, 138, 155)", "and of the dark one");
+        await page.eval("document.documentElement.dataset.theme = 'light'");
+        await page.press("Escape");
+        await page.click("#views button", "History");
+        await page.waitFor("[...document.querySelectorAll('.hitem')].some((h) => h.textContent.includes('Which mock?') && h.querySelector('.msg-imgs .img-gone'))");
+        assert.deepEqual(await placeholders(".hitem"), ["Image deleted"]);
+        const origin = await page.eval<string>("location.origin");
+        const failed = page.errors.splice(0);
+        assert.ok(failed.length > 0 && failed.every((e) => gone.some((id) => e === `Failed to load resource: the server responded with a status of 404 (Not Found) ${origin}/images/${id}`)), failed.join("\n"));
+      },
+      (own) => {
+        own.upsertSession({ id: "pictures", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "sent pictures", state: "waiting" });
+        const png = fs.readFileSync(path.join(import.meta.dirname, "../scripts/demo-images/pay-button-a.png"));
+        const [deleted, kept, answered] = [own.addImage(png), own.addImage(png), own.addImage(png)];
+        own.addMessage({ sessionId: "pictures", from: "developer", text: "Like these", via: "desk", images: [deleted, kept] });
+        const stop = own.listen("pictures");
+        own.answerFromDesk(own.ask({ sessionId: "pictures", kind: "question", text: "Which mock?" }).id, "this one", [answered]);
+        own.takeInbox("pictures");
+        stop();
+        for (const id of [deleted, answered]) fs.rmSync(own.imageFile(id)?.file ?? "");
+        gone.push(deleted, answered);
       },
     );
   });

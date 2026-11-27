@@ -156,6 +156,7 @@ export const TEXT = {
   attachImage: "Attach images",
   pasteImages: "Paste images to attach them.",
   attachedImage: "Attached image",
+  imageDeleted: "Image deleted",
   removeImage: "Remove this image",
   attaching: "Attaching…",
   /** @param {number} n */

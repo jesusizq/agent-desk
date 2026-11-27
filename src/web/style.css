@@ -867,6 +867,7 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .steps-fold { align-self: flex-start; font-size: 0.7812rem; text-decoration: none; }
 .msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .msg-imgs img { height: 72px; max-width: 180px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); cursor: zoom-in; background: #fff; }
+.msg-imgs .img-gone { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; height: 72px; width: 96px; padding: 0 8px; border-radius: 6px; border: 1px dashed var(--border-strong); background: var(--surface-2); color: var(--faint); font-size: 0.75rem; line-height: 1.3; text-align: center; }
 .msg.working-now { max-width: none; align-self: stretch; border-top: 1px solid var(--border); padding-top: 10px; font-size: 0.8125rem; }
 /* Its live mark centred on the line, not sitting on the small text's baseline. */
 .msg.working-now .msg-meta { margin: 0 0 4px; display: flex; align-items: center; gap: 6px; }

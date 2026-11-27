@@ -29,8 +29,6 @@ export const page = {
   /** @type {() => void} */ renewPush: unwired("renewPush"),
 };
 
-export { ATTACHED_IMAGES_MAX } from "./image-rules.js";
-
 export const CONTEXT_WARN = 80;
 export const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
@@ -74,6 +72,7 @@ export const ui = {
   /** @type {Map<string, string>} */ drafts: new Map(),
   /** @type {Map<string, string[]>} ids of the images attached to each draft */ draftImages: new Map(),
   /** @type {Map<string, number>} images of each draft still on their way to the store */ uploading: new Map(),
+  /** @type {Set<string>} attached images the desk answered it does not have: deleted, their session ended a day before */ deletedImages: new Set(),
   /** @type {Set<string> | null} */ known: null,
   /** @type {Map<string, string> | null} when each session last said something, to notice new messages */ heardAt: null,
   /** @type {Map<string, string>} the message each session was last marked read for; a failure is not retried in a loop */ readFor: new Map(),
