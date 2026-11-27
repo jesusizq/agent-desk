@@ -9,7 +9,9 @@ import { dot, toast } from "./pieces.js";
 import { imageUrl, post, routeOf, run, saveDrafts, uploadImage } from "./server.js";
 import { repliesRow, shownReplies } from "./replies.js";
 import { micButton } from "./dictate.js";
-import { ATTACHED_IMAGES_MAX, data, midTurn, page, S, ui } from "./state.js";
+import { data, midTurn, page, S, ui } from "./state.js";
+import { ATTACHED_IMAGES_MAX } from "./image-rules.js";
+import { KEPT_TYPES, mayBeImage, storable } from "./images.js";
 
 /** @typedef {import("../core/protocol.ts").Question} Question */
 /** @typedef {import("../core/protocol.ts").ConversationEntry} ConversationEntry */
@@ -17,8 +19,6 @@ import { ATTACHED_IMAGES_MAX, data, midTurn, page, S, ui } from "./state.js";
 /** @typedef {import("./state.js").Item} Item */
 /** @typedef {import("./dom.js").Child} Child */
 
-/** The images a reply box takes, picked or dropped. */
-const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 /** Each box's way to pick its options by digit, as its own keys do. @type {WeakMap<Element, (n: number) => boolean>} */
 const pickers = new WeakMap();
 /**
@@ -106,13 +106,15 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
   };
   const attached = images && !leftTheBox(key) ? (ui.draftImages.get(key) ?? []) : [];
   const uploading = (ui.uploading.get(key) ?? 0) > 0;
-  /** @param {Blob[]} files */
+  /** @param {File[]} files */
   const attach = (files) => {
     // Those still on their way count too: before they land, more must not pass the cap the server holds at Send.
     const room = ATTACHED_IMAGES_MAX - attached.length - (ui.uploading.get(key) ?? 0);
     for (const file of files.slice(0, Math.max(0, room))) {
       ui.uploading.set(key, (ui.uploading.get(key) ?? 0) + 1);
-      run(uploadImage(file).then((id) => (ui.draftImages.set(key, [...(ui.draftImages.get(key) ?? []), id]), saveDrafts())), () => ui.uploading.set(key, (ui.uploading.get(key) ?? 1) - 1));
+      // storable's errors name the file already; the server's refusal or a network error does not.
+      const upload = (/** @type {Blob} */ blob) => uploadImage(blob).catch((error) => { throw new Error(`${file.name}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); });
+      run(storable(file).then(upload).then((id) => (ui.draftImages.set(key, [...(ui.draftImages.get(key) ?? []), id]), saveDrafts())), () => ui.uploading.set(key, (ui.uploading.get(key) ?? 1) - 1));
     }
     if (files.length > room) toast(TEXT.tooManyImages(ATTACHED_IMAGES_MAX));
     // run() redraws only once an upload settles: "Attaching…" must show while it is on its way.
@@ -232,7 +234,10 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
     },
     onpaste: images
       ? (e) => {
-          const files = [...((e instanceof ClipboardEvent && e.clipboardData?.files) || [])].filter((f) => f.type.startsWith("image/"));
+          const clipboard = e instanceof ClipboardEvent ? e.clipboardData : null;
+          // A file copied in a file manager comes with its name as text: one with no type is an image only without that text.
+          const named = clipboard?.types.includes("text/plain") ?? false;
+          const files = [...(clipboard?.files ?? [])].filter((f) => f.type.startsWith("image/") || (f.type === "" && !named));
           if (files.length === 0) return; // text is pasted as usual
           e.preventDefault();
           attach(files);
@@ -286,7 +291,7 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
   };
   // A drag that carries files is the box's to settle, or the browser would open a file it does not take in place of the desk;
   // text dragged in goes into the box as usual. While dragging, browsers may hide a file's type, and Safari the files themselves,
-  // until the drop: hidden, they may be images, and the drop takes only those that are.
+  // until the drop: hidden, they may be images, and the drop takes only those that may be, naming the others.
   /** @param {Event} e @returns {e is DragEvent & { currentTarget: Element }} */
   const carriesFiles = (e) => e instanceof DragEvent && e.currentTarget instanceof Element && e.dataTransfer?.types.includes("Files") === true;
   const dropping = images
@@ -295,7 +300,7 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
           if (!carriesFiles(e)) return;
           e.preventDefault();
           const files = [...(e.dataTransfer?.items ?? [])].filter((i) => i.kind === "file");
-          const takes = off === null && (files.length === 0 || files.some((i) => i.type === "" || IMAGE_TYPES.includes(i.type)));
+          const takes = off === null && (files.length === 0 || files.some((i) => mayBeImage(i.type)));
           if (e.dataTransfer) e.dataTransfer.dropEffect = takes ? "copy" : "none";
           e.currentTarget.classList.toggle("drop-over", takes);
         },
@@ -306,8 +311,12 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
           if (!carriesFiles(e)) return;
           e.preventDefault();
           e.currentTarget.classList.remove("drop-over");
-          const dropped = [...(e.dataTransfer?.files ?? [])].filter((f) => IMAGE_TYPES.includes(f.type));
-          if (off === null && dropped.length > 0) attach(dropped);
+          if (off !== null) return;
+          const files = [...(e.dataTransfer?.files ?? [])];
+          const left = files.filter((f) => !mayBeImage(f.type));
+          if (left.length > 0) toast(TEXT.notImages(left.map((f) => f.name).join(", ")));
+          const dropped = files.filter((f) => mayBeImage(f.type));
+          if (dropped.length > 0) attach(dropped);
         },
       }
     : {};
@@ -379,7 +388,7 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
             { class: "send-col" },
             images
               ? [
-                  h("input", { type: "file", accept: IMAGE_TYPES.join(","), multiple: true, hidden: true, onchange: (e) => e.currentTarget instanceof HTMLInputElement && attach([...(e.currentTarget.files ?? [])]) }),
+                  h("input", { type: "file", accept: KEPT_TYPES.join(","), multiple: true, hidden: true, onchange: (e) => e.currentTarget instanceof HTMLInputElement && attach([...(e.currentTarget.files ?? [])]) }),
                   // A picture beside a desktop's box, a plus at the left of a phone's.
                   h("button", { class: "icon-btn add-image", title: TEXT.attachImage, "aria-label": TEXT.attachImage, disabled: off !== null, onclick: pickFiles }, icon("image", "i i-image"), icon("plus", "i i-plus")),
                 ]

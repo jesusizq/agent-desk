@@ -64,6 +64,7 @@ import {
 import { OPTIONS_KEY, optionsText, readOptionMarks } from "../core/options.ts";
 import { ensureDir, isCode, listJson, readJson, withLock, writeAtomic, writeJson } from "./fsx.ts";
 import { StorePaths } from "./paths.ts";
+import { IMAGE_MAX_BYTES, IMAGE_MAX_MB, IMAGE_TYPES, type ImageExt, imageType } from "../web/image-rules.js";
 
 export type Clock = () => Date;
 
@@ -179,10 +180,6 @@ export type DecisionSession = { id: string; title?: string; project: Session["pr
 export type Decision =
   | { source: "question"; at: string; session: DecisionSession; question: Question }
   | { source: "result"; at: string; session: DecisionSession; result: Result };
-
-export const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
-export const IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", webp: "image/webp", gif: "image/gif" } as const;
-export type ImageExt = keyof typeof IMAGE_TYPES;
 
 /** How long a question asked during a turn waits for that turn's end before it shows anyway. */
 const WRITING_MAX_MS = 5 * 60_000;
@@ -1151,13 +1148,13 @@ export class Store {
       throw new InputError(`${where}: cannot read ${source} (${(error as Error).message})`);
     }
     if (!stat.isFile()) throw new InputError(`${where}: ${source} is not a file`);
-    if (stat.size > IMAGE_MAX_BYTES) throw new InputError(`${where}: ${source} is larger than 20 MB`);
+    if (stat.size > IMAGE_MAX_BYTES) throw new InputError(`${where}: ${source} is larger than ${IMAGE_MAX_MB} MB`);
     return this.addImage(fs.readFileSync(source), `${where}: ${source}`);
   }
 
   /** Keeps an image (copied from a file, or attached on the desk) after checking it is one; returns its id. */
   addImage(data: Buffer, where = "image"): string {
-    if (data.length > IMAGE_MAX_BYTES) throw new InputError(`${where} is larger than 20 MB`);
+    if (data.length > IMAGE_MAX_BYTES) throw new InputError(`${where} is larger than ${IMAGE_MAX_MB} MB`);
     const ext = imageType(data);
     if (!ext) throw new InputError(`${where} is not a PNG, JPEG, WebP or GIF image`);
     const imageId = newId("img");
@@ -2117,16 +2114,6 @@ function within(dir: string, root: string): boolean {
 /** Text compared without case or accents ("Decisión" finds "decision"). */
 function fold(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
-}
-
-/** The image type its first bytes say, of those the store keeps. */
-export function imageType(data: Buffer): ImageExt | undefined {
-  const starts = (...bytes: number[]) => bytes.every((b, i) => data[i] === b);
-  if (starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "png";
-  if (starts(0xff, 0xd8, 0xff)) return "jpg";
-  if (starts(0x47, 0x49, 0x46, 0x38)) return "gif";
-  if (starts(0x52, 0x49, 0x46, 0x46) && data.subarray(8, 12).toString("latin1") === "WEBP") return "webp";
-  return undefined;
 }
 
 /** A change to a review's saved state as the page sends it, checked against the review limits. */

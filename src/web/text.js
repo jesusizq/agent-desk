@@ -160,6 +160,18 @@ export const TEXT = {
   attaching: "Attaching…",
   /** @param {number} n */
   tooManyImages: (n) => `At most ${n} images per message; the rest were left out.`,
+  /** @param {string} name @param {string} type */
+  unreadableImage: (name, type) => `${name}: this browser cannot read ${type || "its type"}; attach it as PNG or JPEG`,
+  /** @param {string} name @param {string} type */
+  unconvertedImage: (name, type) => `${name}: this browser could not convert it to ${type}; attach it as PNG or JPEG`,
+  /** @param {string} name @param {number} mb the most the store keeps */
+  tooLargeImage: (name, mb) => `${name}: larger than ${mb} MB, the most the desk keeps; attach a smaller image`,
+  /** @param {string} name @param {number} mb the most the store keeps */
+  tooLargeConverted: (name, mb) => `${name}: larger than ${mb} MB, the most the desk keeps, even as a JPEG; attach a smaller image`,
+  /** @param {string} name @param {string} why */
+  fileNotRead: (name, why) => `${name}: could not be read (${why}); attach it again`,
+  /** @param {string} names */
+  notImages: (names) => `${names}: not an image, left out`,
   permission: {
     allow: "Allow",
     deny: "Deny",

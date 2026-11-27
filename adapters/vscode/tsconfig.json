@@ -13,7 +13,9 @@
     "rewriteRelativeImportExtensions": true,
     "rootDir": "../..",
     "outDir": "out",
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": true
   },
   "include": ["src/**/*.ts"]
 }

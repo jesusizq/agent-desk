@@ -19,7 +19,8 @@ import { DICTATION_BODY_MAX, DICTATION_SECONDS_MAX, DictationError, NO_SPEECH, N
 import { NO_PIN, Push, subscription } from "./push.ts";
 import { whisperEngine, whisperHome } from "./whisper.ts";
 import { isCode } from "../store/fsx.ts";
-import { heldOf, IMAGE_MAX_BYTES, IMAGE_TYPES, MissingError, readReviewChange, StaleReplies, StaleReview, type Store, Undeliverable } from "../store/store.ts";
+import { IMAGE_MAX_BYTES, IMAGE_TYPES } from "../web/image-rules.js";
+import { heldOf, MissingError, readReviewChange, StaleReplies, StaleReview, type Store, Undeliverable } from "../store/store.ts";
 import { type FeedOptions, StateFeed } from "./feed.ts";
 import { PinRefused, RemoteUnlock } from "./remote-unlock.ts";
 import { type Access, deskOrigin, IMAGE_HEADERS, originAllowed, reachOf, remoteFromEnv, reviewHeaders, send, sendJson, writeAllowed } from "./security.ts";
@@ -31,6 +32,8 @@ const STATIC: Record<string, string> = {
   "/agents.js": "text/javascript; charset=utf-8",
   "/alerts.js": "text/javascript; charset=utf-8",
   "/answer.js": "text/javascript; charset=utf-8",
+  "/images.js": "text/javascript; charset=utf-8",
+  "/image-rules.js": "text/javascript; charset=utf-8",
   "/arrivals.js": "text/javascript; charset=utf-8",
   "/away.js": "text/javascript; charset=utf-8",
   "/control.js": "text/javascript; charset=utf-8",

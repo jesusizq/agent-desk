@@ -29,8 +29,7 @@ export const page = {
   /** @type {() => void} */ renewPush: unwired("renewPush"),
 };
 
-// The most images one answer or message carries, as the server allows (ATTACHED_IMAGES_MAX in protocol.ts).
-export const ATTACHED_IMAGES_MAX = 10;
+export { ATTACHED_IMAGES_MAX } from "./image-rules.js";
 
 export const CONTEXT_WARN = 80;
 export const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;

@@ -14,7 +14,9 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "adapters/claude-code/**/*.ts"]
 }

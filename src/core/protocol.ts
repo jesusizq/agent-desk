@@ -134,9 +134,6 @@ export const ANSWER_CHANNELS = ["terminal", "desk"] as const;
 /** Where an answer comes from: a channel, or `review`, the text a review's page copied (written by the page, not the developer). */
 export const ANSWER_SOURCES = [...ANSWER_CHANNELS, "review"] as const;
 
-/** Images the developer can attach to one answer or message from the desk. */
-export const ATTACHED_IMAGES_MAX = 10;
-
 /**
  * `images`: ids of images in the store the developer attached on the desk. `probable`: taken from
  * the developer's next message in the terminal, which may be about something else; an answer given

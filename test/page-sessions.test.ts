@@ -687,6 +687,37 @@ describe("page: sessions, the unlock, the connection and the event stream", SKIP
     assert.ok(store.imageFile(entry?.images?.[0] ?? ""), "the image is in the store");
   });
 
+  it("leaves to the browser a file copied in a file manager, pasted with its name as text, and attaches an untyped image pasted alone", async () => {
+    store.upsertSession({ id: "pasting-files", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "files pasted from a file manager", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "files pasted from a file manager");
+    await page.waitFor(`${arrived("session")} && document.querySelector('#session .session-body')?.dataset.fetched === 'yes'`);
+    await page.eval(`(() => {
+      const real = window.fetch;
+      window.sent = [];
+      window.fetch = (url, init) => (new URL(String(url), location.href).pathname === "/api/images" && window.sent.push(init.headers["Content-Type"]), real(url, init));
+    })()`);
+    /** Pastes into the box an untyped file (a Makefile's text or the fixture PNG), with its name as text/plain when `named`; true when the browser's own paste is left to run. */
+    const paste = (bytes: "makefile" | "png", named: boolean) =>
+      page.eval<boolean>(`(() => {
+        const data = new DataTransfer();
+        const bytes = ${JSON.stringify(bytes)} === "png" ? Uint8Array.from(atob(${JSON.stringify(PNG.toString("base64"))}), (c) => c.charCodeAt(0)) : "all:\\n\\tnode build.js\\n";
+        // As Chrome puts a file copied in a file manager: the file, with no type for an unknown extension, and its name as text.
+        data.items.add(new File([bytes], ${JSON.stringify(bytes)} === "png" ? "Captura" : "Makefile", { type: "" }));
+        if (${named}) data.setData("text/plain", "Makefile");
+        return document.querySelector("#session .chat-footer textarea").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+      })()`);
+
+    assert.equal(await paste("makefile", true), true, "the browser pastes its name into the box");
+    await page.waitFor(STILL);
+    assert.deepEqual(await page.eval<string[]>("window.sent"), [], "nothing uploaded");
+    assert.deepEqual(await page.eval<string[]>("[...document.querySelectorAll('.toast')].map((t) => t.textContent)"), [], "and no toast says it cannot be read");
+
+    assert.equal(await paste("png", false), false, "an untyped file pasted alone is taken by the box");
+    await page.waitFor("document.querySelector('#session .chat-footer .attached img')?.complete");
+    assert.deepEqual(await page.eval<string[]>("window.sent"), ["image/png"], "attached as the PNG its bytes say");
+  });
+
   it("counts the images still on their way toward the 10 a message takes", async () => {
     store.upsertSession({ id: "dropping-fast", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "screenshots dropped fast", takesMessagesWhileWorking: true });
     const page = await open();
@@ -715,6 +746,196 @@ describe("page: sessions, the unlock, the connection and the event stream", SKIP
     await page.click("#session .chat-footer .primary");
     await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.querySelectorAll('.msg-imgs img').length === 10 && m.querySelector('.delivered'))");
     assert.equal(store.takeInbox("dropping-fast")[0]?.images?.length, 10);
+  });
+
+  it("converts a dropped image the store does not keep as is (an iPhone's HEIC) one at a time, and names one this browser cannot read", async () => {
+    store.upsertSession({ id: "dropping-heic", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "screenshots from a phone", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "screenshots from a phone");
+    await page.waitFor(`${arrived("session")} && document.querySelector('#session .session-body')?.dataset.fetched === 'yes'`);
+    // What each upload says it carries; how many conversions run at once, each from its decoding to its encoding (or its
+    // failed decoding); and, while `window.hold` is set, every decoding waits for `release()`.
+    // `window.bmp(width, height, noise)`: a 24-bit BMP, which Chrome reads and the store does not keep, black at its top left
+    // quarter, or noise throughout.
+    await page.eval(`(() => {
+      window.bmp = (width, height, noise) => {
+        const size = 54 + width * 3 * height, view = new DataView(new ArrayBuffer(size)), pixels = new Uint8Array(view.buffer, 54);
+        [[0, 2, 0x4d42], [2, 4, size], [10, 4, 54], [14, 4, 40], [18, 4, width], [22, 4, -height], [26, 2, 1], [28, 2, 24]].forEach(([at, n, v]) => (n === 2 ? view.setUint16(at, v, true) : view.setInt32(at, v, true)));
+        if (noise) for (let at = 0; at < pixels.length; at += 65536) crypto.getRandomValues(pixels.subarray(at, at + 65536));
+        else for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) pixels.fill(x < width / 2 && y < height / 2 ? 0 : 255, (y * width + x) * 3, (y * width + x + 1) * 3);
+        return view.buffer;
+      };
+      window.shot = window.bmp(40, 30, false);
+      const real = window.fetch, decode = window.createImageBitmap, toBlob = HTMLCanvasElement.prototype.toBlob;
+      window.sent = [];
+      window.fetch = (url, init) => (new URL(String(url), location.href).pathname === "/api/images" && window.sent.push(init.headers["Content-Type"]), real(url, init));
+      window.held = [];
+      window.converting = 0;
+      window.mostConverting = 0;
+      const decoding = (...args) => decode(...args).catch((e) => (window.converting--, Promise.reject(e)));
+      window.createImageBitmap = (...args) => {
+        window.mostConverting = Math.max(window.mostConverting, ++window.converting);
+        return window.hold ? new Promise((go) => window.held.push(() => go(decoding(...args)))) : decoding(...args);
+      };
+      HTMLCanvasElement.prototype.toBlob = function (done, ...rest) {
+        return toBlob.call(this, (blob) => (window.converting--, done(blob)), ...rest);
+      };
+      window.release = () => window.held.forEach((go) => go());
+    })()`);
+    /** Drops files labelled image/heic: a 40×30 BMP's bytes (Chrome reads an image by its content) or bytes no browser reads. */
+    const drop = (names: string[], bytes: "bmp" | "junk") =>
+      page.eval(`(() => {
+        const bytes = ${JSON.stringify(bytes)} === "bmp" ? window.shot : new TextEncoder().encode("not an image at all");
+        const data = new DataTransfer();
+        for (const name of ${JSON.stringify(names)}) data.items.add(new File([bytes], name, { type: "image/heic" }));
+        document.querySelector("#session .chat-footer textarea").dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+      })()`);
+    const thumbs = "document.querySelectorAll('#session .chat-footer .attached img').length";
+
+    await drop(["Captura 2026-11-27 a las 15.23.31.heic"], "bmp");
+    await page.waitFor(`${thumbs} === 1 && document.querySelector('#session .attached img').complete && document.querySelector('#session .attached img').naturalWidth === 40`);
+    assert.deepEqual(await page.eval<string[]>("window.sent"), ["image/png"], "uploaded as a PNG, which the store keeps");
+
+    await drop(["Captura rota.heic"], "junk");
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('Captura rota.heic: this browser cannot read image/heic; attach it as PNG or JPEG'))");
+    assert.equal(await page.eval<number>(thumbs), 1, "nothing attached for it");
+    assert.deepEqual(await page.eval<string[]>("window.sent"), ["image/png"], "and nothing uploaded");
+
+    // Past the 20 MB the store keeps, one this browser cannot decode is named as unreadable: a smaller file of it would not help.
+    await page.eval(`(() => {
+      const data = new DataTransfer();
+      data.items.add(new File([new Uint8Array(21 * 1024 * 1024).fill(7)], "IMG_0002.heic", { type: "image/heic" }));
+      document.querySelector("#session .chat-footer textarea").dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+    })()`);
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('IMG_0002.heic: this browser cannot read image/heic; attach it as PNG or JPEG'))");
+    assert.equal(await page.eval<number>(thumbs), 1, "nothing attached for it");
+
+    // A conversion is part of its upload: those still waiting to be converted count toward the 10 a message takes.
+    await page.eval("window.hold = true");
+    await drop(Array.from({ length: 6 }, (_, i) => `shot-${i}.heic`), "bmp");
+    await page.waitFor("window.held.length === 1");
+    await drop(Array.from({ length: 6 }, (_, i) => `shot-${6 + i}.heic`), "bmp");
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('At most 10 images'))");
+    await page.waitFor(STILL);
+    assert.equal(await page.eval<number>("window.held.length"), 1, "one decoded at a time, the rest waiting their turn");
+    await page.eval("window.hold = false, window.release()");
+    await page.waitFor(`${thumbs} === 10`);
+    assert.equal(await page.eval<number>("window.sent.length"), 10, "one attached and six on their way left room for three");
+    assert.equal(await page.eval<number>("window.mostConverting"), 1, "never two conversions at once");
+    await page.click("#session .chat-footer .primary");
+    await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.querySelectorAll('.msg-imgs img').length === 10 && m.querySelector('.delivered'))");
+    const sent = store.takeInbox("dropping-heic")[0]?.images ?? [];
+    assert.equal(sent.length, 10);
+    assert.deepEqual([...new Set(sent.map((id) => store.imageFile(id)?.ext))], ["png"], "every one kept as a PNG");
+
+    // A photo, whose PNG would pass the 4 MB a phone's screenshot fits in (1600×1000 pixels of noise: 4.8 MB), goes as a JPEG.
+    await page.eval(`(() => {
+      const data = new DataTransfer();
+      data.items.add(new File([window.bmp(1600, 1000, true)], "IMG_0001.heic", { type: "image/heic" }));
+      document.querySelector("#session .chat-footer textarea").dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+    })()`);
+    await page.waitFor(`${thumbs} === 1`);
+    assert.equal(await page.eval<string>("window.sent.at(-1)"), "image/jpeg");
+    await page.click("#session .chat-footer .primary");
+    await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.querySelectorAll('.msg-imgs img').length === 1 && m.querySelector('.delivered'))");
+    assert.deepEqual((store.takeInbox("dropping-heic")[0]?.images ?? []).map((id) => store.imageFile(id)?.ext), ["jpg"], "kept as a JPEG");
+
+    // One with transparency (a 32-bit BMP with an alpha mask: its top left quarter transparent, noise elsewhere) goes as a
+    // JPEG too, white where it was transparent, not black.
+    const pixel = await page.eval<[string, ...number[]]>(`(async () => {
+      const [width, height] = [2000, 1200], size = 122 + width * height * 4, view = new DataView(new ArrayBuffer(size)), pixels = new Uint8Array(view.buffer, 122);
+      [[0, 2, 0x4d42], [2, 4, size], [10, 4, 122], [14, 4, 108], [18, 4, width], [22, 4, -height], [26, 2, 1], [28, 2, 32], [30, 4, 3],
+        [54, 4, 0x00ff0000], [58, 4, 0x0000ff00], [62, 4, 0x000000ff], [66, 4, 0xff000000 | 0], [70, 4, 0x73524742]].forEach(([at, n, v]) => (n === 2 ? view.setUint16(at, v, true) : view.setInt32(at, v, true)));
+      for (let at = 0; at < pixels.length; at += 65536) crypto.getRandomValues(pixels.subarray(at, at + 65536));
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) pixels[(y * width + x) * 4 + 3] = x < width / 2 && y < height / 2 ? 0 : 255;
+      const real = window.fetch;
+      window.fetch = (url, init) => (new URL(String(url), location.href).pathname === "/api/images" && (window.uploaded = init.body), real(url, init));
+      const data = new DataTransfer();
+      data.items.add(new File([view.buffer], "IMG_0003.heic", { type: "image/heic" }));
+      document.querySelector("#session .chat-footer textarea").dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+      while (!window.uploaded) await new Promise((go) => setTimeout(go, 50));
+      const image = await createImageBitmap(window.uploaded);
+      const canvas = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height });
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      return [window.uploaded.type, ...context.getImageData(100, 100, 1, 1).data];
+    })()`);
+    assert.equal(pixel[0], "image/jpeg", "its PNG passes the 4 MB budget");
+    assert.ok(pixel.slice(1, 4).every((c) => Number(c) > 245), `white where it was transparent, got rgb(${pixel.slice(1, 4).join(", ")})`);
+  });
+
+  it("attaches an image as its bytes say, whatever its label, and names what it leaves out", async () => {
+    store.upsertSession({ id: "mislabelled", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "images labelled oddly", takesMessagesWhileWorking: true });
+    const page = await open();
+    await page.click(".scard", "images labelled oddly");
+    await page.waitFor(`${arrived("session")} && document.querySelector('#session .session-body')?.dataset.fetched === 'yes'`);
+    // What each upload says it carries; `window.png` is the fixture PNG, `window.jpeg` a JPEG this browser made.
+    const jpeg = await page.eval<string>(`(async () => {
+      const real = window.fetch;
+      window.sent = [];
+      window.fetch = (url, init) => (new URL(String(url), location.href).pathname === "/api/images" && window.sent.push(init.headers["Content-Type"]), real(url, init));
+      window.png = Uint8Array.from(atob(${JSON.stringify(PNG.toString("base64"))}), (c) => c.charCodeAt(0));
+      const canvas = Object.assign(document.createElement("canvas"), { width: 40, height: 30 });
+      canvas.getContext("2d").fillRect(0, 0, 20, 15);
+      window.jpeg = new Uint8Array(await (await new Promise((done) => canvas.toBlob(done, "image/jpeg", 0.8))).arrayBuffer());
+      return btoa(String.fromCharCode(...window.jpeg));
+    })()`);
+    const thumbs = "document.querySelectorAll('#session .chat-footer .attached img').length";
+    const box = "document.querySelector('#session .chat-footer textarea')";
+
+    // Picked: a PNG with no type, and a JPEG labelled image/jpg, as some browsers and file managers label them.
+    await page.eval(`(() => {
+      const data = new DataTransfer();
+      data.items.add(new File([window.png], "no-type.png", { type: "" }));
+      data.items.add(new File([window.jpeg], "photo.jpg", { type: "image/jpg" }));
+      const input = document.querySelector("#session .chat-footer input[type=file]");
+      input.files = data.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await page.waitFor(`${thumbs} === 2`);
+    assert.deepEqual((await page.eval<string[]>("window.sent")).sort(), ["image/jpeg", "image/png"], "each under the type its bytes say");
+
+    // Dropped: a file with no type lights the box, and is attached; a PDF beside it is named, not dropped without a word.
+    const lit = await page.eval<boolean>(`(() => {
+      const data = new DataTransfer();
+      data.items.add(new File([window.png], "Captura.png", { type: "" }));
+      data.items.add(new File(["%PDF-1.7"], "notes.pdf", { type: "application/pdf" }));
+      ${box}.dispatchEvent(new DragEvent("dragover", { dataTransfer: data, bubbles: true, cancelable: true }));
+      const lit = ${box}.closest(".compose").classList.contains("drop-over");
+      ${box}.dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+      return lit;
+    })()`);
+    assert.equal(lit, true, "lit for a file with no type");
+    await page.waitFor(`${thumbs} === 3 && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('notes.pdf: not an image, left out'))`);
+
+    // Larger than the store keeps: refused before its upload, by name.
+    await page.eval(`(() => {
+      const data = new DataTransfer();
+      data.items.add(new File([window.png, new Uint8Array(21 * 1024 * 1024)], "huge.png", { type: "image/png" }));
+      ${box}.dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+    })()`);
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('huge.png: larger than 20 MB, the most the desk keeps; attach a smaller image'))");
+    assert.equal(await page.eval<number>("window.sent.length"), 3, "nothing uploaded for it");
+
+    // Refused by the desk at its upload (answered here as the desk answers one without an image/* type): the refusal names the file.
+    await page.eval(`(() => {
+      const sending = window.fetch;
+      window.fetch = (url, init) => {
+        if (new URL(String(url), location.href).pathname !== "/api/images") return sending(url, init);
+        window.fetch = sending;
+        return Promise.resolve(new Response(JSON.stringify({ error: "expected the image itself, with an image/* Content-Type" }), { status: 415, headers: { "Content-Type": "application/json" } }));
+      };
+      const data = new DataTransfer();
+      data.items.add(new File([window.png], "refused.png", { type: "image/png" }));
+      ${box}.dispatchEvent(new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true }));
+    })()`);
+    await page.waitFor("[...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('refused.png: expected the image itself, with an image/* Content-Type'))");
+    assert.equal(await page.eval<number>(thumbs), 3, "nothing attached for it");
+
+    await page.click("#session .chat-footer .primary");
+    await page.waitFor("[...document.querySelectorAll('#session .msg.from-developer')].some((m) => m.querySelectorAll('.msg-imgs img').length === 3 && m.querySelector('.delivered'))");
+    const kept = (store.takeInbox("mislabelled")[0]?.images ?? []).map((id) => fs.readFileSync(store.imageFile(id)?.file ?? "").toString("base64"));
+    assert.deepEqual(kept.sort(), [PNG.toString("base64"), PNG.toString("base64"), jpeg].sort(), "every one kept byte for byte as it was");
   });
 
   it("takes images dropped onto the box, which lights up while they are over it; leaves other files out and text to the box", async () => {

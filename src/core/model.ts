@@ -2,11 +2,11 @@
 import { bool, compact, CONTROL, type Fields, fields, InputError, int, isoTime, list, localUrl, nonEmpty, num, oneOf, optional, text } from "./check.ts";
 import { id } from "./ids.ts";
 import type { PlanHistory, PlanWindowHistory } from "./limits.ts";
+import { ATTACHED_IMAGES_MAX } from "../web/image-rules.js";
 import {
   AGENT_STATES,
   ANSWER_CHANNELS,
   ANSWER_SOURCES,
-  ATTACHED_IMAGES_MAX,
   CHECK_REASON_MAX,
   COMPACTION_TRIGGERS,
   DESK_COMMANDS,

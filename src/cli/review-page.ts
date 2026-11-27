@@ -5,12 +5,12 @@ import * as path from "node:path";
 import { InputError } from "../core/check.ts";
 import { REVIEW_PAGE_MAX, REVIEW_TITLE_MAX } from "../core/model.ts";
 import { isCode } from "../store/fsx.ts";
-import { imageType } from "../store/store.ts";
+import { IMAGE_TYPES, imageType } from "../web/image-rules.js";
 
 /** `file`: the page's real path (symlinks resolved). */
 export type InlinedPage = { file: string; html: string; inlined: number; skipped: { ref: string; reason: string }[] };
 
-const TYPES = { png: "image/png", jpg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif", svg: "image/svg+xml" } as const;
+const TYPES = { ...IMAGE_TYPES, avif: "image/avif", svg: "image/svg+xml" } as const;
 
 const NAME = /[a-zA-Z][^\s/>]*/y;
 const SPACE = /[\s,]*/y;
