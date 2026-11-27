@@ -897,6 +897,16 @@ button.secondary.danger.arm.armed { background: var(--danger); border-color: var
 .panel-question .qctx { display: flex; -webkit-line-clamp: unset; color: var(--text); }
 .chat-footer .send-hint { display: none; }
 .chat-footer { position: sticky; bottom: 0; background: var(--surface); padding: 10px 0 16px; border-top: 1px solid var(--border); max-height: calc(var(--viewport-height, 100dvh) * .5); overflow-y: auto; overscroll-behavior: contain; }
+/* Over the conversation's bottom right, just above the answer box (follow.js measures its height). */
+.to-end { position: absolute; z-index: 3; right: max(22px, env(safe-area-inset-right)); bottom: calc(var(--chat-foot, 0px) + 12px); width: 40px; height: 40px; border-radius: 50%; box-shadow: var(--shadow-lift); }
+.to-end[hidden] { display: none; }
+.find-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 6px 18px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.find-bar input { flex: 1 1 auto; min-width: 0; }
+.find-bar .find-count { white-space: nowrap; }
+@media (pointer: coarse) { .find-bar input { font-size: max(1rem, 16px); } } /* iOS zooms into a smaller one */
+dialog.sess .dhead .find-open[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+::highlight(find) { background-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+::highlight(find-now) { background-color: #ffd54a; color: #111; }
 
 /* ---------- Phones and touch: portrait (narrow) and landscape (short); desktop rules above stay as they are ---------- */
 .seg[hidden] { display: none; }

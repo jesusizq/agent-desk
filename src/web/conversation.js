@@ -158,6 +158,33 @@ function author(m) {
 }
 
 /**
+ * The conversation as it is drawn: what the session wrote between its tool calls folds under one line
+ * once something followed it (the latest run, still being written, stays open), and an agent's report,
+ * long and meant for the session, folds too. `key` is the fold's, in `ui.stepsOpen`.
+ * @param {ConversationEntry[]} list
+ * @returns {{ kind: "steps" | "agent" | "message", key: string, run: ConversationEntry[], end: number }[]}
+ */
+export function groupsOf(list) {
+  /** @type {{ kind: "steps" | "agent" | "message", key: string, run: ConversationEntry[], end: number }[]} */
+  const out = [];
+  for (let i = 0; i < list.length; ) {
+    const m = list[i];
+    if (!m) break;
+    let end = i;
+    while (list[end]?.step) end++;
+    if (end > i && end < list.length) {
+      const run = list.slice(i, end);
+      out.push({ kind: "steps", key: run[0]?.id ?? "", run, end });
+      i = end;
+    } else {
+      out.push({ kind: m.from === "agent" ? "agent" : "message", key: m.id, run: [m], end: i + 1 });
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
  * Messages as a chat: the session on the left, the developer on the right, what another session or
  * an agent sent it quoted on the left (an agent's report folded to one line); `whileWorking` holds
  * the texts the developer sent while the session was working, which get a mark.
@@ -183,32 +210,16 @@ export function conversationView(list, whileWorking = new Set()) {
   };
   /** @type {HTMLElement[]} */
   const out = [];
-  for (let i = 0; i < list.length; ) {
-    const m = list[i];
-    if (!m) break;
-    let end = i;
-    while (list[end]?.step) end++;
-    // What the session wrote between its tool calls folds under one line once something followed it;
-    // the latest run, still being written, stays open.
-    if (end > i && end < list.length) {
-      const run = list.slice(i, end);
-      const key = run[0]?.id ?? "";
-      const until = list[end]?.at ?? "";
-      const agents = data.agents.filter((a) => a.sessionId === m.sessionId && a.startedAt >= (run[0]?.at ?? "") && a.startedAt <= until).length;
-      out.push(fold(key, TEXT.conversation.steps(run.length, agents)));
-      if (ui.stepsOpen.has(key)) out.push(...run.map(message));
-      i = end;
-      continue;
-    }
-    // An agent's report is long and meant for the session, which tells the developer what came of it.
-    if (m.from === "agent") {
-      out.push(fold(m.id, `${TEXT.conversation.fromAgent(m.sender)} · ${hm(m.at)}`));
-      if (ui.stepsOpen.has(m.id)) out.push(message(m));
-      i++;
-      continue;
-    }
-    out.push(message(m));
-    i++;
+  for (const g of groupsOf(list)) {
+    if (g.kind === "steps") {
+      const until = list[g.end]?.at ?? "";
+      const agents = data.agents.filter((a) => a.sessionId === g.run[0]?.sessionId && a.startedAt >= (g.run[0]?.at ?? "") && a.startedAt <= until).length;
+      out.push(fold(g.key, TEXT.conversation.steps(g.run.length, agents)));
+      if (ui.stepsOpen.has(g.key)) out.push(...g.run.map(message));
+    } else if (g.kind === "agent") {
+      out.push(fold(g.key, `${TEXT.conversation.fromAgent(g.run[0]?.sender)} · ${hm(g.run[0]?.at ?? "")}`));
+      if (ui.stepsOpen.has(g.key)) out.push(...g.run.map(message));
+    } else out.push(...g.run.map(message));
   }
   return out;
 }

@@ -228,6 +228,18 @@ export const TEXT = {
     showEarlier: "Earlier in this session",
     hideEarlier: "Hide earlier messages",
     none: "Nothing earlier recorded.",
+    toEnd: "Go to the latest message",
+  },
+  find: {
+    open: "Find in the conversation",
+    label: "Find in the conversation",
+    placeholder: "Find…",
+    /** @param {number} i @param {number} n */
+    of: (i, n) => `${i} of ${n}`,
+    none: "No matches",
+    older: "Earlier match",
+    newer: "Later match",
+    close: "Close the search",
   },
   control: {
     title: "Terminal",

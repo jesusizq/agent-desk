@@ -8,6 +8,8 @@ import { askBody, replyBox } from "./answer.js";
 import { controlSection, forgetButton, runnableShell } from "./control.js";
 import { conversationView, loadConversation, outgoingView } from "./conversation.js";
 import { ago, duration, firstLine, gb, stamp } from "./format.js";
+import { closeFind, find, findBar, openFind, paintFind } from "./find.js";
+import { fromEnd as distanceToEnd, followPanel, NEAR_END, toEndButton } from "./follow.js";
 import { fitNewBoxes, showNeedsYou } from "./layout.js";
 import { badge, bar, dialogHead, dot, goLink, kindOf, LOCAL_URL, localLink, planGauge, suggestionChip, where } from "./pieces.js";
 import { mergedOf, openProject, projectOf } from "./projects.js";
@@ -124,6 +126,15 @@ function resultRow(r, opened) {
 function redrawPanel(sid) {
   if (ui.panelSession === sid && dialog("session").open) openSession(sid);
 }
+dialog("session").addEventListener("close", closeFind);
+// Ctrl+F (⌘F) in the panel finds in its conversation, not in the page behind it.
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== "f" || !dialog("session").open || ui.panelPart || !ui.panelSession) return;
+  if (document.querySelector("dialog[open]:not(#session)")) return; // a window over the panel (a zoomed picture) keeps the browser's own find
+  e.preventDefault();
+  const sid = ui.panelSession;
+  openFind(() => redrawPanel(sid));
+});
 // A hidden tab hides the confirmation too: shown again, its Run would already be live.
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden || !ui.confirmShell) return;
@@ -145,6 +156,7 @@ export function openSession(sid) {
     ui.panelPart = null;
     ui.panelAsk = null;
     ui.confirmShell = null;
+    closeFind();
   }
   // A confirmation out of sight goes: shown again, its Run would already be live.
   if (!d.open || ui.panelPart) ui.confirmShell = null;
@@ -155,9 +167,10 @@ export function openSession(sid) {
   // Opening a session, or its conversation arriving, starts at the latest message.
   const fresh = !d.open || !(before instanceof HTMLElement) || before.dataset.session !== sid || before.dataset.fetched !== fetched;
   const samePart = !fresh && before instanceof HTMLElement && before.dataset.part === part;
-  const atBottom = !before || before.scrollHeight - before.scrollTop - before.clientHeight < 40;
+  // Followed by follow.js from where the scroll rests, so a jump to a match is not pulled back to the end.
+  const fromEnd = before ? Math.max(0, distanceToEnd(before)) : 0;
+  const atBottom = !before || (ui.panelStick && fromEnd < NEAR_END);
   const scrolled = before?.scrollTop ?? 0;
-  const fromEnd = before ? Math.max(0, before.scrollHeight - before.scrollTop - before.clientHeight) : 0;
   const chipsLeft = before?.querySelector(".pchips")?.scrollLeft ?? 0;
   const askedBefore = d.open ? (d.querySelector(".panel-question")?.getAttribute("data-key") ?? null) : null;
   const body = h(
@@ -176,9 +189,12 @@ export function openSession(sid) {
       where(s, s.provider),
       sessionName(s),
       s.lastMessage && (isLive(s) || s.endedAsking) ? h("button", { class: "secondary", title: TEXT.markUnreadHint, "aria-label": TEXT.markUnread, onclick: () => markUnread(s) }, icon("unread"), h("span", { class: "lbl" }, TEXT.markUnread)) : null,
+      ui.panelPart ? null : h("button", { class: "secondary find-open", title: TEXT.find.open, "aria-label": TEXT.find.open, "aria-pressed": String(find.open), onclick: () => (find.open ? (closeFind(), redrawPanel(sid)) : openFind(() => redrawPanel(sid))) }, icon("search")),
       goLink(s, "primary", icon("go"), h("span", { class: "lbl" }, TEXT.goTo)),
     ),
+    find.open && !ui.panelPart ? findBar(sid, () => redrawPanel(sid)) : null,
     body,
+    toEndButton(),
   );
   // The conversation reads bottom up: it opens at the latest message and follows new ones, unless
   // the developer scrolled up to read. A part that just unfolded is shown from its top.
@@ -198,6 +214,7 @@ export function openSession(sid) {
   if (chips && !fresh) chips.scrollLeft = chipsLeft;
   if (!ui.panelPart && (!samePart || atBottom || ui.panelToEnd)) {
     ui.panelToEnd = false;
+    ui.panelStick = true;
     // After layout, on whichever body is shown then: opening draws the panel twice in one go.
     requestAnimationFrame(() => {
       const shown = d.querySelector(".session-body");
@@ -210,6 +227,8 @@ export function openSession(sid) {
     d.showModal();
     renderPanel();
   }
+  followPanel();
+  paintFind();
 }
 
 /** What a session has said and whether it works: when it changes, its conversation is fetched again. @param {Session} s */

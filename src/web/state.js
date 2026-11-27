@@ -84,6 +84,7 @@ export const ui = {
   /** @type {Set<string>} */ sending: new Set(),
   /** @type {Map<string, Outgoing>} what was sent from a session's conversation, shown there until the conversation holds it */ outbox: new Map(),
   /** the session panel scrolls to its newest message at its next drawing */ panelToEnd: false,
+  /** the session panel's conversation follows its newest message: not scrolled up to read (follow.js) */ panelStick: true,
   /** @type {string[]} questions that arrived out of sight, as items, oldest first: the arrival bubble shows the last */ arrivals: [],
   /** the arrival bubble shows its question whole, to answer it there */ arrivalOpen: false,
   /** @type {string | null} a question that arrived in the open session panel, to draw coming in */ panelArrival: null,
