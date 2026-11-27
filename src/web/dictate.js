@@ -19,8 +19,14 @@ const TOKEN_MARGIN = 24;
 /** The most the names take, so that the conversation's words have room too; a name longer than NAME_TOKENS is left out. */
 const NAMES_TOKENS = 60;
 const NAME_TOKENS = 16;
-/** Words a developer says to a coding session, spelt as written: the product's own vocabulary, nobody's in particular. */
-const GLOSSARY = ["commit", "push", "pull request", "merge", "rebase", "branch", "worktree", "deploy", "review", "fixup", "typecheck", "test", "hook", "prompt", "dashboard", "subagent", "diff", "lint", "CI"];
+/**
+ * Words a developer says to a coding session, in a sentence as one would say it in the page's language:
+ * the engine reads its prompt as the transcript before the recording, so a sentence teaches it how they are used better than a list.
+ */
+const opening = () =>
+  /^es(-|$)/i.test(navigator.language ?? "")
+    ? `Vale, haz commit y push de la rama; luego un rebase del worktree, abre el pull request y revisa el diff en el dashboard de ${TEXT.cols.needs}.`
+    : `Okay, commit and push the branch, then rebase the worktree, open the pull request and check the diff in the ${TEXT.cols.needs} dashboard.`;
 /** The longest the microphone takes to start (a permission prompt left open, a worklet that does not load): then the take is given up. */
 const START_MS = 30_000;
 /** Added to what the desk may take on a call: the recording's way up from a phone and the answer's way back. */
@@ -363,7 +369,7 @@ const spoken = (text) =>
 export const tokensOf = (text) => (text.match(/[\p{L}\p{M}\p{N}]+|[^\s\p{L}\p{M}\p{N}]/gu) ?? []).reduce((n, piece) => n + (/^[\p{L}\p{M}\p{N}]/u.test(piece) ? Math.ceil(new TextEncoder().encode(piece).length / 3) : 1), 0);
 
 /**
- * What the engine is told the recording likely holds, within the tokens it keeps: the glossary always
+ * What the engine is told the recording likely holds, within the tokens it keeps: the glossary sentence always
  * (it is what works in a new conversation), then the names of the projects, sessions, providers and
  * models on the desk, this session's first, then the end of what was said in the conversation the box
  * answers, the latest words last, as the transcript before this one would read.
@@ -371,7 +377,7 @@ export const tokensOf = (text) => (text.match(/[\p{L}\p{M}\p{N}]+|[^\s\p{L}\p{M}
  */
 export function vocabulary(key, sid, tokens) {
   const budget = Math.max(0, tokens - TOKEN_MARGIN);
-  const glossary = `${[...GLOSSARY, ...Object.values(TEXT.cols), ...Object.values(TEXT.views), TEXT.replies.row].join(", ")}.`;
+  const glossary = opening();
   let left = budget - tokensOf(glossary);
   const own = S(sid);
   const sessions = [own, ...[...data.sessions].filter((s) => s !== own).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))];

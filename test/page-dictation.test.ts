@@ -61,6 +61,7 @@ describe("page: dictation", SKIP, () => {
     await ownDesk(
       async (page, own) => {
         await page.eval(FAKE_MIC);
+        await page.eval(`Object.defineProperty(navigator, "language", { value: "es-ES", configurable: true })`);
         await openPanel(page);
         await page.waitFor(mic);
         await page.eval(`(() => { const b = ${box}; b.focus(); b.value = "Primero luego"; b.dispatchEvent(new Event("input", { bubbles: true })); b.setSelectionRange(7, 7); })()`);
@@ -83,12 +84,13 @@ describe("page: dictation", SKIP, () => {
         const file = asked?.file;
         assert.ok(typeof file === "object" && file.size > 16_000 * 2 && file.type === "audio/wav", `a WAV of over a second: ${JSON.stringify(file)}`);
         const prompt = String(asked?.prompt);
-        assert.match(prompt, /^commit, push, pull request, merge, rebase, .*, dashboard, .*Needs you, Sessions, To review, Desk, History, Saved replies\. /, "the glossary first");
-        assert.match(prompt, /Saved replies\. web-shop, dictation at work, Claude Code, Opus 5\.5, /, "this session's names next");
+        const spanish = "Vale, haz commit y push de la rama; luego un rebase del worktree, abre el pull request y revisa el diff en el dashboard de Needs you.";
+        assert.ok(prompt.startsWith(`${spanish} web-shop, dictation at work, Claude Code, Opus 5.5, `), `a sentence in the page's Spanish first, then this session's names: ${prompt}`);
         assert.match(prompt, /Revisa el checkout en el worktree Done: the pay button stays in view\. Shall I open the pull request against main\?$/, "the conversation last, without its code");
 
-        // A long conversation: its end fills what the glossary and the names leave of the engine's 224 tokens.
+        // A long conversation on an English page: its end fills what the sentence and the names leave of the engine's 224 tokens.
         const [long, tokens] = await page.eval<[string, number]>(`(async () => {
+          Object.defineProperty(navigator, "language", { value: "en-GB", configurable: true });
           const { ui } = await import("/state.js");
           const d = await import("/dictate.js");
           ui.conversations.set(${JSON.stringify(SID)}, [...ui.conversations.get(${JSON.stringify(SID)}), { id: "long", sessionId: ${JSON.stringify(SID)}, from: "session", text: "palabra ".repeat(400) + "y el final del todo", at: new Date().toISOString() }]);
@@ -96,7 +98,9 @@ describe("page: dictation", SKIP, () => {
           return [p, d.tokensOf(p)];
         })()`);
         assert.ok(tokens <= 200 && tokens > 180, `within the engine's prompt, counted high: ${tokens} tokens`);
-        assert.match(long, /^commit, push, .* Saved replies\. web-shop, dictation at work, .*\. (palabra )+y el final del todo$/, "glossary and names kept, the latest words last");
+        const english = "Okay, commit and push the branch, then rebase the worktree, open the pull request and check the diff in the Needs you dashboard.";
+        assert.ok(long.startsWith(`${english} web-shop, dictation at work, `), `a sentence in the page's English first, then the names: ${long.slice(0, 200)}`);
+        assert.match(long, /\. (palabra )+y el final del todo$/, "the latest words last");
       },
       atWork,
       { speech: engineFor(fake.home) },

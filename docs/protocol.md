@@ -601,10 +601,11 @@ that one module, not the endpoints or the page.
 2. The page makes a 16 kHz mono 16-bit PCM WAV itself (each sample the average of those it spans at
    the microphone's rate), the same from iOS Safari as from Chrome, and posts it to
    `/api/dictation/transcribe` as a form with a prompt: the words likely in it, to bias their spelling. The
-   prompt holds, within the engine's 224 tokens (counted high, 24 kept apart): a fixed glossary of
-   developer words (commit, push, pull request, merge, rebase, branch, worktree, deploy, review,
-   fixup, typecheck, test, hook, prompt, dashboard, subagent, diff, lint, CI) and the desk's own
-   labels (Needs you, Sessions, To review, Desk, History, Saved replies); then the names on the desk,
+   prompt holds, within the engine's 224 tokens (counted high, 24 kept apart): one fixed sentence a
+   developer would say, using commit, push, branch, rebase, worktree, pull request, diff, dashboard
+   and the desk's own Needs you label, in the page's language (Spanish when `navigator.language`
+   starts with `es`, else English), since the engine reads its prompt as the transcript before
+   the recording, and a sentence teaches it how the words are used better than a list does; then the names on the desk,
    this session's first and then the most recently active, 60 tokens at most (projects, session
    titles, each session's provider and its status line's model, as data: no provider is named in
    the desk's code); then the end of the box's conversation (what was said but agents' reports,
