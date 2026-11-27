@@ -541,6 +541,22 @@ export function arrive(el, dy = 10) {
   el.animate([{ opacity: 0, transform: `translateY(${dy}px)` }, { opacity: 1, transform: "none" }], { duration: t.move, easing: t.easing, id: MOTION });
 }
 
+/** What takes the place of what was shown, sideways (the next session in its panel): it slides in from `dx` px off. @param {Element} el @param {number} dx */
+export function slideIn(el, dx) {
+  if (reducedMotion()) return;
+  const t = tokens();
+  el.animate([{ opacity: 0, transform: `translateX(${dx}px)` }, { opacity: 1, transform: "none" }], { duration: t.move, easing: t.easing, id: MOTION });
+}
+
+/** What followed a finger that let go too soon springs back from where it was left. @param {HTMLElement} el */
+export function springBack(el) {
+  const from = el.style.transform;
+  el.style.transform = "";
+  if (reducedMotion() || !from) return;
+  const t = tokens();
+  el.animate([{ transform: from }, { transform: "none" }], { duration: t.fade, easing: t.easing, id: MOTION });
+}
+
 /**
  * Shrinks `el` into `to` (where what it showed now lives), or fades it where it is when there is
  * nowhere to go. Returns the animation, or null when nothing moves (reduced motion).

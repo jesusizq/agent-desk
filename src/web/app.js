@@ -20,6 +20,7 @@ import { openReview, renderReview } from "./review.js";
 import { follow } from "./live.js";
 import { refresh } from "./server.js";
 import { openSession, renderPanel } from "./session.js";
+import { EDGE_PX, sessionSwipe } from "./swipe.js";
 import { data, inFlight, itemKey, openItems, page, S, ui } from "./state.js";
 
 const TICK_MS = 30_000;
@@ -166,6 +167,7 @@ for (const id of WINDOWS) {
   });
 }
 for (const id of ["result", "session"]) edgeSwipe(dialog(id));
+sessionSwipe();
 /**
  * On a phone, a swipe from the screen's left edge takes a session or result back off to the right,
  * as a native screen; released early, it slides back. @param {HTMLDialogElement} d
@@ -180,7 +182,7 @@ function edgeSwipe(d) {
     (e) => {
       const t = e.touches[0];
       const inBubble = e.target instanceof Element && e.target.closest("#arrival") !== null;
-      from = ONE_COLUMN.matches && !inBubble && e.touches.length === 1 && t && t.clientX < 24 ? { x: t.clientX, y: t.clientY, at: e.timeStamp } : null;
+      from = ONE_COLUMN.matches && !inBubble && e.touches.length === 1 && t && t.clientX < EDGE_PX ? { x: t.clientX, y: t.clientY, at: e.timeStamp } : null;
       engaged = false;
     },
     { passive: true },

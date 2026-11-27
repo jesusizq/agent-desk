@@ -230,6 +230,12 @@ export const TEXT = {
     none: "Nothing earlier recorded.",
     toEnd: "Go to the latest message",
   },
+  swipe: {
+    /** @param {string} name */
+    next: (name) => `${name} ›`,
+    /** @param {string} name */
+    previous: (name) => `‹ ${name}`,
+  },
   find: {
     open: "Find in the conversation",
     label: "Find in the conversation",

@@ -1001,6 +1001,12 @@ dialog.sess .dhead .find-open[aria-pressed="true"] { border-color: color-mix(in 
     dialog.result, dialog.sess { transition: transform var(--dur-3) var(--ease-out), overlay var(--dur-3) allow-discrete, display var(--dur-3) allow-discrete; }
   }
   dialog.swiping { transition: none; }
+  /* A sideways swipe in a session's panel names, at the edge it uncovers, the session it goes to (swipe.js). */
+  dialog.sess .swipe-to { position: absolute; top: 50%; z-index: 3; max-width: 46%; translate: 0 -50%; padding: 6px 11px; border-radius: 999px; pointer-events: none;
+    background: var(--raise); border: 1px solid var(--border); box-shadow: var(--shadow); color: var(--muted); font-size: 0.8125rem; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  dialog.sess .swipe-to[data-side="right"] { right: max(10px, env(safe-area-inset-right)); }
+  dialog.sess .swipe-to[data-side="left"] { left: max(10px, env(safe-area-inset-left)); }
   dialog.zoom { height: 100dvh; }
   .dhead { flex: none; gap: 8px; align-items: center; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left)); }
   .dhead > div:first-child { flex: 1 1 0; min-width: 0; }

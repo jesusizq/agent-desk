@@ -152,6 +152,8 @@ export function itemsOf(open) {
   return open.filter((q) => !keys.has(itemKey(q)) && keys.add(itemKey(q))).map(itemOf);
 }
 export const openItems = () => itemsOf(openQuestions());
+/** The sessions the Needs you list asks for, in its order: each once, where its first item stands. */
+export const askingSessions = () => [...new Set(openItems().flatMap((it) => it.questions.slice(0, 1).map((q) => q.sessionId)))];
 /** @param {Result} r */
 export const isNew = (r) => !r.seenAt && (!data.seen || r.at > data.seen.since);
 /** @param {Session} s */

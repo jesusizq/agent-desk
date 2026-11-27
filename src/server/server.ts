@@ -51,6 +51,7 @@ const STATIC: Record<string, string> = {
   "/session.js": "text/javascript; charset=utf-8",
   "/state.js": "text/javascript; charset=utf-8",
   "/suggest.js": "text/javascript; charset=utf-8",
+  "/swipe.js": "text/javascript; charset=utf-8",
   "/zoom.js": "text/javascript; charset=utf-8",
   "/dom.js": "text/javascript; charset=utf-8",
   "/motion.js": "text/javascript; charset=utf-8",
