@@ -384,7 +384,8 @@ export type ConversationEntry = {
   step?: boolean;
 };
 
-export type InboxEntry = { questionId: string; question: string; answer: string; at: string; images?: string[] };
+/** An answer from the desk waiting for its session; `message` when it answers no question the session asked, only carried by `questionId`. */
+export type InboxEntry = { questionId: string; question: string; answer: string; at: string; images?: string[]; message?: true };
 
 export type Seen = { since: string };
 
@@ -607,6 +608,8 @@ export type DeskState = {
   listening: string[];
   /** Of those, the sessions whose listener still reads how the checks of their turn's end ended. */
   checking: string[];
+  /** The permission prompts and dialog questions (ids) a listener waits for: only those take an answer from the desk. */
+  awaited: string[];
   disk: DiskWarning[];
   /** This machine's readings past their limits; empty while it is healthy. */
   machine: MachineWarning[];

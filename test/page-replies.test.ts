@@ -52,13 +52,32 @@ describe("page: saved replies", SKIP, () => {
       await page.waitFor(cards);
       assert.equal(await page.eval<number>(rows), 0, "none saved: no row on any card");
     }, atWork);
-    await ownDesk(async (page) => {
-      await page.waitFor(cards);
-      // The demo's questions come from sessions not listening for answers now.
-      assert.equal(await page.eval<number>(rows), 0, "saved, but no card's session can take one now");
-      await openPanel(page);
-      assert.equal(await page.eval<number>(`${chips}.length`), REPLIES.length, "the panel's own box shows them");
-    }, (own) => atWork(own, REPLIES));
+    // The demo's questions come from sessions at work, here with adapters that take nothing mid-turn: none can take a reply now.
+    const deaf = (own: Store) => {
+      for (const s of own.listSessions()) if (s.id !== SID) own.updateSession(s.id, (x) => ({ ...x, takesMessagesWhileWorking: false }));
+    };
+    await ownDesk(
+      async (page, own) => {
+        await page.waitFor(cards);
+        assert.equal(await page.eval<number>(rows), 0, "saved, but no card's session can take one now");
+        // Taking messages mid-turn, its session takes the answer at its next step: the card offers them.
+        own.updateSession("demo-iva", (s) => ({ ...s, takesMessagesWhileWorking: true }));
+        await page.waitFor(`${rows} > 0`);
+        // A permission prompt or a choice dialog of that same session is no reply: only its hook settles it.
+        for (const q of [
+          own.ask({ sessionId: "demo-iva", kind: "permission", text: "Bash: rm -rf dist", options: ["Allow", "Deny"] }),
+          own.ask({ sessionId: "demo-iva", kind: "question", text: "Which layout?", options: ["A", "B"], dialog: true }),
+        ]) {
+          await page.click(".qrow", q.text);
+          await page.waitFor(`document.querySelector('.next')?.textContent.includes(${JSON.stringify(q.text)}) && ${STILL}`);
+          assert.equal(await page.eval<number>("document.querySelectorAll('.next .answer .replies').length"), 0, `${q.text}: no chips`);
+          own.dismiss(q.id);
+        }
+        await openPanel(page);
+        assert.equal(await page.eval<number>(`${chips}.length`), REPLIES.length, "the panel's own box shows them");
+      },
+      (own) => (atWork(own, REPLIES), deaf(own)),
+    );
   });
 
   it("saves the replies in the editor, one per line, and shows the desk's refusal there with the text kept", async () => {

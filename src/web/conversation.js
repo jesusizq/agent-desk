@@ -188,16 +188,36 @@ export function groupsOf(list) {
 }
 
 /**
+ * The developer's messages that `sent` (what the session recorded as written to it while it worked)
+ * names: each record, the message of its text nearest it in time, so a "Yes" sent mid-turn marks
+ * that one only, not every "Yes" before it.
+ * @param {ConversationEntry[]} list @param {{ text: string, at: string }[]} sent @returns {Set<string>}
+ */
+export function sentWhileWorking(list, sent) {
+  const marked = new Set();
+  for (const w of sent) {
+    const at = Date.parse(w.at);
+    let best = /** @type {ConversationEntry | undefined} */ (undefined);
+    for (const m of list) {
+      if (m.from !== "developer" || m.text !== w.text || marked.has(m.id)) continue;
+      if (!best || Math.abs(Date.parse(m.at) - at) < Math.abs(Date.parse(best.at) - at)) best = m;
+    }
+    if (best) marked.add(best.id);
+  }
+  return marked;
+}
+
+/**
  * Messages as a chat: the session on the left, the developer on the right, what another session or
  * an agent sent it quoted on the left (an agent's report folded to one line); `whileWorking` holds
- * the texts the developer sent while the session was working, which get a mark.
+ * the ids of the developer's messages sent while the session was working, which get a mark.
  * @param {ConversationEntry[]} list @param {Set<string>} [whileWorking]
  */
 export function conversationView(list, whileWorking = new Set()) {
   /** @param {ConversationEntry} m */
   const message = (m) => {
     const who = author(m);
-    const mark = m.from === "developer" && whileWorking.has(m.text) ? ` · ${TEXT.conversation.whileWorking}` : "";
+    const mark = m.from === "developer" && whileWorking.has(m.id) ? ` · ${TEXT.conversation.whileWorking}` : "";
     return h(
       "div",
       { class: `msg from-${m.from}${m.step ? " step" : ""}`, "data-key": m.id },

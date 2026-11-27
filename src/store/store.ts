@@ -89,7 +89,7 @@ export type Snapshot = {
  * a check that passed from one that never ran, or from one that gave up at once.
  */
 /** A process listening for a session's answers (Store.listeners). */
-export type Listening = { pid: number; since: string; checks?: true; turn?: true };
+export type Listening = { pid: number; since: string; checks?: true; turn?: true; questions?: string[] };
 
 export type TurnCheck =
   | { outcome: "reopened"; reopened: CheckReopened }
@@ -102,6 +102,9 @@ export type ReviewOp = { op: "set"; key: string; value: string } | { op: "remove
 export type ReviewChange = { ops: ReviewOp[]; progress?: string; summary?: string };
 
 /** The store holds nothing under the id asked for: gone since it was shown, or never there. */
+/** The most questions one listener waits for: a dialog asks at most 10. */
+const AWAITED_MAX = 20;
+
 export class MissingError extends InputError {
   override name = "MissingError";
 }
@@ -617,26 +620,36 @@ export class Store {
 
   /**
    * Closes an open question with the developer's answer and puts it in the session's inbox,
-   * exactly as typed. Refused unless the session takes it now (`acceptsMessages`), so an answer
-   * never waits in an inbox to reach a later, unrelated turn. If the inbox write fails the question
-   * is reopened. It settles nothing of what the session's latest end replaced: it reaches the session
+   * exactly as typed. Refused unless the session takes it now (`acceptsMessages`; a permission prompt
+   * or a choice dialog, only while a hook waits for that very question), so an answer never waits in
+   * an inbox to reach a later, unrelated turn. If the inbox write fails the question is reopened.
+   * It settles nothing of what the session's latest end replaced: it reaches the session
    * also while a check refuses that end, so the next end or prompt tells how that end went.
+   * Delivered, what only labels it fails into `problems` (raised without them).
    */
-  answerFromDesk(questionId: string, text: string, images: string[] = []): Question {
+  answerFromDesk(questionId: string, text: string, images: string[] = [], problems?: string[]): Question {
+    return this.settle(questionId, text, images, { problems });
+  }
+
+  /** `answerFromDesk`; `message` when the item only carries a message to a session that asked nothing. */
+  private settle(questionId: string, text: string, images: string[], how: { message?: boolean; problems?: string[] | undefined }): Question {
     if (text.trim() === "" && images.length === 0) throw new InputError("the answer is empty");
     for (const image of images) if (!this.imageFile(image)) throw new InputError(`no image ${image} in the store; attach it again`);
     const attached = images.length > 0 ? images : undefined;
     let before: Question | undefined;
     const answered = this.changeQuestion(questionId, (q) => {
       if (q.status !== "open") throw new InputError(`question ${questionId} is already ${q.status}`);
-      if (attached && (q.kind === "permission" || q.dialog)) throw new InputError("a permission prompt or a choice dialog takes text only; remove the images");
+      const byHook = q.kind === "permission" || q.dialog === true;
+      if (attached && byHook) throw new InputError("a permission prompt or a choice dialog takes text only; remove the images");
+      // Only the hook waiting for this permission prompt or dialog takes its answer from the inbox; nothing else hands it over.
+      if (byHook && !this.awaits(q.sessionId, q.id)) throw new InputError(`question ${questionId} is settled only while the session's hook waits for it; answer in its terminal`);
       if (!this.acceptsMessages(q.sessionId)) throw new InputError("the session is not taking answers from the desk right now; answer in its terminal");
       before = q;
       const at = this.stamp();
       return { ...q, status: "answered", closedAt: at, answer: compact({ text, at, via: "desk" as const, images: attached }) };
     });
     try {
-      this.deliver(answered, text, attached);
+      this.deliver(answered, text, attached, how.message === true);
     } catch (error) {
       const original = before;
       try {
@@ -646,15 +659,27 @@ export class Store {
       }
       throw new Error(`could not deliver the answer to session ${answered.sessionId}; the question is open again`, { cause: error });
     }
+    // Mid-turn it reaches the session at its next step, as a message does; a hook's answer is no message.
+    if (answered.kind !== "permission" && !answered.dialog && this.getSession(answered.sessionId)?.state === "working") {
+      try {
+        this.noteSentWhileWorking(answered.sessionId, text);
+      } catch (error) {
+        // Delivered and recorded: failing now would have the developer send it again.
+        const problem = `the answer to question ${questionId} reached session ${answered.sessionId}, but marking it as sent while it worked failed: ${(error as Error).message}`;
+        if (!how.problems) throw new Error(problem, { cause: error });
+        how.problems.push(problem);
+      }
+    }
     return answered;
   }
 
   /**
-   * Puts `text` in the session's inbox as the answer to `question`, and in its conversation as the
-   * developer's message from the desk. On failure neither is left behind.
+   * Puts `text` in the session's inbox as the answer to `question` (`asMessage`: as a message, when
+   * `question` only carries it), and in its conversation as the developer's message from the desk.
+   * On failure neither is left behind.
    */
-  private deliver(question: Question, text: string, images?: string[]): void {
-    const entry: InboxEntry = compact({ questionId: question.id, question: question.text, answer: text, at: question.closedAt ?? this.stamp(), images });
+  private deliver(question: Question, text: string, images?: string[], asMessage = false): void {
+    const entry: InboxEntry = compact({ questionId: question.id, question: question.text, answer: text, at: question.closedAt ?? this.stamp(), images, message: asMessage || undefined });
     let message: ConversationEntry | undefined;
     let written = false;
     try {
@@ -674,7 +699,7 @@ export class Store {
     }
   }
 
-  /** A message to a session while it works is kept on it, to show later whether its turn took it in. */
+  /** A message or answer to a session while it works is kept on it, to show later whether its turn took it in. */
   private noteSentWhileWorking(sessionId: string, text: string): void {
     const at = this.stamp();
     this.updateSession(sessionId, (s) => (s.state === "working" ? { ...s, sentWhileWorking: [...(s.sentWhileWorking ?? []), { text: text.length > 2000 ? `${text.slice(0, 1999)}…` : text, at }].slice(-10) } : s));
@@ -685,18 +710,17 @@ export class Store {
    * message while it works, which it receives at its next step. It is kept in the history as an
    * answered item whose text is that last report.
    */
-  messageFromDesk(sessionId: string, text: string, images: string[] = []): Question {
+  messageFromDesk(sessionId: string, text: string, images: string[] = [], problems?: string[]): Question {
     const session = this.getSession(sessionId);
     if (!session) throw new InputError(`no session ${sessionId} in the store`);
     if (text.trim() === "" && images.length === 0) throw new InputError("the message is empty");
     if (!this.acceptsMessages(sessionId)) throw new InputError("the session is not taking messages from the desk right now; write in its terminal");
-    if (session.state === "working") this.noteSentWhileWorking(sessionId, text);
     const said = session.lastMessage?.text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).at(-1) ?? "(no message)";
     const item = this.ask({ sessionId, kind: "waiting", text: said.length > 600 ? `…${said.slice(-600)}` : said });
     try {
-      return this.answerFromDesk(item.id, text, images);
+      return this.settle(item.id, text, images, { message: true, problems });
     } catch (error) {
-      this.dismiss(item.id); // it was only created to carry this message
+      this.dismiss(item.id); // it was only created to carry this message; delivered, it is answered and stays
       throw error;
     }
   }
@@ -766,12 +790,13 @@ export class Store {
   }
 
   /**
-   * Marks the session as taking answers from the desk while this process waits for them.
-   * Returns the function that withdraws the mark.
+   * Marks the session as taking answers from the desk while this process waits for them; `questions`,
+   * the permission prompt or dialog questions it waits for. Returns the function that withdraws the mark.
    */
-  listen(sessionId: string, me = process.pid, how: { checks?: boolean; turn?: boolean } = {}): () => void {
+  listen(sessionId: string, me = process.pid, how: { checks?: boolean; turn?: boolean; questions?: string[] } = {}): () => void {
     const file = this.listenerFile(sessionId, me);
-    writeJson(file, compact({ pid: me, start: procInfo(me)?.start, since: this.stamp(), checks: how.checks || undefined, turn: how.turn || undefined }));
+    const questions = how.questions?.length ? list(how.questions, `the questions session ${sessionId}'s listener waits for`, id, AWAITED_MAX) : undefined;
+    writeJson(file, compact({ pid: me, start: procInfo(me)?.start, since: this.stamp(), checks: how.checks || undefined, turn: how.turn || undefined, questions }));
     return () => fs.rmSync(file, { force: true });
   }
 
@@ -813,7 +838,8 @@ export class Store {
         const pid = int(f.pid, `${file}.pid`, 1);
         const checks = optional(f.checks, `${file}.checks`, bool) === true;
         const turn = optional(f.turn, `${file}.turn`, bool) === true;
-        if (isAlive(pid, f.start === undefined ? undefined : text(f.start, `${file}.start`, 100))) live.push(compact({ pid, since: isoTime(f.since, `${file}.since`), checks: checks || undefined, turn: turn || undefined }));
+        const questions = optional(f.questions, `${file}.questions`, (v, w) => list(v, w, id, AWAITED_MAX));
+        if (isAlive(pid, f.start === undefined ? undefined : text(f.start, `${file}.start`, 100))) live.push(compact({ pid, since: isoTime(f.since, `${file}.since`), checks: checks || undefined, turn: turn || undefined, questions }));
       } catch (error) {
         if (!problems) throw error;
         problems.push((error as Error).message);
@@ -824,6 +850,11 @@ export class Store {
 
   isListening(sessionId: string, problems?: string[]): boolean {
     return this.listeners(sessionId, problems).length > 0;
+  }
+
+  /** A live hook of the session waits for this very permission prompt or dialog question (`listen`'s `questions`). */
+  awaits(sessionId: string, questionId: string, problems?: string[]): boolean {
+    return this.listeners(sessionId, problems).some((l) => l.questions?.includes(questionId));
   }
 
   /**
@@ -1326,7 +1357,7 @@ export class Store {
         writeJson(file, next);
         if (to === "session") {
           try {
-            this.deliver(decision, line);
+            this.deliver(decision, line, undefined, true); // the line names its review: no question of the session to quote
           } catch (error) {
             writeJson(file, review);
             throw error;

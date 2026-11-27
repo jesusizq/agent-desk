@@ -7,7 +7,7 @@ import { agentRows, agentsPart, failedUnseen, sessionAgents, sessionQuiet } from
 import { askBody, replyBox } from "./answer.js";
 import { shownReplies } from "./replies.js";
 import { controlSection, forgetButton, runnableShell } from "./control.js";
-import { conversationView, loadConversation, outgoingView } from "./conversation.js";
+import { conversationView, loadConversation, outgoingView, sentWhileWorking } from "./conversation.js";
 import { ago, duration, firstLine, gb, stamp } from "./format.js";
 import { closeFind, find, findBar, openFind, paintFind } from "./find.js";
 import { fromEnd as distanceToEnd, followPanel, NEAR_END, toEndButton } from "./follow.js";
@@ -302,7 +302,7 @@ function panelShows(s) {
 export function chat(s) {
   const fetched = ui.conversations.get(s.id);
   const list = fetched && fetched.length ? fetched : s.lastMessage ? [{ id: "last", sessionId: s.id, from: /** @type {const} */ ("session"), text: s.lastMessage.text, at: s.lastMessage.at }] : [];
-  const whileWorking = new Set((s.sentWhileWorking ?? []).map((w) => w.text));
+  const whileWorking = sentWhileWorking(list, s.sentWhileWorking ?? []);
   // Everything the session asks, one item at a time, oldest first.
   const items = itemsOf(asksOf(s.id));
   const at = Math.max(0, items.findIndex((it) => it.key === ui.panelAsk));

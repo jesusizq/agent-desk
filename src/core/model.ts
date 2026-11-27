@@ -432,6 +432,7 @@ export function readInboxEntry(value: unknown, where = "inbox entry"): InboxEntr
     answer: text(f.answer, `${where}.answer`),
     at: isoTime(f.at, `${where}.at`),
     images: optional(f.images, `${where}.images`, imageIds),
+    message: optional(f.message, `${where}.message`, bool) === true ? (true as const) : undefined,
   });
 }
 

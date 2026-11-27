@@ -8,7 +8,7 @@ import { COARSE, fitBox } from "./layout.js";
 import { dot, toast } from "./pieces.js";
 import { imageUrl, post, routeOf, run, saveDrafts, uploadImage } from "./server.js";
 import { repliesRow, shownReplies } from "./replies.js";
-import { ATTACHED_IMAGES_MAX, data, page, ui } from "./state.js";
+import { ATTACHED_IMAGES_MAX, data, midTurn, page, S, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Question} Question */
 /** @typedef {import("../core/protocol.ts").ConversationEntry} ConversationEntry */
@@ -25,24 +25,40 @@ const pickers = new WeakMap();
 export const pickOption = (box, n) => pickers.get(box)?.(n) ?? false;
 
 /**
+ * How the desk can answer `q` now: while a hook of its session listens, at once; while the session
+ * works and its adapter delivers mid-turn, at its next step, as what is typed in its terminal then
+ * (a question asked before a wake-up that answered nothing). A permission prompt or a choice dialog
+ * only the hook waiting for that very question settles. Null: only in its terminal.
+ * @param {Question} q @returns {"now" | "next step" | null}
+ */
+export function answersNow(q) {
+  if (q.kind === "permission" || q.dialog === true) return (data.awaited ?? []).includes(q.id) ? "now" : null;
+  if (data.listening.includes(q.sessionId)) return "now";
+  const s = S(q.sessionId);
+  return s !== undefined && midTurn(s) ? "next step" : null;
+}
+
+/**
  * `middle` (what the session said around the question), then the options, then the box. While the
- * session does not listen, the same box, inert, says to answer in its terminal: nothing jumps when it starts or stops.
+ * session takes no answer, the same box, inert, says to answer in its terminal: nothing jumps when it starts or stops.
  * @param {Question} q @param {Child} [middle]
  */
 function answerForm(q, middle = null) {
-  const listening = data.listening.includes(q.sessionId);
+  const how = answersNow(q);
+  const listening = how === "now";
+  const working = how === "next step";
   // A permission prompt or a choice dialog is settled by its hook, which takes text only.
   const textOnly = q.kind === "permission" || q.dialog === true;
   const decide = decisionOf(q);
   return replyBox(`answer-${q.id}`, decide ? [] : q.options, q.sessionId, {
-    placeholder: !listening ? TEXT.notListeningShort : decide ? TEXT.permission.reason : undefined,
-    hint: decide ? TEXT.permission.hint : undefined,
+    placeholder: working ? TEXT.workingPlaceholder : !listening ? TEXT.notListeningShort : decide ? TEXT.permission.reason : undefined,
+    hint: decide ? TEXT.permission.hint : working ? TEXT.sendHintWorking : undefined,
     decide,
     images: !textOnly,
     middle,
     several: q.several === true,
     past: q.past ?? [],
-    off: listening ? null : TEXT.notListening,
+    off: listening || working ? null : TEXT.notListening,
   });
 }
 

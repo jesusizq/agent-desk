@@ -3,7 +3,7 @@
 import { h, icon } from "./dom.js";
 import { TEXT } from "./text.js";
 import { agentAge, agentDot, agentGist, agentQuiet, failedInARow, failedUnseen, failing, inTrouble, sessionAgents, sessionDot, sessionQuiet, spoken, stuckNote, troubleText } from "./agents.js";
-import { askBody, decisionOf } from "./answer.js";
+import { answersNow, askBody, decisionOf } from "./answer.js";
 import { forgetButton } from "./control.js";
 import { ago, firstLine, headline, heat, hm, stamp } from "./format.js";
 import { markCuts, ONE_COLUMN, revealNext } from "./layout.js";
@@ -47,7 +47,7 @@ function nextCard(item) {
   const lead = item.open[0] ?? item.questions[0];
   if (!lead) return null;
   const s = S(lead.sessionId);
-  const canAnswer = data.listening.includes(lead.sessionId);
+  const canAnswer = answersNow(lead) !== null;
   const meta = h("div", { class: "meta" }, h("span", { class: `qkind k-${kindOf(lead)}` }, TEXT.kinds[kindOf(lead)]), where(s), h("span", { class: `age${heat(lead.askedAt)}`, title: TEXT.askedAt(hm(lead.askedAt)) }, ago(lead.askedAt)));
   // An item shares its row's `data-flip`: picked or next in line, the row grows into this card.
   const card = { "aria-label": TEXT.next, "data-key": `next-${item.key}`, "data-flip": `q-${item.key}` };

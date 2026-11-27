@@ -1582,6 +1582,21 @@ describe("answers from the desk", () => {
     assert.deepEqual(deliverWhileWorking(event("PostToolUse", { tool_name: "Bash" }), store), { code: 0 }, "delivered once");
   });
 
+  it("hands an answer given while the session works to its next step with the question it answers", () => {
+    const store = testStore();
+    const live = { ...ctx(store), sessionProcess: () => ({ pid: process.pid, ancestors: [] }) };
+    handleHook(event("SessionStart", { source: "startup" }), live);
+    handleHook(event("UserPromptSubmit", { prompt: "Fix the checkout" }), live);
+    // Asked as a turn ended, then a background task woke the session: nothing answered it.
+    const asked = store.ask({ sessionId: "cc-1", kind: "question", text: "Keep the old endpoint?", options: ["Yes", "No"] });
+    handleHook(event("UserPromptSubmit", { prompt: "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>" }), live);
+    assert.equal(store.getQuestion(asked.id)?.status, "open", "a background task's notice answers nothing");
+    store.answerFromDesk(asked.id, "No  — drop it");
+    const out = deliverWhileWorking(event("PostToolUse", { tool_name: "Bash" }), store);
+    const context = JSON.parse(out.stdout ?? "{}").hookSpecificOutput.additionalContext as string;
+    assert.match(context, /^Answer from agent-desk[\s\S]*\nYour question: Keep the old endpoint\?\nTheir answer, verbatim:\nNo {2}— drop it$/);
+  });
+
   it("refuses a reply while the session is not listening, leaving nothing open", () => {
     const store = testStore();
     handleHook(event("Stop", { last_assistant_message: "Done." }), ctx(store));
@@ -1724,7 +1739,10 @@ describe("answers from the desk", () => {
     const waiting = waitForAnswer("cc-1", store, { pollMs: 10, armWithinMs: 1000, deadline: Date.now() + 300 });
     await new Promise((r) => setTimeout(r, 30));
     const qid = store.ask({ sessionId: "cc-1", kind: "permission", text: "Bash: ls", options: ["Allow", "Deny"] }).id;
+    // Its permission hook waits for it, beside the turn's waiter (another process: its own listener file).
+    const hook = store.listen("cc-1", process.ppid, { questions: [qid] });
     store.answerFromDesk(qid, "Allow");
+    hook();
     assert.deepEqual(await waiting, { code: 0 });
     assert.deepEqual(store.takeInbox("cc-1").map((e) => e.answer), ["Allow"]);
   });

@@ -109,6 +109,8 @@ export function deskState(store: Store, now = new Date(), machine: MachineSource
     now: now.toISOString(),
     gone: goneSessions(snap.sessions),
     listening: heard.filter(([, ls]) => ls.length > 0).map(([id]) => id),
+    // The permission prompts and dialog questions a live hook waits for: only those are answered from the desk.
+    awaited: heard.flatMap(([, ls]) => ls.flatMap((l) => l.questions ?? [])),
     checking: heard.filter(([, ls]) => ls.some((l) => l.checks)).map(([id]) => id),
     disk: diskWarnings(snap.sessions, snap.problems),
     machine: machineWarnings(snap.problems, machine),
@@ -181,13 +183,21 @@ function reply(body: unknown): [text: string, images: string[]] {
   return [text(f.text ?? "", "text"), optional(f.images, "images", imageIds) ?? []];
 }
 
+/** Runs a delivery whose side problems (after it went through) must not fail the request: they go to the log. */
+function reported<T>(act: (problems: string[]) => T): T {
+  const problems: string[] = [];
+  const out = act(problems);
+  for (const p of problems) process.stderr.write(`agent-desk: ${p}\n`);
+  return out;
+}
+
 const ACTIONS: Record<string, Action> = {
-  "questions/answer": (store, target, body) => store.answerFromDesk(target, ...reply(body)),
+  "questions/answer": (store, target, body) => reported((problems) => store.answerFromDesk(target, ...reply(body), problems)),
   "questions/dismiss": (store, target) => store.dismiss(target),
   "results/seen": (store, target) => store.markResultSeen(target),
   "sessions/read": (store, target) => store.markSessionRead(target),
   "sessions/unread": (store, target) => store.markSessionUnread(target),
-  "sessions/message": (store, target, body) => store.messageFromDesk(target, ...reply(body)),
+  "sessions/message": (store, target, body) => reported((problems) => store.messageFromDesk(target, ...reply(body), problems)),
   "sessions/keys": (store, target, body) => {
     const f = fields(body, "body");
     const action = oneOf(Object.keys(TMUX_ACTIONS) as TmuxAction[])(f.action, "action");

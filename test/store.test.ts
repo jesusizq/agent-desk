@@ -393,6 +393,55 @@ describe("questions", () => {
     assert.deepEqual(fs.existsSync(store.paths.sessionInbox("s1")) ? fs.readdirSync(store.paths.sessionInbox("s1")) : [], []);
   });
 
+  it("takes an answer at work for the session's next step, but a permission prompt or dialog only from a hook waiting for it", () => {
+    const store = testStore();
+    store.upsertSession({ id: "s1", provider: "Test", project: { name: "shop", dir: "/work/shop" }, state: "working", takesMessagesWhileWorking: true });
+    // Asked before a background task woke the session: nothing the developer wrote answered it.
+    const q = store.ask({ sessionId: "s1", kind: "question", text: "Keep the old endpoint?" });
+    const p = store.ask({ sessionId: "s1", kind: "permission", text: "Bash: rm -rf dist", options: ["Allow", "Deny"] });
+    const d = store.ask({ sessionId: "s1", kind: "question", text: "Which layout?", options: ["A", "B"], dialog: true });
+    for (const hooked of [p, d]) {
+      assert.throws(() => store.answerFromDesk(hooked.id, hooked.id === p.id ? "Allow" : "A"), /settled only while the session's hook waits for it/);
+      assert.equal(store.getQuestion(hooked.id)?.status, "open");
+    }
+    // What a listener says it waits for is checked as it is written, as it is when read back.
+    assert.throws(() => store.listen("s1", process.pid, { questions: Array.from({ length: 21 }, () => p.id) }), /more than 20 items/);
+    assert.throws(() => store.listen("s1", process.pid, { questions: ["../x"] }), /questions/);
+    assert.deepEqual(store.listeners("s1"), []);
+    const answered = store.answerFromDesk(q.id, "keep it a week, then drop it");
+    assert.deepEqual([answered.status, answered.answer?.text, answered.answer?.via, answered.answer?.probable], ["answered", "keep it a week, then drop it", "desk", undefined]);
+    assert.deepEqual(store.getSession("s1")?.sentWhileWorking?.map((w) => w.text), ["keep it a week, then drop it"], "marked as written while it worked, as a message is");
+    assert.deepEqual(store.takeInbox("s1").map((e) => [e.questionId, e.answer]), [[q.id, "keep it a week, then drop it"]]);
+    // Another prompt's hook waits (a second sub-agent's): this one's answer would reach no one.
+    const other = store.ask({ sessionId: "s1", kind: "permission", text: "Bash: npm publish", options: ["Allow", "Deny"] });
+    let stop = store.listen("s1", process.pid, { questions: [other.id] });
+    assert.throws(() => store.answerFromDesk(p.id, "Allow"), /settled only while the session's hook waits for it/);
+    stop();
+    stop = store.listen("s1", process.pid, { questions: [p.id] });
+    store.answerFromDesk(p.id, "Allow");
+    stop();
+    assert.equal(store.getSession("s1")?.sentWhileWorking?.length, 1, "a hook's answer is no message to the turn");
+    assert.deepEqual(store.takeInbox("s1").map((e) => [e.questionId, e.message]), [[p.id, undefined]]);
+    store.messageFromDesk("s1", "and run lint");
+    assert.deepEqual(store.takeInbox("s1").map((e) => [e.answer, e.message]), [["and run lint", true]], "a message is told from an answer");
+  });
+
+  it("keeps an answer delivered when only marking it as sent while the session worked fails", () => {
+    const store = testStore();
+    store.upsertSession({ id: "s1", provider: "Test", project: { name: "shop", dir: "/work/shop" }, state: "working", takesMessagesWhileWorking: true });
+    (store as unknown as { noteSentWhileWorking: () => void }).noteSentWhileWorking = () => {
+      throw new Error("disk full");
+    };
+    const q = store.ask({ sessionId: "s1", kind: "question", text: "Keep the old endpoint?" });
+    const problems: string[] = [];
+    assert.equal(store.answerFromDesk(q.id, "no", [], problems).status, "answered", "not failed: it reached the session, and sending it again would repeat it");
+    assert.match(problems.join("\n"), new RegExp(`answer to question ${q.id} reached session s1, but marking it as sent while it worked failed: disk full`));
+    const r = store.ask({ sessionId: "s1", kind: "question", text: "And the old table?" });
+    assert.throws(() => store.answerFromDesk(r.id, "keep it"), /reached session s1, but marking it/, "without a place for problems, it is raised");
+    assert.equal(store.getQuestion(r.id)?.status, "answered", "what it says is true: delivered");
+    assert.deepEqual(store.takeInbox("s1").map((e) => e.answer), ["no", "keep it"]);
+  });
+
   it("withdraws undelivered answers when the developer moves on in the terminal", () => {
     const store = testStore();
     addSession(store);
@@ -1247,6 +1296,7 @@ describe("checks at a turn's end", () => {
     const stop = store.listen("s1");
     try {
       const p = store.ask({ sessionId: "s1", kind: "permission", text: "Bash: rm -rf dist", options: ["Allow", "Deny"] });
+      store.listen("s1", process.pid, { questions: [p.id] }); // its hook waits for it, as the same listener (`stop` withdraws it)
       store.answerFromDesk(p.id, "Allow");
       // The answer reaches the session also while a check refuses that end: it tells nothing of how the end went.
       store.answerFromDesk(b.id, "only two");

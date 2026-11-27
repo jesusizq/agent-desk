@@ -59,6 +59,74 @@ describe("page: sessions, the unlock, the connection and the event stream", SKIP
     assert.equal(await page.eval<number>("document.querySelectorAll('.toast').length"), 0, "no toast says it was sent");
   });
 
+  it("opens a question's box while its session works, puts the exact text in that session's inbox as its answer, and marks only that message", async () => {
+    store.upsertSession({ id: "asked-at-work", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "endpoint cleanup", state: "working", takesMessagesWhileWorking: true });
+    const text = "keep it a week,  then drop it";
+    // Written the same way in an earlier turn: it was not sent while the session worked.
+    store.addMessage({ sessionId: "asked-at-work", from: "developer", text, via: "terminal" });
+    // Asked as a turn ended, then a background task woke the session: nothing answered it.
+    const asked = store.ask({ sessionId: "asked-at-work", kind: "question", text: "Keep the old endpoint?", options: ["Yes", "No"] });
+    try {
+      const page = await open();
+      await page.click(".qrow", "Keep the old endpoint?");
+      await page.waitFor("document.querySelector('.next')?.textContent.includes('Keep the old endpoint?')");
+      assert.deepEqual(
+        await page.eval("[!!document.querySelector('.next .answer.off'), !!document.querySelector('.next .go-link kbd')]"),
+        [false, false],
+        "on the desk too, its box answers and Enter is not offered as the only way",
+      );
+      await page.click(".scard", "endpoint cleanup");
+      const panel = "document.querySelector('#session .panel-question')";
+      await page.waitFor(`${panel}?.textContent.includes('Keep the old endpoint?')`);
+      assert.deepEqual(
+        await page.eval(`[!!${panel}.querySelector('.answer.off'), ${panel}.querySelector('textarea').placeholder, ${panel}.querySelector('textarea').readOnly]`),
+        [false, "Write to it while it works…", false],
+        "the box takes what is written, for the session's next step",
+      );
+      await page.click("#session .panel-question textarea");
+      await page.type(text);
+      await page.click("#session .panel-question .send");
+      const mine = `[...document.querySelectorAll('#session .msg.from-developer')].filter((m) => m.textContent.includes(${JSON.stringify(text)}))`;
+      await page.waitFor(`${mine}.length === 2 && !${mine}.some((m) => m.classList.contains('out'))`);
+      assert.deepEqual(store.takeInbox("asked-at-work").map((e) => [e.questionId, e.answer, e.message]), [[asked.id, text, undefined]], "delivered once, exactly as written, to that session, as the answer to that question");
+      assert.equal(store.getQuestion(asked.id)?.answer?.via, "desk");
+      await page.waitFor(`${mine}[1].querySelector('.msg-meta').textContent.includes('sent while it worked')`);
+      assert.equal(await page.eval<boolean>(`${mine}[0].querySelector('.msg-meta').textContent.includes('sent while it worked')`), false, "the earlier same words are not marked");
+    } finally {
+      store.dismiss(asked.id);
+    }
+  });
+
+  it("keeps a question's box inert at work when the session takes no message then, or a hook must settle it", async () => {
+    store.upsertSession({ id: "deaf-at-work", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "deaf at work", state: "working" });
+    store.upsertSession({ id: "prompt-at-work", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "prompt at work", state: "working", takesMessagesWhileWorking: true });
+    const asked = [
+      store.ask({ sessionId: "deaf-at-work", kind: "question", text: "Rename the table?" }),
+      store.ask({ sessionId: "prompt-at-work", kind: "permission", text: "Bash: rm -rf dist", options: ["Allow", "Deny"] }),
+      store.ask({ sessionId: "prompt-at-work", kind: "question", text: "Which layout?", options: ["A", "B"], dialog: true }),
+    ];
+    // Another sub-agent's prompt, whose hook waits: only that one is answered from the desk.
+    const awaited = store.ask({ sessionId: "prompt-at-work", kind: "permission", text: "Bash: npm publish", options: ["Allow", "Deny"] });
+    const stop = store.listen("prompt-at-work", process.pid, { questions: [awaited.id] });
+    try {
+      const page = await open();
+      await page.click(".qrow", awaited.text);
+      await page.waitFor(`document.querySelector('.next')?.textContent.includes(${JSON.stringify(awaited.text)}) && !document.querySelector('.next .answer.off') && !document.querySelector('.next').getAnimations({ subtree: true }).length`);
+      for (const q of asked) {
+        await page.click(".qrow", q.text);
+        await page.waitFor(`document.querySelector('.next')?.textContent.includes(${JSON.stringify(q.text)}) && !document.querySelector('.next').getAnimations({ subtree: true }).length`);
+        assert.deepEqual(
+          await page.eval(`[!!document.querySelector('.next .answer.off'), document.querySelector('.next textarea').placeholder, !!document.querySelector('.next .go-link kbd')]`),
+          [true, "Answer in its terminal", true],
+          `${q.text}: answered in its terminal`,
+        );
+      }
+    } finally {
+      stop();
+      for (const q of [...asked, awaited]) store.dismiss(q.id);
+    }
+  });
+
   it("opens what came earlier in a session on the turn right before its question", async () => {
     store.upsertSession({ id: "earlier", provider: "Test", project: { name: "web-shop", dir: "/home/demo/Projects/web-shop" }, title: "earlier turns", state: "waiting" });
     for (let i = 1; i <= 8; i++) store.addMessage({ sessionId: "earlier", from: "session", text: `Turn ${i}: ${"what the session reported at length. ".repeat(6)}` });

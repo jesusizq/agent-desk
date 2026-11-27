@@ -240,7 +240,7 @@ async function load() {
   if (savedAt) {
     // The computer does not answer and the device shows the desk it saved (sw.js): read only.
     if (next) {
-      setData({ ...next, listening: [], checking: [] });
+      setData({ ...next, listening: [], checking: [], awaited: [] });
       ui.loaded = true;
     }
     return setOffline(true, true);

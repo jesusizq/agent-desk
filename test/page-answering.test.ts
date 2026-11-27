@@ -20,6 +20,8 @@ describe("page: answering what a session asks", SKIP, () => {
         store.updateSession(id, (s) => ({ ...s, state: "ended" }));
       };
     }
+    /** As a permission or dialog hook does: the session's listener waits for these very questions (`asking`'s end withdraws it). */
+    const hookWaits = (id: string, ...questions: { id: string }[]) => store.listen(id, process.pid, { questions: questions.map((q) => q.id) });
     const answers = async (id: string, n: number) => {
       const end = Date.now() + 5000;
       const got: string[] = [];
@@ -33,7 +35,7 @@ describe("page: answering what a session asks", SKIP, () => {
     it("ticks each option of a question that takes several on and off, in their order", async () => {
       const done = asking("picking", "picking sections");
       try {
-        store.ask({ sessionId: "picking", kind: "question", text: "Which sections go in the index?", options: ["Guides", "API reference", "Changelog"], several: true, dialog: true });
+        hookWaits("picking", store.ask({ sessionId: "picking", kind: "question", text: "Which sections go in the index?", options: ["Guides", "API reference", "Changelog"], several: true, dialog: true }));
         const page = await open();
         await page.click(".qrow", "Which sections go in the index?");
         await page.waitFor("document.querySelector('.next')?.textContent.includes('Which sections go in the index?')");
@@ -58,7 +60,7 @@ describe("page: answering what a session asks", SKIP, () => {
     it("allows a permission prompt with one click, and denies it with the reason written, if any", async () => {
       const done = asking("permitting", "permission prompts");
       try {
-        const prompt = (text: string) => store.ask({ sessionId: "permitting", kind: "permission", text, options: ["Allow", "Deny"] });
+        const prompt = (text: string) => hookWaits("permitting", store.ask({ sessionId: "permitting", kind: "permission", text, options: ["Allow", "Deny"] }));
         prompt("Bash: rm -rf build");
         const page = await open();
         await page.click(".qrow", "Bash: rm -rf build");
@@ -98,8 +100,11 @@ describe("page: answering what a session asks", SKIP, () => {
       const done = asking("grouped", "questions asked together");
       try {
         const group = (index: number) => ({ id: "dialog-grouped", index, size: 2 });
-        store.ask({ sessionId: "grouped", kind: "question", dialog: true, group: group(0), text: "Which engine should search use?", options: ["Pagefind", "Lunr"] });
-        store.ask({ sessionId: "grouped", kind: "question", dialog: true, group: group(1), text: "Which theme should it ship with?", options: ["Light", "Dark"] });
+        hookWaits(
+          "grouped",
+          store.ask({ sessionId: "grouped", kind: "question", dialog: true, group: group(0), text: "Which engine should search use?", options: ["Pagefind", "Lunr"] }),
+          store.ask({ sessionId: "grouped", kind: "question", dialog: true, group: group(1), text: "Which theme should it ship with?", options: ["Light", "Dark"] }),
+        );
         const page = await open();
         const rows = "[...document.querySelectorAll('.qrow')].filter((r) => r.textContent.includes('Which engine should search use?'))";
         await page.waitFor(`${rows}.length === 1`);
@@ -132,8 +137,11 @@ describe("page: answering what a session asks", SKIP, () => {
       const stops = [...new Set(store.openQuestions().map((q) => q.sessionId))].filter((id) => id !== "grouped-keys").map((id) => store.listen(id));
       try {
         const group = (index: number) => ({ id: "dialog-grouped-keys", index, size: 2 });
-        store.ask({ sessionId: "grouped-keys", kind: "question", dialog: true, group: group(0), text: "Which port should the preview use?", options: ["5173", "8080"] });
-        store.ask({ sessionId: "grouped-keys", kind: "question", dialog: true, group: group(1), text: "Which browser should it open?", options: ["Chrome", "Firefox"] });
+        hookWaits(
+          "grouped-keys",
+          store.ask({ sessionId: "grouped-keys", kind: "question", dialog: true, group: group(0), text: "Which port should the preview use?", options: ["5173", "8080"] }),
+          store.ask({ sessionId: "grouped-keys", kind: "question", dialog: true, group: group(1), text: "Which browser should it open?", options: ["Chrome", "Firefox"] }),
+        );
         const page = await open();
         const ctrlEnter = async () => {
           for (const type of ["rawKeyDown", "keyUp"]) await page.send("Input.dispatchKeyEvent", { type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, modifiers: 2 });

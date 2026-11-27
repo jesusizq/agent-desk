@@ -2056,7 +2056,7 @@ function endOfTurn(sessionId: string, store: Store, end: EndOfTurn): (() => Turn
  * the listener also reads how the checks of the turn's end ended, until it calls `checksRead`; `turn`:
  * it waits on the turn's answers (waitForAnswer), not on a permission prompt or a dialog.
  */
-async function whileListening(sessionId: string, store: Store, options: WaitOptions, step: () => HookOutput | undefined, how: { checks?: boolean; turn?: boolean } = {}): Promise<HookOutput> {
+async function whileListening(sessionId: string, store: Store, options: WaitOptions, step: () => HookOutput | undefined, how: { checks?: boolean; turn?: boolean; questions?: string[] } = {}): Promise<HookOutput> {
   const now = options.now ?? Date.now;
   const release = store.listen(sessionId, process.pid, how);
   try {
@@ -2161,7 +2161,7 @@ export async function waitForDialog(sessionId: string, dialog: Dialog, store: St
       else if (store.getQuestion(q.id)?.status !== "open") return { code: 0 };
     }
     return dialog.questions.every((q) => q.text in answers) ? permissionDecision({ behavior: "allow", updatedInput: { ...dialog.input, answers } }) : undefined;
-  });
+  }, { questions: dialog.questions.map((q) => q.id) });
 }
 
 export const ALLOW = "Allow";
@@ -2184,7 +2184,7 @@ export async function waitForPermission(sessionId: string, questionId: string, s
       );
     }
     return store.getQuestion(questionId)?.status !== "open" ? { code: 0 } : undefined;
-  });
+  }, { questions: [questionId] });
 }
 
 /**
@@ -2197,7 +2197,8 @@ export function deliverWhileWorking(input: Common, store: Store): HookOutput {
   const entries = store.takeInbox(input.sessionId, forTheTurn(store));
   if (entries.length === 0) return { code: 0 };
   const additionalContext = entries
-    .map((e) => `Message from agent-desk: the developer wrote this to you on the desk page while you worked. Act on it as if they had typed it in the terminal now. Verbatim:\n${e.answer}${attachedText(imageFiles(store, e.images))}`)
+    // An answer names the question it answers, as at the turn's end: a bare "No" would read as about the work at hand.
+    .map((e) => (e.message ? `Message from agent-desk: the developer wrote this to you on the desk page while you worked. Act on it as if they had typed it in the terminal now. Verbatim:\n${e.answer}${attachedText(imageFiles(store, e.images))}` : deliveryText(e, imageFiles(store, e.images))))
     .join("\n\n");
   return { code: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext } }) };
 }
