@@ -25,8 +25,8 @@ command.
   up through a port forward, portproxy, socat, a reverse proxy or a 0.0.0.0 bind.
 - Every state-changing request needs a per-install secret (random, stored with 0600 permissions)
   and an exact `Origin` match; no CORS for any other origin (CSRF from other local pages).
-- No endpoint executes commands, spawns processes or reads arbitrary paths, with two exceptions,
-  each only after the developer confirms on the page:
+- No endpoint executes commands, spawns processes or reads arbitrary paths, with three exceptions,
+  each only at the developer's own action on the page (the first two after a confirming click):
   - the keys endpoint runs `tmux send-keys` (argument list, no shell) with keys from a fixed
     allow-list (`src/core/tmux.ts`: /compact, Escape, Enter, 1–5), /compact optionally followed by
     the session's own stored suggestion as one literal line (`compactInstructionsLine`, typed in
@@ -42,7 +42,25 @@ command.
     ancestors;
   - the end endpoint sends SIGTERM to a registered, live session's own process, only after checking
     in /proc that the pid still has the start time the session recorded (`src/core/proc.ts`); no
-    other signal, and no process the session did not register as its own.
+    other signal, and no process the session did not register as its own;
+  - the dictation endpoints, at a tap on a reply box's mic, run the installed speech engine
+    (whisper.cpp's `whisper-server`, `src/server/whisper.ts`) as the desk's own child: the fixed
+    binary and model under `AGENT_DESK_WHISPER_HOME` (an absolute path), an argument list, no shell,
+    listening only on a unix socket in the store's `run/` directory (0700, so no other user and no
+    web page reaches it, and no port can be taken from it while its model loads; a socket left at
+    that path is removed before the start), stopped with SIGTERM (SIGKILL 10 s later) after 5
+    minutes idle, or when it is not ready within 120 s, fails to answer (120 s at most) or its pid
+    file cannot be written, and with SIGTERM when the desk ends (one still running then is ended at
+    the next desk's start, below). Its pid and /proc start time are kept in `run/whisper.sock.pid`
+    with those of the desk that started it; a desk that finds there a process with that very pid,
+    start time and arguments (read from its /proc `stat` and `cmdline`: one a desk killed before it
+    could stop it left), started by a desk no longer running (or by this very desk), ends it the
+    same way before starting its own; it refuses to start, signalling nothing, while that desk still
+    runs (two desks on one store) or while that pid and start time run with other arguments, and
+    signals no other process. The desk sends it only the audio the developer recorded on the page (a
+    checked 16 kHz mono PCM WAV of at most 120 s) with a checked prompt, and keeps no audio or
+    transcript: both stay in memory, never written or logged; the text goes into the box, never sent
+    on its own.
 - To show a session's local servers and what works in each checkout, the desk reads only fixed /proc
   files of the session's own process tree (`children`, `fd`, `cmdline`, `cwd`, `stat`) and
   `/proc/net/tcp{,6}`; it never signals or runs anything there. For the machine's own warnings it
@@ -97,3 +115,7 @@ command.
 ## Supply chain
 
 - Few dependencies, pinned with a lockfile; no install scripts; no remote assets at runtime.
+- One optional dependency outside npm: dictation's speech engine, whisper.cpp at tag v1.9.6 (commit
+  `96ec4d9823e9d0211944172da35f9f29134af990`, checked after the clone) and its model checked against
+  its SHA-256, installed only when the developer runs `scripts/setup-whisper`, outside every
+  repository; without it the desk works and shows no mic.

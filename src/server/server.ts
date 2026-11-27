@@ -9,13 +9,15 @@ import { FRESH_COMMAND, sendTmuxAction, TMUX_ACTIONS, type TmuxAction } from "..
 import { ID_PATTERN, id } from "../core/ids.ts";
 import { planForecasts } from "../core/limits.ts";
 import { sessionBranches } from "../core/branches.ts";
-import { type Agent, COMPACT_INSTRUCTIONS_MAX, type DeskCommand, type DeskHistory, type DeskState, type DiskWarning, imageIds, type LiveState, type ProjectScan, type Question, readSavedReplies, type ReviewState, reviewNote, type Session, SHELL_SUGGESTION_MAX, type SessionBranches } from "../core/model.ts";
+import { type Agent, COMPACT_INSTRUCTIONS_MAX, DICTATION_PROMPT_MAX, type DeskCommand, type DeskHistory, type DeskState, type DiskWarning, imageIds, type LiveState, type ProjectScan, type Question, readSavedReplies, type ReviewState, reviewNote, type Session, SHELL_SUGGESTION_MAX, type SessionBranches } from "../core/model.ts";
 import { MACHINE, type MachineSources, machineWarnings } from "../core/machine.ts";
 import { agentsAtLoadGate } from "../project/busy.ts";
 import { OPTIONS_TEXT_MAX, optionsText } from "../core/options.ts";
 import { liveServices } from "../core/ports.ts";
 import { endProcess, sessionFinished } from "../core/proc.ts";
+import { DICTATION_BODY_MAX, DICTATION_SECONDS_MAX, DictationError, NO_SPEECH, NOT_INSTALLED, readDictation, readWav, type SpeechEngine } from "./dictation.ts";
 import { NO_PIN, Push, subscription } from "./push.ts";
+import { whisperEngine, whisperHome } from "./whisper.ts";
 import { isCode } from "../store/fsx.ts";
 import { heldOf, IMAGE_MAX_BYTES, IMAGE_TYPES, MissingError, readReviewChange, StaleReplies, StaleReview, type Store, Undeliverable } from "../store/store.ts";
 import { type FeedOptions, StateFeed } from "./feed.ts";
@@ -54,6 +56,8 @@ const STATIC: Record<string, string> = {
   "/suggest.js": "text/javascript; charset=utf-8",
   "/swipe.js": "text/javascript; charset=utf-8",
   "/zoom.js": "text/javascript; charset=utf-8",
+  "/dictate.js": "text/javascript; charset=utf-8",
+  "/dictate-worklet.js": "text/javascript; charset=utf-8",
   "/dom.js": "text/javascript; charset=utf-8",
   "/motion.js": "text/javascript; charset=utf-8",
   "/theme.js": "text/javascript; charset=utf-8",
@@ -250,7 +254,7 @@ const ACTIONS: Record<string, Action> = {
   "sessions/forget": (store, target) => store.forgetSession(target),
 };
 
-export function createDeskServer(store: Store, port: number, remote: Access["remote"] = remoteFromEnv(process.env), feedOptions: Partial<FeedOptions> = {}, machine: MachineSources = MACHINE): Server {
+export function createDeskServer(store: Store, port: number, remote: Access["remote"] = remoteFromEnv(process.env), feedOptions: Partial<FeedOptions> = {}, machine: MachineSources = MACHINE, speech: SpeechEngine = NO_SPEECH): Server {
   const secret = store.secret();
   const access: Access = remote ? { port, remote } : { port };
   const unlock = new RemoteUnlock(store.paths.pin, secret);
@@ -262,7 +266,7 @@ export function createDeskServer(store: Store, port: number, remote: Access["rem
   };
   const feed = new StateFeed(() => version().etag, () => store.stateDirs(), feedOptions);
   return createServer((req, res) => {
-    handle(store, access, secret, unlock, feed, version, req, res).catch((error: unknown) => {
+    handle(store, access, secret, unlock, feed, version, speech, req, res).catch((error: unknown) => {
       process.stderr.write(`agent-desk: ${req.method} ${req.url}: ${(error as Error).stack ?? String(error)}\n`);
       if (!res.headersSent) sendJson(res, 500, { error: (error as Error).message });
       else res.destroy();
@@ -270,7 +274,7 @@ export function createDeskServer(store: Store, port: number, remote: Access["rem
   });
 }
 
-async function handle(store: Store, access: Access, secret: string, unlock: RemoteUnlock, feed: StateFeed, version: () => StateVersion, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handle(store: Store, access: Access, secret: string, unlock: RemoteUnlock, feed: StateFeed, version: () => StateVersion, speech: SpeechEngine, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const reach = reachOf(req, access);
   if ("refused" in reach) {
     // Opened directly, a sentence for the person; the page's own requests read the status.
@@ -298,6 +302,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     }
     // A remote device's stream ends with its unlock, as its next request would.
     if (route === "/api/events") return req.method === "GET" ? feed.stream(res, unlockEnds) : sendJson(res, 405, { error: "method not allowed" });
+    if (route === "/api/dictation") return sendJson(res, 200, dictationInfo(speech));
     if (route === "/api/push/key") return sendJson(res, 200, { key: new Push(store.paths.push).publicKey() });
     if (route === "/api/replies") {
       const problems: string[] = [];
@@ -344,6 +349,7 @@ async function handle(store: Store, access: Access, secret: string, unlock: Remo
     }
   }
   if (route === "/api/images") return attachImage(store, req, res);
+  if (route === "/api/dictation/warm" || route === "/api/dictation/transcribe") return dictation(speech, route === "/api/dictation/warm", req, res);
   if (route === "/api/replies") {
     try {
       const f = fields(await readBody(req), "body");
@@ -408,6 +414,56 @@ async function attachImage(store: Store, req: IncomingMessage, res: ServerRespon
     return sendJson(res, 200, { id: store.addImage(await readBytes(req, IMAGE_MAX_BYTES), "the attached image") });
   } catch (error) {
     if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
+    throw error;
+  }
+}
+
+/**
+ * What the page needs of dictation: whether an engine is installed (and why one installed cannot be used),
+ * the longest recording and prompt, and the longest the desk waits on each call, which bounds the page's own wait.
+ */
+function dictationInfo(speech: SpeechEngine): Record<string, unknown> {
+  let available = false;
+  let problem: string | undefined;
+  try {
+    available = speech.available();
+  } catch (error) {
+    if (!(error instanceof DictationError)) throw error;
+    problem = error.message;
+  }
+  const s = (ms: number) => Math.ceil(ms / 1000);
+  return { available, ...(problem ? { problem } : {}), seconds: DICTATION_SECONDS_MAX, promptTokens: speech.promptTokens, promptMax: DICTATION_PROMPT_MAX, warmSeconds: s(speech.waitMs.warm), transcribeSeconds: s(speech.waitMs.transcribe) };
+}
+
+/**
+ * Dictation: `warm` starts the speech engine as the developer starts speaking; `transcribe` takes a
+ * multipart form with the recording (`audio`, a WAV file) and its prompt, and answers its text.
+ * The audio and the text stay in memory and are never logged.
+ */
+async function dictation(speech: SpeechEngine, warm: boolean, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // The page cancelled or gave up: the engine's request is closed too, which ends its inference (req's own 'close' also fires once its body is read).
+  const left = new AbortController();
+  res.once("close", () => res.writableFinished || left.abort());
+  try {
+    if (warm) {
+      await readBody(req);
+      if (!speech.available()) return sendJson(res, 409, { error: NOT_INSTALLED });
+      await speech.warm();
+      return sendJson(res, 200, { ready: true });
+    }
+    const type = req.headers["content-type"] ?? "";
+    if (!/^multipart\/form-data;/i.test(type)) return sendJson(res, 415, { error: "expected multipart/form-data: the recording as its audio field (audio/wav), the words likely in it as its prompt field" });
+    const body = await readBytes(req, DICTATION_BODY_MAX);
+    const form = await new Response(body, { headers: { "content-type": type } }).formData().catch((error: unknown) => {
+      throw new InputError(`the dictation's form is unreadable (${error instanceof Error ? error.message : String(error)}): expected multipart/form-data`);
+    });
+    const { wav, prompt } = await readDictation(form);
+    readWav(wav);
+    if (!speech.available()) return sendJson(res, 409, { error: NOT_INSTALLED });
+    return sendJson(res, 200, { text: await speech.transcribe(wav, prompt, left.signal) });
+  } catch (error) {
+    if (error instanceof InputError) return sendJson(res, 400, { error: error.message });
+    if (error instanceof DictationError) return sendJson(res, 503, { error: error.message });
     throw error;
   }
 }
@@ -548,6 +604,17 @@ function archiveOld(store: Store): void {
   }
 }
 
+/** The speech engine is the desk's child: it ends with the desk, which a signal would end without its exit event. */
+function stopWithTheDesk(speech: SpeechEngine): void {
+  process.once("exit", () => speech.stop());
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+    process.once(signal, () => {
+      speech.stop();
+      process.kill(process.pid, signal); // this handler gone, the signal ends the desk as it would have
+    });
+  }
+}
+
 const PUSH_EVERY_MS = 5_000;
 
 /**
@@ -584,7 +651,9 @@ export async function pushEndedUnlocks(push: Push, post: typeof fetch = fetch): 
 }
 
 export function startServer(store: Store, port: number): Promise<Server> {
-  const server = createDeskServer(store, port);
+  const speech = whisperEngine(whisperHome(process.env), store.paths.runDir);
+  stopWithTheDesk(speech);
+  const server = createDeskServer(store, port, undefined, undefined, undefined, speech);
   const push = new Push(store.paths.push);
   const checkPush = pushNewQuestions(store, push);
   let planFailure = "";

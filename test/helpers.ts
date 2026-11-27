@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { MachineSources } from "../src/core/machine.ts";
+import type { SpeechEngine } from "../src/server/dictation.ts";
 import { createDeskServer } from "../src/server/server.ts";
 import { Store } from "../src/store/store.ts";
 
@@ -94,13 +95,13 @@ export async function runScript(script: string, cwd: string, through: readonly s
 export const QUIET_MACHINE: MachineSources = { proc: tempHome(), sys: tempHome(), cores: 1 };
 
 /** A desk server for the store on a free local port. */
-export async function serve(store: Store, remote?: Parameters<typeof createDeskServer>[2], feed?: Parameters<typeof createDeskServer>[3], machine = QUIET_MACHINE): Promise<{ base: string; port: number; close: () => Promise<void> }> {
+export async function serve(store: Store, remote?: Parameters<typeof createDeskServer>[2], feed?: Parameters<typeof createDeskServer>[3], machine = QUIET_MACHINE, speech?: SpeechEngine): Promise<{ base: string; port: number; close: () => Promise<void> }> {
   // Bind first to learn a free port, then build the server for that port (it checks Host against it).
   const probe = createDeskServer(store, 0, remote, feed, machine);
   await new Promise<void>((r) => probe.listen(0, "127.0.0.1", r));
   const port = (probe.address() as AddressInfo).port;
   await new Promise<void>((r) => probe.close(() => r()));
-  const real = createDeskServer(store, port, remote, feed, machine);
+  const real = createDeskServer(store, port, remote, feed, machine, speech);
   await new Promise<void>((r) => real.listen(port, "127.0.0.1", r));
   return { base: `http://127.0.0.1:${port}`, port, close: () => new Promise((r) => (real.close(() => r()), real.closeAllConnections())) };
 }

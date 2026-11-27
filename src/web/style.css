@@ -572,6 +572,16 @@ h1.title { font: 650 1.1875rem var(--sans); letter-spacing: -.01em; margin: 0; }
 .answer .send-col { grid-column: 2; align-self: end; display: flex; align-items: stretch; gap: 6px; }
 .answer .send-col > * { min-height: 42px; }
 .answer .send-col .icon-btn { height: auto; }
+/* Dictation: recording, the mic turns red with a ring as wide as the voice is loud and the time beside it; then it pulses while the text is written. */
+.answer .mic { gap: 6px; font-variant-numeric: tabular-nums; }
+.answer .mic .mic-time:empty { display: none; }
+.answer .mic.recording, .answer .mic.starting { color: var(--danger); border-color: var(--danger); box-shadow: 0 0 0 calc(1px + var(--level, 0) * 5px) color-mix(in srgb, var(--danger) 25%, transparent); }
+.answer .mic.transcribing { color: var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .answer .mic.recording { transition: box-shadow var(--dur-1) linear; }
+  .answer .mic.transcribing svg { animation: mic-pulse 1s ease-in-out infinite alternate; }
+}
+@keyframes mic-pulse { to { opacity: .35; } }
 .answer .row .primary { padding: 8px 16px; justify-content: center; }
 /* Sending keeps the button's size: both labels share one cell, and a ring takes the icon's place. */
 .answer .send .send-lbl, .answer .send .send-i { display: inline-grid; }
@@ -988,6 +998,7 @@ dialog.sess .dhead .find-open[aria-pressed="true"] { border-color: color-mix(in 
   /* A chat app's composer: a rounded one-line box, and round buttons with an icon only (their name stays for screen readers). */
   .answer textarea { min-height: 44px; padding: 10px 14px; line-height: 1.4; border-radius: 22px; scroll-margin: 16px; }
   .answer .send-col > *, .answer .send-col .icon-btn { width: 44px; height: 44px; min-height: 44px; min-width: 44px; padding: 0; border-radius: 999px; justify-content: center; }
+  .answer .send-col .mic.recording { width: auto; padding: 0 12px; }
   .answer .send .send-lbl { display: none; }
   .answer .send svg.i { width: 18px; height: 18px; }
   .scard .mini { width: 34px; }

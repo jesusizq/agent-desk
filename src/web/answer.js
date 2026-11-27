@@ -8,6 +8,7 @@ import { COARSE, fitBox } from "./layout.js";
 import { dot, toast } from "./pieces.js";
 import { imageUrl, post, routeOf, run, saveDrafts, uploadImage } from "./server.js";
 import { repliesRow, shownReplies } from "./replies.js";
+import { micButton } from "./dictate.js";
 import { ATTACHED_IMAGES_MAX, data, midTurn, page, S, ui } from "./state.js";
 
 /** @typedef {import("../core/protocol.ts").Question} Question */
@@ -344,6 +345,7 @@ export function replyBox(key, options, sid, { placeholder: asked = options.lengt
               h("button", { class: "icon-btn", title: TEXT.attachImage, "aria-label": TEXT.attachImage, disabled: off !== null, onclick: pickFiles }, icon("image")),
             ]
           : null,
+        micButton(key, sid, off !== null || ui.sending.has(key)),
         h(
           "button",
           {

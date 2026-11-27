@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Installs local dictation for the desk: whisper.cpp built with CUDA and the large-v3-turbo model,
+# outside every repository. Safe to run again: each step is skipped once done. Prints what it changed.
+set -euo pipefail
+
+home="${AGENT_DESK_WHISPER_HOME:-$HOME/.local/share/agent-desk-whisper}"
+# The desk refuses a relative one too: it would point wherever each is started from.
+[[ "$home" == /* ]] || { echo "AGENT_DESK_WHISPER_HOME must be an absolute path, got \"$home\"." >&2; exit 1; }
+src="$home/whisper.cpp"
+bin="$src/build/bin/whisper-cli"
+server="$src/build/bin/whisper-server"
+model_dir="$home/models"
+model="$model_dir/ggml-large-v3-turbo-q8_0.bin"
+# Pinned: the release v1.9.6 and the model file as published, checked before use.
+tag="v1.9.6"
+commit="96ec4d9823e9d0211944172da35f9f29134af990"
+model_url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin"
+model_sha256="317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"
+
+changed=()
+for tool in git cmake nvidia-smi g++ curl sha256sum; do
+  command -v "$tool" >/dev/null || { echo "Missing $tool: install it, then run this again." >&2; exit 1; }
+done
+mkdir -p "$home" "$model_dir"
+
+if [ ! -d "$src/.git" ]; then
+  git clone --quiet --depth 1 --branch "$tag" https://github.com/ggml-org/whisper.cpp.git "$src"
+  changed+=("cloned whisper.cpp $tag into $src")
+fi
+at="$(git -C "$src" rev-parse HEAD)"
+[ "$at" = "$commit" ] || { echo "$src is at $at, not $tag ($commit): remove it and run this again." >&2; exit 1; }
+
+if [ ! -x "$bin" ] || [ ! -x "$server" ]; then
+  echo "Building whisper.cpp with CUDA (a few minutes)…"
+  # The GPU's own architecture: CUDA below 11.6 cannot detect it (GGML_NATIVE), and one target builds faster.
+  arch="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n1 | tr -d '.')"
+  # The newest toolkit of NVIDIA's own packages (/usr/local/cuda-*), else the nvcc on the PATH.
+  nvcc_bin="$(ls -d /usr/local/cuda-*/bin/nvcc 2>/dev/null | sort -V | tail -n1)"
+  nvcc_bin="${nvcc_bin:-$(command -v nvcc)}"
+  [ -n "$nvcc_bin" ] || { echo "No CUDA compiler (nvcc): install NVIDIA's CUDA 12 toolkit (cuda-toolkit-12-9), then run this again." >&2; exit 1; }
+  read -r cuda_major cuda_minor < <("$nvcc_bin" --version | sed -n 's/.*release \([0-9]*\)\.\([0-9]*\).*/\1 \2/p') \
+    || { echo "Could not read the CUDA version from $nvcc_bin --version." >&2; exit 1; }
+  # CUDA 11.5 (Ubuntu 22.04's own) fails on ggml's CUDA code (`if constexpr` in mmq-few.cu, and gcc 11's headers).
+  if [ "$cuda_major" -lt 12 ]; then
+    echo "CUDA $cuda_major.$cuda_minor ($nvcc_bin) cannot build this: install NVIDIA's CUDA 12 toolkit (cuda-toolkit-12-9), then run this again." >&2
+    exit 1
+  fi
+  rm -rf "$src/build" # a failed configure caches its compilers
+  cmake -S "$src" -B "$src/build" -DCMAKE_CUDA_COMPILER="$nvcc_bin" -DGGML_CUDA=1 -DCMAKE_CUDA_ARCHITECTURES="$arch" -DCMAKE_BUILD_TYPE=Release -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON >"$home/cmake.log" 2>&1 \
+    || { echo "cmake failed: see $home/cmake.log" >&2; exit 1; }
+  nice cmake --build "$src/build" -j 6 --config Release --target whisper-cli whisper-server >"$home/build.log" 2>&1 \
+    || { echo "The build failed: see $home/build.log" >&2; exit 1; }
+  changed+=("built $bin and $server")
+fi
+
+if [ ! -f "$model" ] || [ "$(sha256sum "$model" | cut -d' ' -f1)" != "$model_sha256" ]; then
+  echo "Downloading the model (874 MB)…"
+  curl --fail --location --silent --show-error --output "$model.part" "$model_url"
+  got="$(sha256sum "$model.part" | cut -d' ' -f1)"
+  [ "$got" = "$model_sha256" ] || { rm -f "$model.part"; echo "The model's checksum is $got, expected $model_sha256: not kept." >&2; exit 1; }
+  mv "$model.part" "$model"
+  changed+=("downloaded $model")
+fi
+
+echo "Trying it on whisper.cpp's own sample:"
+"$bin" -m "$model" -f "$src/samples/jfk.wav" -nt -np 2>"$home/try.log" | sed 's/^ */  /' \
+  || { echo "The trial failed: see $home/try.log" >&2; exit 1; }
+if [ ${#changed[@]} -eq 0 ]; then echo "Nothing to change: dictation was already installed in $home."; else printf 'Changed: %s\n' "${changed[@]}"; fi
+# The desk looks for the engine at each GET /api/dictation: no restart, only its page brought to the front.
+echo "The desk finds it as it is: bring its page to the front (or reload it) and every reply box has a mic."
+if [ -n "${AGENT_DESK_WHISPER_HOME:-}" ]; then echo "The desk must run with AGENT_DESK_WHISPER_HOME=$home too (it reads it when it starts)."; fi

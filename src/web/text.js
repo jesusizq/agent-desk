@@ -437,6 +437,26 @@ export const TEXT = {
     /** @param {number} n */
     goneAgents: (n) => `${plural(n, "finished agent", "finished agents")}: branch already gone, integrated or deleted`,
   },
+  dictation: {
+    start: "Dictate: tap, speak, tap again; the text goes in the box, not sent",
+    starting: "Starting the microphone… tap to cancel",
+    stop: "Stop and write it in the box",
+    transcribing: "Writing what you said… tap to cancel",
+    nothing: "Nothing was heard: try again closer to the microphone",
+    denied: "This page may not use the microphone: allow it in the browser's settings for this site",
+    noMic: "No microphone found on this device",
+    /** @param {string} why */
+    failed: (why) => `Dictation failed: ${why}`,
+    /** @param {string} text */
+    noBox: (text) => `Transcribed, but its box is gone: ${text}`,
+    /** @param {number} s */
+    longest: (s) => `Stopped at ${Math.round(s / 60)} min, the longest a recording runs`,
+    gone: "The recording was dropped: its box closed",
+    /** @param {number} s */
+    slowStart: (s) => `The microphone did not start within ${s} s: tap the mic to try again`,
+    /** @param {number} s */
+    noAnswer: (s) => `the desk did not answer within ${s} s`,
+  },
   replies: {
     row: "Saved replies",
     /** @param {string} reply */

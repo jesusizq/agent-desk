@@ -142,7 +142,7 @@ export function shellSuggestionLine(value: string): string {
 }
 
 /** Bidi, format and blank characters and lone surrogates: the page would show other words than those sent. */
-const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cs}\u2800]/u;
+export const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cs}\u2800]/u;
 
 /** The most instructions a compaction is given, in characters. */
 export const COMPACT_INSTRUCTIONS_MAX = 10_000;
@@ -567,6 +567,15 @@ export function readSavedReplies(value: unknown, where: string): string[] {
   ];
   if (replies.length > SAVED_REPLIES_MAX) throw new InputError(`${where}: at most ${SAVED_REPLIES_MAX} saved replies, got ${replies.length}; remove some`);
   return replies;
+}
+
+/** The most a dictation's prompt holds, in characters: a bound on the request, whatever the engine keeps of it. */
+export const DICTATION_PROMPT_MAX = 2000;
+/** The words a dictation is likely to hold, as the page sends them to bias the transcript: one line, nothing hidden in it. */
+export function dictationPrompt(value: unknown, where: string): string {
+  const prompt = text(value, where, DICTATION_PROMPT_MAX);
+  if (CONTROL.test(prompt) || INVISIBLE.test(prompt)) throw new InputError(`${where}: one line with no control, bidi or invisible character`);
+  return prompt;
 }
 
 /** The plan windows' history (src/core/limits.ts), checked; a label holding one window is the format before past windows were kept. */

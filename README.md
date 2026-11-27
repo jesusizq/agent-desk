@@ -177,6 +177,13 @@ chip above every box that writes to a session, the same on the phone and the com
 it as written; a long press or right-click puts it in the box to change first. **Edit replies**
 changes them, one per line, 20 at most.
 
+**Dictation**, optional: `scripts/setup-whisper` installs whisper.cpp with CUDA and its
+large-v3-turbo model outside every repository (`~/.local/share/agent-desk-whisper`, or
+`AGENT_DESK_WHISPER_HOME`, read when the desk starts); from then on every reply box has a mic, on
+the computer and on the phone (the page asks again when it comes to the front). Tap, speak (Spanish with English terms, or English), tap again: the text goes into the box
+at the caret, to read and send yourself. The engine runs only while you dictate and stops 5 minutes
+after; nothing of the audio is kept. Details in [docs/protocol.md](docs/protocol.md#dictation).
+
 ## Reviews
 
 A session that makes an HTML page for you to review or choose from publishes it instead of opening

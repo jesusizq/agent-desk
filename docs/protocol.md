@@ -576,6 +576,71 @@ typed while it works, both reach the session. When the session ends, the questio
    when the turn ends goes to the waiter. The files of the attached images follow the text, for the
    session to open.
 
+## Dictation
+
+A reply box has a mic when the desk finds a speech engine installed; without one the desk works as
+before and shows none. Today the engine is whisper.cpp's `whisper-server` (v1.9.6, CUDA) with the
+`ggml-large-v3-turbo-q8_0` model, installed outside npm and every repository by `scripts/setup-whisper`
+into `$AGENT_DESK_WHISPER_HOME` (by default `~/.local/share/agent-desk-whisper`): the binary
+`whisper.cpp/build/bin/whisper-server` and the model `models/ggml-large-v3-turbo-q8_0.bin`. The desk
+reads the variable (an absolute path) when it starts and looks for both files at each `GET
+/api/dictation`, so an install needs no restart: the page asks again when its window comes to the front.
+Either file missing means no engine; one there that cannot be used (no permission, not a file) is said. Everything particular to it lives in `src/server/whisper.ts`, behind the
+`SpeechEngine` interface of `src/server/dictation.ts` (warm, transcribe, stop): another engine changes
+that one module, not the endpoints or the page.
+
+1. A tap on the mic starts recording (`getUserMedia`, an `AudioWorklet` from `/dictate-worklet.js`,
+   or a `ScriptProcessor` where there is none) and posts `/api/dictation/warm` at once, so the
+   engine loads while the developer speaks. The mic turns red with the time and a ring as wide as
+   the voice is loud; a second tap stops, and so does the 120th second, and the samples still on
+   their way from the audio thread are kept. A microphone not started within 30 s is given up, and
+   a recording whose box closes (the panel shut, the question answered elsewhere) is dropped; the
+   mic of a take under way is never disabled, and a tap on it while it is being written cancels it.
+   The page waits on each call what `GET /api/dictation` says the desk may take, plus 30 s for the
+   way there and back, then says the desk did not answer.
+2. The page makes a 16 kHz mono 16-bit PCM WAV itself (each sample the average of those it spans at
+   the microphone's rate), the same from iOS Safari as from Chrome, and posts it to
+   `/api/dictation/transcribe` as a form with a prompt: the words likely in it, to bias their spelling. The
+   prompt holds, within the engine's 224 tokens (counted high, 24 kept apart): a fixed glossary of
+   developer words (commit, push, pull request, merge, rebase, branch, worktree, deploy, review,
+   fixup, typecheck, test, hook, prompt, dashboard, subagent, diff, lint, CI) and the desk's own
+   labels (Needs you, Sessions, To review, Desk, History, Saved replies); then the names on the desk,
+   this session's first and then the most recently active, 60 tokens at most (projects, session
+   titles, each session's provider and its status line's model, as data: no provider is named in
+   the desk's code); then the end of the box's conversation (what was said but agents' reports,
+   without code blocks or links), with the question being answered last, as the transcript before
+   this one would read.
+3. The desk checks the WAV and the prompt, and hands both to the engine; the audio and the text stay
+   in memory, are never written and never logged. The text comes back as one line, and the page
+   puts it in the box at the caret, spaced from the words around it, as typing would (the draft is
+   kept): it is never sent on its own.
+
+The desk runs the engine as its own child, only while dictation is used: started by the first call
+(an argument list, no shell), listening only on the unix socket `run/whisper.sock` in the store
+(`--host` ending in `.sock`; the directory is 0700, so no other user and no web page can reach it,
+and no port is left free for another process to take while the model loads; a socket left at that
+path is removed first), shared by the calls meanwhile, stopped with SIGTERM (SIGKILL 10 s later if
+it is still there) 5 minutes after the last one, or when it is not ready within 120 s, fails to
+answer (120 s at most) or its pid file cannot be written; when the desk ends it gets SIGTERM only,
+and one still running then is ended at the next desk's start (below). A start that fails, a crash or
+a server that is not ready or does not answer in time is said to the page, and the next tap starts
+it again; one runs at most, the next waiting for the last to exit (12 s at most, then said). A
+transcription the page cancels or gives up on closes the desk's request to the engine, which ends
+that inference, so the next one does not wait behind it. Its pid and start time are kept in
+`run/whisper.sock.pid` with those of the desk that started it: a desk killed before it could stop it
+leaves it running, and the next start ends it, only when that pid still has that start time, was
+started with these arguments and its desk no longer runs (or is this very desk). While that desk
+runs (two desks on one store, e.g. a trial on another port) the start is refused with "dictate from
+that desk, or stop it", and a pid with that start time but other arguments (an install moved) is
+refused naming the pid; neither is signalled. It is asked at `/inference` with `language=auto`
+(Spanish with English terms, or English), the `prompt`, `response_format=json`, `temperature=0.0`
+and `no_timestamps=true`; never with `--convert`, since the WAV needs no ffmpeg. Segments that only
+name a sound (`[BLANK_AUDIO]`, `(music)`) are dropped. On silence whisper.cpp already drops a
+segment whose no-speech probability passes 0.6 (with a log probability under -1, its defaults);
+`suppress_nst` is not asked, since it also drops the symbols a developer dictates (`#`, `/`, `_`,
+brackets). A prompt echoed on silence is still possible: voice activity detection would need a
+second model.
+
 ## CLI
 
 `agent-desk help` lists every command; `agent-desk <command> --help` (or `-h`, before any `--`) prints that
@@ -651,6 +716,9 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/images` (the image itself, `Content-Type: image/*`, 20 MB at most) | keeps an image pasted or picked on the page; returns `{ "id": "…" }` |
 | `GET /api/replies` | `{ replies, rev, problem? }`: the saved replies (`replies.json`) and their revision, `problem` saying why the file could not be read when it could not (then `replies` is empty). The page fetches them when it starts, after a save and when its window comes to the front |
 | `PUT /api/replies` `{ "replies": ["…"], "rev": n }` | replaces the saved replies with these, checked as `replies.json` is (400 `{ error }` naming the reply's line and why otherwise; nothing changes then), when `rev` is the revision kept; returns `{ replies, rev }` as kept. 409 `{ error, stale: true, rev }`, nothing changed, when another device saved since the editor opened at `rev`: the editor keeps its text, shows why and fetches the list again, and a second Save from the `rev` it was told replaces that list. The editor sends its lines without the empty ones and shows them so, so the line a refusal names is the one shown. A `POST` there is 405 |
+| `GET /api/dictation` | `{ available, problem?, seconds, promptTokens, promptMax, warmSeconds, transcribeSeconds }`: whether a speech engine is installed (the page shows the mic only then) and, when one is there but cannot be used, why; the longest recording (120 s), how many tokens of a prompt the engine keeps (224), the most characters the desk takes in one (2000), and the longest the desk waits on a warm-up (144 s) and a transcription (264 s) before it says they failed. Fetched when the page starts and when its window comes to the front |
+| `POST /api/dictation/warm` | starts the speech engine if it does not run, answered `{ ready: true }` once it can transcribe; 409 `{ error }` when none is installed, 503 `{ error }` saying why it could not start. The page sends it at the mic's tap, before the developer speaks (see Dictation) |
+| `POST /api/dictation/transcribe` (`multipart/form-data` with two fields: `audio`, the recording as an `audio/wav` file, 16 kHz mono 16-bit PCM, 120 s and 3 840 044 bytes at most; `prompt`, text) | returns `{ text }`, what was said as one line (`""` when nothing was), for the page to put in the box; 400 `{ error }` for another format, another or repeated field, or a prompt longer than 2000 characters or holding a control, bidi or invisible character, 415 without `multipart/form-data`, 409 when no engine is installed, 503 `{ error }` when the engine failed (the next tap starts it again) |
 | `POST /api/questions/<id>/answer` `{ "text": "…", "images"?: ["<id>"] }` | answer from the page, with up to 10 attached images |
 | `POST /api/questions/<id>/dismiss` | close without answering |
 | `POST /api/sessions/<id>/message` `{ "text": "…", "images"?: ["<id>"] }` | message to a session that asked nothing: a reply while it waits, or a message while it works; kept in the history against its last message |
@@ -663,7 +731,7 @@ Tailscale host and login (`SECURITY.md`).
 | `POST /api/reviews/<id>/opened`, `POST /api/reviews/<id>/close` | opened on the desk (`openedAt`, set again when a newer round came since); leaves To review (stays in History) |
 
 Every `POST` and `PUT` needs `Origin: http://127.0.0.1:<port>` (or `localhost`) exactly and the header
-`X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most, except an image and a review's state.
+`X-Agent-Desk-Secret`; bodies are JSON, 64 KB at most, except an image, a review's state and a recording.
 
 ### How the page follows the store
 

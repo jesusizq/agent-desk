@@ -6,6 +6,7 @@ import { TEXT } from "./text.js";
 import { agentRows, agentsPart, failedUnseen, sessionAgents, sessionQuiet } from "./agents.js";
 import { askBody, replyBox } from "./answer.js";
 import { shownReplies } from "./replies.js";
+import { shownMic } from "./dictate.js";
 import { controlSection, forgetButton, runnableShell } from "./control.js";
 import { conversationView, loadConversation, outgoingView, sentWhileWorking } from "./conversation.js";
 import { ago, duration, firstLine, gb, stamp } from "./format.js";
@@ -289,6 +290,7 @@ function panelShows(s) {
     [...ui.stepsOpen],
     [...ui.contextOpen],
     shownReplies(), // the chips above the box
+    shownMic(), // the mic beside it
     Math.floor(Date.now() / 60_000), // times shown as "for 5 min"
   ]);
 }

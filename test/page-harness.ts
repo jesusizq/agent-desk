@@ -149,12 +149,12 @@ export const touch = (page: Page, type: string, points: [number, number][]) =>
  * marked seen), needs a machine of its own, or must not see what earlier tests left on the shared
  * desk; the page closes before its desk. A phone is 390 × 844 with a touch screen, else a 1400 × 900 window.
  */
-export async function ownDesk(test: (page: Page, own: Store) => Promise<void>, prepare: (own: Store) => void = () => {}, { machine, phone = false }: { machine?: Parameters<typeof serve>[3]; phone?: boolean } = {}): Promise<void> {
+export async function ownDesk(test: (page: Page, own: Store) => Promise<void>, prepare: (own: Store) => void = () => {}, { machine, phone = false, speech }: { machine?: Parameters<typeof serve>[3]; phone?: boolean; speech?: Parameters<typeof serve>[4] } = {}): Promise<void> {
   const home = path.join(tempHome(), "store");
   execFileSync(process.execPath, [path.join(import.meta.dirname, "../scripts/demo.ts"), home]);
   const own = new Store(home);
   prepare(own);
-  const desk = await serve(own, undefined, undefined, machine);
+  const desk = await serve(own, undefined, undefined, machine, speech);
   const page = phone ? await browser.newPage(390, 844) : await browser.newPage(1400, 900);
   try {
     if (phone) await page.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });

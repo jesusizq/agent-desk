@@ -60,6 +60,8 @@ export class StorePaths {
     return this.inside(this.reviewDir(reviewId), `round-${n}.html`);
   }
   get archiveDir() { return path.join(this.home, "archive"); }
+  /** What the desk runs while it runs: the speech engine's socket and pid file (0700, this user only). */
+  get runDir() { return path.join(this.home, "run"); }
   /** Where a store file goes when archived: the same relative path under archive/. */
   archived(file: string) {
     const rel = path.relative(this.home, file);

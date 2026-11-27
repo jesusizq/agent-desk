@@ -96,6 +96,8 @@ export class OfflineError extends Error {}
 /** A request to the desk; no connection is said as such, not as fetch's own "Load failed". @param {string} route @param {RequestInit} [init] */
 async function write(route, init) {
   const res = await fetch(route, init).catch(() => {
+    // Given up by the page itself (a bound, or the developer): its own reason, not the desk being away.
+    if (init?.signal?.aborted) throw init.signal.reason;
     throw new OfflineError(offlineReason());
   });
   if (needsPin(res)) endUnlock();
@@ -133,9 +135,13 @@ async function replyOf(res) {
   const error = "error" in answer && typeof answer.error === "string" ? answer.error : null;
   throw new DeskError(error ?? `${res.status} ${res.statusText}`, res.status, answer);
 }
-/** A write to the desk, returning what it answers. @param {string} route @param {unknown} [body] @param {"POST" | "PUT"} [method] */
-export async function postJson(route, body = {}, method = "POST") {
-  return replyOf(await write(route, { method, headers: { "Content-Type": "application/json", "X-Agent-Desk-Secret": secret }, body: JSON.stringify(body) }));
+/** A write to the desk, returning what it answers. @param {string} route @param {unknown} [body] @param {"POST" | "PUT"} [method] @param {AbortSignal} [signal] */
+export async function postJson(route, body = {}, method = "POST", signal = undefined) {
+  return replyOf(await write(route, { method, headers: { "Content-Type": "application/json", "X-Agent-Desk-Secret": secret }, body: JSON.stringify(body), signal }));
+}
+/** A form posted to the desk (a recording and its prompt), returning what it answers. @param {string} route @param {FormData} form @param {AbortSignal} signal */
+export async function postForm(route, form, signal) {
+  return replyOf(await write(route, { method: "POST", headers: { "X-Agent-Desk-Secret": secret }, body: form, signal }));
 }
 /** A read from the desk. @param {string} route */
 export const getJson = async (route) => replyOf(await write(route));
