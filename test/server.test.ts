@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { procInfo } from "../src/core/proc.ts";
 import { Push } from "../src/server/push.ts";
-import { createDeskServer, deskState, diskWarnings, recordPlanUsage, SEEN_BODY_LIMIT, SEEN_IDS_MAX } from "../src/server/server.ts";
+import { createDeskServer, deskState, diskWarnings, recordPlanUsage, SEEN_BODY_LIMIT, SEEN_IDS_MAX, tidyStore } from "../src/server/server.ts";
 import { compactInstructionsLine, type Session } from "../src/core/model.ts";
 import type { Store } from "../src/store/store.ts";
 import { projectId } from "../src/project/scan.ts";
@@ -900,6 +900,74 @@ describe("unreadable session files", () => {
       assert.equal(fs.readFileSync(own.paths.plan, "utf8"), broken, "the history is never overwritten");
       assert.ok(deskState(own, new Date(), QUIET_MACHINE).problems.some((p) => p.includes("plan.json")), "the page counts it");
     }
+  });
+});
+
+describe("tidying the store", () => {
+  it("deletes the images attached to what a session received a day after it ended, saying how many and what failed", () => {
+    const own = testStore();
+    for (const id of ["s1", "s2"]) addSession(own, id);
+    const [gone, stuck, kept] = [own.addImage(PNG), own.addImage(PNG), own.addImage(PNG)];
+    own.addMessage({ sessionId: "s1", from: "developer", text: "see", via: "desk", images: [gone, stuck] });
+    own.addMessage({ sessionId: "s2", from: "developer", text: "see", via: "desk", images: [kept] });
+    const stuckFile = own.imageFile(stuck)?.file ?? "";
+    fs.rmSync(stuckFile);
+    fs.mkdirSync(stuckFile);
+    fs.writeFileSync(path.join(stuckFile, "inside"), "");
+    own.updateSession("s1", (s) => ({ ...s, state: "ended", endedAt: "2026-10-28T08:00:00.000Z" }));
+    own.updateSession("s2", (s) => ({ ...s, state: "ended", endedAt: "2026-10-28T09:00:00.000Z" }));
+    const logged = { out: [] as string[], err: [] as string[] };
+    const [out, err] = [process.stdout.write, process.stderr.write];
+    process.stdout.write = (chunk: string | Uint8Array) => (logged.out.push(String(chunk)), true);
+    process.stderr.write = (chunk: string | Uint8Array) => (logged.err.push(String(chunk)), true);
+    try {
+      tidyStore(own, Date.parse("2026-10-29T08:30:00.000Z"));
+    } finally {
+      [process.stdout.write, process.stderr.write] = [out, err];
+    }
+    assert.equal(own.imageFile(gone), undefined, "ended 24.5 h ago: deleted");
+    assert.ok(own.imageFile(kept), "ended 23.5 h ago: kept");
+    assert.deepEqual(logged.out, ["agent-desk: deleted 1 images attached to sessions that ended over 24 hours ago\n"]);
+    assert.ok(logged.err.some((l) => l.startsWith("agent-desk: deleting images: ") && l.includes(stuckFile)), logged.err.join(""));
+  });
+});
+
+describe("tidying the store, a pass that throws", () => {
+  /** Runs tidyStore on a store whose session s1 ended 61 days ago with an image attached, one pass made to throw. */
+  function tidyWith(failing: "deleteImagesOfEndedSessions" | "archiveOlderThan"): { own: Store; image: string; err: string } {
+    const own = testStore();
+    addSession(own, "s1");
+    const image = own.addImage(PNG);
+    own.addMessage({ sessionId: "s1", from: "developer", text: "see", via: "desk", images: [image] });
+    own.updateSession("s1", (s) => ({ ...s, state: "ended", endedAt: "2026-08-01T08:00:00.000Z" }));
+    own[failing] = () => {
+      throw new Error("disk on fire");
+    };
+    const logged: string[] = [];
+    const [out, err] = [process.stdout.write, process.stderr.write];
+    process.stdout.write = () => true;
+    process.stderr.write = (chunk: string | Uint8Array) => (logged.push(String(chunk)), true);
+    try {
+      tidyStore(own, Date.parse("2026-10-29T08:30:00.000Z"));
+    } finally {
+      [process.stdout.write, process.stderr.write] = [out, err];
+    }
+    return { own, image, err: logged.join("") };
+  }
+
+  it("is reported with what failed, and the archive still runs after the deletion failed", () => {
+    const { own, image, err } = tidyWith("deleteImagesOfEndedSessions");
+    assert.match(err, /agent-desk: deleting the images attached to ended sessions failed \(archiving runs regardless; both run again in 6 hours\): Error: disk on fire/);
+    assert.equal(own.getSession("s1"), undefined, "archived");
+    assert.ok(fs.existsSync(own.paths.archived(own.paths.session("s1"))));
+    assert.ok(own.imageFile(image), "the deletion that failed deleted nothing");
+  });
+
+  it("is reported with what failed, and the deletion has run when the archive fails", () => {
+    const { own, image, err } = tidyWith("archiveOlderThan");
+    assert.match(err, /agent-desk: archiving failed \(deleting images runs regardless; both run again in 6 hours\): Error: disk on fire/);
+    assert.equal(own.imageFile(image), undefined, "deleted");
+    assert.ok(own.getSession("s1"), "not archived");
   });
 });
 

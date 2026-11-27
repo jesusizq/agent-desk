@@ -595,16 +595,36 @@ function readBytes(req: IncomingMessage, limit: number): Promise<Buffer> {
 }
 
 const ARCHIVE_AFTER_DAYS = 60;
-const ARCHIVE_EVERY_MS = 6 * 3600_000;
+const ATTACHED_IMAGES_HOURS = 24;
+const TIDY_EVERY_MS = 6 * 3600_000;
 
-/** Keeps the live store small: what is older than 60 days moves to archive/. */
-function archiveOld(store: Store): void {
-  const problems: string[] = [];
-  const counts = store.archiveOlderThan(new Date(Date.now() - ARCHIVE_AFTER_DAYS * 86_400_000), problems);
-  for (const problem of problems) process.stderr.write(`agent-desk: archiving: ${problem}\n`);
-  if (counts.questions + counts.results + counts.sessions + counts.images > 0) {
-    process.stdout.write(`agent-desk: archived ${counts.questions} questions, ${counts.results} results, ${counts.sessions} sessions, ${counts.images} images older than ${ARCHIVE_AFTER_DAYS} days\n`);
-  }
+/**
+ * Keeps the store small: the images attached on the desk to what a session received are deleted 24 h
+ * after it ended, and what is older than 60 days moves to archive/. A pass that throws is reported and
+ * the other still runs; the next run tries both again.
+ */
+export function tidyStore(store: Store, now = Date.now()): void {
+  const pass = (what: string, other: string, run: () => void) => {
+    try {
+      run();
+    } catch (error) {
+      process.stderr.write(`agent-desk: ${what} failed (${other} runs regardless; both run again in ${TIDY_EVERY_MS / 3600_000} hours): ${(error as Error).stack ?? String(error)}\n`);
+    }
+  };
+  pass("deleting the images attached to ended sessions", "archiving", () => {
+    const problems: string[] = [];
+    const deleted = store.deleteImagesOfEndedSessions(new Date(now - ATTACHED_IMAGES_HOURS * 3600_000), problems);
+    for (const problem of problems) process.stderr.write(`agent-desk: deleting images: ${problem}\n`);
+    if (deleted > 0) process.stdout.write(`agent-desk: deleted ${deleted} images attached to sessions that ended over ${ATTACHED_IMAGES_HOURS} hours ago\n`);
+  });
+  pass("archiving", "deleting images", () => {
+    const problems: string[] = [];
+    const counts = store.archiveOlderThan(new Date(now - ARCHIVE_AFTER_DAYS * 86_400_000), problems);
+    for (const problem of problems) process.stderr.write(`agent-desk: archiving: ${problem}\n`);
+    if (counts.questions + counts.results + counts.sessions + counts.images > 0) {
+      process.stdout.write(`agent-desk: archived ${counts.questions} questions, ${counts.results} results, ${counts.sessions} sessions, ${counts.images} images older than ${ARCHIVE_AFTER_DAYS} days\n`);
+    }
+  });
 }
 
 /** The speech engine is the desk's child: it ends with the desk, which a signal would end without its exit event. */
@@ -673,14 +693,8 @@ export function startServer(store: Store, port: number): Promise<Server> {
       planFailure = (error as Error).message;
     }
   }, PUSH_EVERY_MS).unref();
-  archiveOld(store);
-  setInterval(() => {
-    try {
-      archiveOld(store);
-    } catch (error) {
-      process.stderr.write(`agent-desk: archiving failed: ${(error as Error).stack ?? String(error)}\n`);
-    }
-  }, ARCHIVE_EVERY_MS).unref();
+  tidyStore(store);
+  setInterval(() => tidyStore(store), TIDY_EVERY_MS).unref();
   return new Promise((resolve, reject) => {
     server.once("error", (error: NodeJS.ErrnoException) =>
       reject(error.code === "EADDRINUSE" ? new Error(`port ${port} is in use; is the desk already running? Use --port to pick another`) : error),

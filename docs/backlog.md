@@ -33,3 +33,12 @@ does not answer in time…" fail now and then at a load average above ~20 and pa
 
 - Any opening of a review marks it opened (`openedAt`), also a browser restoring a `#rv=` tab, so a
   terminal prompt after that answers it. Accepted for now.
+
+## archive/ only grows
+
+- `Store.archiveOlderThan` moves records and images to `archive/` in the store and nothing ever
+  empties it, so it grows with every 60 days of use.
+- The owner's store had no `archive/` folder on 2026-11-27 (its `images/`: 199 files, 68 MB).
+- When it matters: a cap on its size or an age limit, deleting the oldest first. History and the
+  past decisions read archived questions and sessions too (`Store.everyRecord`), so a limit on those
+  shortens what they find.

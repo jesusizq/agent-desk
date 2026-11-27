@@ -26,6 +26,16 @@ export type Session = {
   startedAt: string;
   updatedAt: string;
   endedAt?: string;
+  /**
+   * When the desk first found its process gone with no end recorded (`endedAt` on an `ended` record):
+   * what it was sent counts as ended from then. Gone once its process is seen running again.
+   */
+  goneSince?: string;
+  /**
+   * The session its conversation went on under when its adapter ended it for that reason: what it
+   * was sent is still that conversation's while the one it continued as runs.
+   */
+  continuedAs?: string;
   process?: SessionProcess;
   /** Terminal program the session runs in (the TERM_PROGRAM convention), e.g. "vscode". */
   terminal?: string;

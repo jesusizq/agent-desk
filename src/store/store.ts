@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { bool, compact, fields, InputError, int, isoTime, list, oneOf, optional, text } from "../core/check.ts";
-import { id, newId, slug } from "../core/ids.ts";
+import { ID_PATTERN, id, newId, slug } from "../core/ids.ts";
 import { addSamples, type PlanHistory } from "../core/limits.ts";
 import { type Answered, pastDecisions } from "../core/match.ts";
 import { isAlive, procInfo, sessionFinished } from "../core/proc.ts";
@@ -200,6 +200,25 @@ const FOLDER_QUIET_NS = 5_000_000_000n;
 
 const sameFolder = (a: FolderStamp, b: FolderStamp) => a.ino === b.ino && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 
+/** Images a live record shows; `sessionId`, the session they were sent to, when its end lets them go. */
+type ImageShowing = { readonly sessionId?: string; readonly images: readonly string[] };
+/** A store folder with a record that cannot be read, of `sessionId`'s when the folder says. */
+type UnreadableShowings = { readonly dir: string; readonly sessionId?: string };
+
+/** What a pass did not do because the folders named hold a record that cannot be read. */
+function cannotTellWhatShows(notDone: string, unreadable: readonly UnreadableShowings[]): string {
+  return `${notDone}: ${unreadable.map((u) => u.dir).join(", ")} cannot be read whole, and what cannot be read may still show one; fix or remove the files named`;
+}
+
+/**
+ * The session ended before `before`: by its record (`endedAt`, on a session `ended`) or, its process
+ * gone, from when the desk first found it gone (`goneSince`); never from its last write (`updatedAt`).
+ */
+function endedBefore(s: Session, before: string): boolean {
+  const at = (s.state === "ended" ? s.endedAt : undefined) ?? s.goneSince;
+  return sessionFinished(s) && at !== undefined && at < before;
+}
+
 /** Frozen all the way down: a record read once is shared by every later read, so no caller may change it. */
 function deepFreeze<T>(value: T): T {
   if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
@@ -255,7 +274,7 @@ export class Store {
     return raw === undefined ? undefined : readSession(raw, file);
   }
 
-  /** Creates the session or merges `fields` into it. */
+  /** Creates the session or merges `fields` into it; a process given is running now, so it is no longer gone. */
   upsertSession(input: NewSession): Session {
     const file = this.paths.session(input.id);
     return withLock(file, () => {
@@ -265,6 +284,7 @@ export class Store {
         compact({
           ...current,
           ...input,
+          goneSince: input.process === undefined ? (input.goneSince ?? current?.goneSince) : undefined,
           state: input.state ?? current?.state ?? "working",
           startedAt: current?.startedAt ?? input.startedAt ?? at,
           updatedAt: at,
@@ -1785,15 +1805,17 @@ export class Store {
 
   /**
    * Moves what is older than `cutoff` out of the live store into archive/ (same layout): closed
-   * questions, results with their images, and sessions that ended or whose process is gone, with
-   * their agents, metrics and services; then the images nothing left shows (attached on the desk
+   * questions, results with their images, and sessions whose conversation ended before `cutoff`
+   * (`endedConversations`), with their agents, metrics and services; then the images nothing left shows (attached on the desk
    * to what was archived, or never sent), and projects' resume notes that all ended before `cutoff`.
    * Nothing is deleted; the page and the hooks stop reading it. A resume record that cannot be read
-   * is reported in `problems` and left for its adapter to replace.
+   * is reported in `problems` and left for its adapter to replace; while a record that could show an
+   * image cannot be read, no image is moved (`archiveUnshownImages`).
    */
   archiveOlderThan(cutoff: Date, problems: string[] = []): { questions: number; results: number; sessions: number; images: number } {
     const before = cutoff.toISOString();
     const counts = { questions: 0, results: 0, sessions: 0, images: 0 };
+    this.noteGoneSessions(problems);
     for (const q of this.readAll(this.paths.questionDir("closed"), readQuestion)) {
       if ((q.closedAt ?? q.askedAt) >= before) continue;
       withLock(this.paths.questionLock(q.id), () => this.moveToArchive(this.paths.question(q.id, "closed")));
@@ -1809,8 +1831,9 @@ export class Store {
       counts.results++;
     }
     const open = new Set(this.openQuestions().map((q) => q.sessionId));
+    const over = this.endedConversations(before, problems);
     for (const s of this.listSessions()) {
-      if (!sessionFinished(s) || open.has(s.id) || (s.endedAt ?? s.updatedAt) >= before) continue;
+      if (open.has(s.id) || !over.has(s.id)) continue;
       for (const service of this.listServices().filter((v) => v.sessionId === s.id)) this.moveToArchive(this.paths.service(service.id));
       this.moveToArchive(this.paths.agentDir(s.id));
       this.moveToArchive(this.paths.metrics(s.id));
@@ -1821,7 +1844,7 @@ export class Store {
       this.moveToArchive(this.paths.session(s.id));
       counts.sessions++;
     }
-    counts.images = this.archiveUnshownImages(cutoff);
+    counts.images = this.archiveUnshownImages(cutoff, problems);
     // Resume notes all ended before the cutoff: their project may never run a hook again to drop them.
     const ended = (r: ProjectResumes | undefined): r is ProjectResumes => r !== undefined && r.notes.every((n) => n.expiresAt < before);
     for (const r of this.listResumes(problems)) {
@@ -1842,13 +1865,131 @@ export class Store {
     return counts;
   }
 
-  /** Moves to archive/ the images older than `cutoff` that no live result, answer or message shows. */
-  private archiveUnshownImages(cutoff: Date): number {
-    const shown = new Set([
-      ...this.listResults().flatMap((r) => r.images.map((i) => i.id)),
-      ...(["open", "closed"] as const).flatMap((status) => this.readAll(this.paths.questionDir(status), readQuestion)).flatMap((q) => [q.answer, ...(q.setAside ?? [])].flatMap((a) => a?.images ?? [])),
-      ...this.subdirs(this.paths.messagesDir).flatMap((dir) => this.readAll(dir, readConversationEntry)).flatMap((m) => m.images ?? []),
-    ]);
+  /**
+   * Deletes for good the images the developer attached on the desk once every answer and message
+   * showing them belongs to a session that ended before `cutoff`: they were there for that session to
+   * read. A session ended as `endedBefore` says, `goneSince` recorded here first; a conversation that
+   * went on under another id (`continuedAs`) ends with the last of them. An image a result or an open
+   * question shows, or one nothing shows (attached, not sent), stays. The ids stay in the answers and messages, so the history knows an image was there.
+   * A record that cannot be read is reported in `problems`; while one could show an image of a session
+   * not ended (a question, a result, a message of such a session) nothing is deleted. An image that
+   * cannot be deleted is reported there too, and the others still go. Returns how many were deleted.
+   */
+  deleteImagesOfEndedSessions(cutoff: Date, problems: string[] = []): number {
+    const before = cutoff.toISOString();
+    this.noteGoneSessions(problems);
+    const ended = this.endedConversations(before, problems);
+    const { shown, unreadable } = this.imageShowings(problems);
+    // What an unreadable message of an ended session shows is that session's, gone with it.
+    const holding = unreadable.filter((u) => u.sessionId === undefined || !ended.has(u.sessionId));
+    if (holding.length > 0) {
+      problems.push(cannotTellWhatShows("no image deleted of the sessions that ended", holding));
+      return 0;
+    }
+    const kept = new Set<string>();
+    const ofEnded = new Set<string>();
+    for (const { sessionId, images } of shown) for (const image of images) (sessionId !== undefined && ended.has(sessionId) ? ofEnded : kept).add(image);
+    let deleted = 0;
+    for (const image of ofEnded) {
+      if (kept.has(image)) continue;
+      const stored = this.imageFile(image);
+      if (!stored) continue; // deleted before, or never kept (an id a malformed record carries)
+      try {
+        fs.unlinkSync(stored.file);
+        deleted++;
+      } catch (error) {
+        if (isCode(error, "ENOENT")) continue; // deleted meanwhile by another run
+        problems.push(`${stored.file}: ${(error as Error).message}; not deleted, it is tried again at the next run`);
+      }
+    }
+    return deleted;
+  }
+
+  /**
+   * Records when a session not ended is first found with its process gone (`goneSince`), and drops it
+   * once that session runs again: its images are counted from then, not from its last write.
+   */
+  private noteGoneSessions(problems: string[]): void {
+    const gone = (s: Session) => sessionFinished(s) && !(s.state === "ended" && s.endedAt !== undefined);
+    const reportedByThePass: string[] = []; // the same files, read again right after by the pass, report there once
+    for (const s of this.readAll(this.paths.sessionsDir, readSession, reportedByThePass)) {
+      if (gone(s) === (s.goneSince !== undefined)) continue;
+      const file = this.paths.session(s.id);
+      try {
+        withLock(file, () => {
+          const current = this.getSession(s.id);
+          if (current === undefined || gone(current) === (current.goneSince !== undefined)) return; // archived or changed meanwhile
+          const { goneSince: _goneSince, ...rest } = current;
+          // Its updatedAt stays: it is when the session last wrote, which the page shows.
+          writeJson(file, readSession(gone(current) ? { ...rest, goneSince: this.stamp() } : rest, file));
+        });
+      } catch (error) {
+        problems.push(`${file}: ${(error as Error).message}; when its process was found gone is not recorded, so it counts as not ended (what it was sent stays, it is not archived); tried again at the next run`);
+      }
+    }
+  }
+
+  /**
+   * The ids of the sessions whose conversation ended before `before`: each ended as `endedBefore` says,
+   * and so did every session it went on as (`continuedAs`), to the last. A session that cannot be read
+   * is not known to have ended, so neither is a conversation that went on as it.
+   */
+  private endedConversations(before: string, problems: string[]): Set<string> {
+    // A live record is never replaced by an archived copy of the same id (one resumed after it was archived).
+    const sessions = this.everyRecord(this.paths.sessionsDir, readSession, problems, { unreadableLiveWins: true });
+    const byId = new Map(sessions.map((s) => [s.id, s]));
+    const over = (s: Session): boolean => {
+      const seen = new Set<string>();
+      let at: Session | undefined = s;
+      while (at !== undefined && !seen.has(at.id)) {
+        if (!endedBefore(at, before)) return false;
+        seen.add(at.id);
+        if (at.continuedAs === undefined) return true;
+        at = byId.get(at.continuedAs);
+      }
+      return at !== undefined; // a cycle, all of it ended; a successor missing or unreadable keeps them
+    };
+    return new Set(sessions.filter(over).map((s) => s.id));
+  }
+
+  /**
+   * Every live record that shows images, with what it shows: a result, an open question's answers
+   * (no `sessionId`: they stay whatever any session does), a closed question's answers (its session's)
+   * and each message (its conversation's). A folder with a record that cannot be read is in
+   * `unreadable`, with the session its records belong to when that is known; its problems are reported.
+   */
+  private imageShowings(problems: string[]): { shown: ImageShowing[]; unreadable: UnreadableShowings[] } {
+    const shown: ImageShowing[] = [];
+    const unreadable: UnreadableShowings[] = [];
+    const walk = <T>(dir: string, reader: (value: unknown, where: string) => T, showing: (record: T) => ImageShowing, sessionId?: string) => {
+      const found: string[] = [];
+      for (const record of this.readAll(dir, reader, found)) shown.push(showing(record));
+      problems.push(...found);
+      if (found.length > 0) unreadable.push(sessionId === undefined ? { dir } : { dir, sessionId });
+    };
+    const answers = (q: Question) => [q.answer, ...(q.setAside ?? [])].flatMap((a) => a?.images ?? []);
+    walk(this.paths.resultsDir, readResult, (r) => ({ images: r.images.map((i) => i.id) }));
+    walk(this.paths.questionDir("open"), readQuestion, (q) => ({ images: answers(q) }));
+    walk(this.paths.questionDir("closed"), readQuestion, (q) => ({ sessionId: q.sessionId, images: answers(q) }));
+    for (const dir of this.subdirs(this.paths.messagesDir)) {
+      const sessionId = path.basename(dir);
+      walk(dir, readConversationEntry, (m) => ({ sessionId, images: m.images ?? [] }), sessionId);
+    }
+    return { shown, unreadable };
+  }
+
+  /**
+   * Moves to archive/ the images older than `cutoff` that no live result, answer or message shows.
+   * While a record that could show one cannot be read, none is moved: moved, it would vanish from that
+   * record once it is fixed. Each is reported in `problems`.
+   */
+  private archiveUnshownImages(cutoff: Date, problems: string[]): number {
+    const { shown: showings, unreadable } = this.imageShowings(problems);
+    if (unreadable.length > 0) {
+      problems.push(cannotTellWhatShows("no image archived", unreadable));
+      return 0;
+    }
+    const shown = new Set(showings.flatMap((s) => s.images));
     let names: string[];
     try {
       names = fs.readdirSync(this.paths.imagesDir);
@@ -1925,13 +2066,15 @@ export class Store {
 
   /**
    * The records of a store folder and of its copy under archive/, one per id. The live folder is read
-   * first: a record archived meanwhile moves from it to the archive, so it is seen in one of them.
+   * first: a record archived meanwhile moves from it to the archive, so it is seen in one of them. With
+   * `unreadableLiveWins`, an id with a file in the folder that cannot be read is not taken from the archive.
    */
-  private everyRecord<T extends { id: string }>(dir: string, read: (value: unknown, where: string) => T, problems?: string[]): T[] {
+  private everyRecord<T extends { id: string }>(dir: string, read: (value: unknown, where: string) => T, problems?: string[], { unreadableLiveWins = false } = {}): T[] {
+    const names = unreadableLiveWins ? listJson(dir).map((n) => n.slice(0, -".json".length)).filter((n) => ID_PATTERN.test(n)) : [];
     const byId = new Map<string, T>();
-    for (const where of [dir, this.paths.archived(dir)]) {
-      for (const record of this.readAll(where, read, problems)) if (!byId.has(record.id)) byId.set(record.id, record);
-    }
+    for (const record of this.readAll(dir, read, problems)) if (!byId.has(record.id)) byId.set(record.id, record);
+    const live = new Set(names);
+    for (const record of this.readAll(this.paths.archived(dir), read, problems)) if (!byId.has(record.id) && !live.has(record.id)) byId.set(record.id, record);
     return [...byId.values()];
   }
 

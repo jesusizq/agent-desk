@@ -375,9 +375,11 @@ Chrome update can shift anti-aliasing; the failure then names both versions.
 runs `npm run check`, `pre-push` runs `npm run check` and `npm test`. Commits and pushes that touch
 only Markdown or `docs/` skip them.
 
-The server moves what is older than 60 days (closed questions, results with their images, finished
-sessions, a project's handoffs to resume whose notes all ended) to `archive/` in the store, at start
-and every 6 hours.
+The server moves what is older than 60 days (closed questions, results with their images, sessions
+that ended or whose process is gone, counted from when the desk found it gone, and once the last of
+the sessions their conversation went on as did, a project's handoffs to resume whose notes all ended) to `archive/` in the store, at start and every 6 hours. At the same
+runs it deletes for good the images the developer attached to answers and messages, once the session
+they were sent to ended more than 24 hours before.
 
 ## Acknowledgements
 

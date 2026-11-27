@@ -1109,11 +1109,14 @@ describe("Claude Code hooks", () => {
     handleHook(event("Stop", { last_assistant_message: "Next?" }), ctx(store));
     handleHook(event("SessionEnd", { reason: "other" }), ctx(store));
     assert.equal(store.getSession("cc-1")?.endedAsking, true);
+    // Retired meanwhile as continued in another session, then resumed under its own id.
+    store.updateSession("cc-1", (old) => ({ ...old, continuedAs: "cc-2" }));
     handleHook(event("SessionStart", { source: "resume" }), ctx(store));
     const s = store.getSession("cc-1");
     assert.equal(s?.state, "waiting");
     assert.equal(s?.endedAsking, undefined);
     assert.equal(s?.endedAt, undefined);
+    assert.equal(s?.continuedAs, undefined, "it goes on itself, not as the other session");
   });
 
   it("ends a session whose conversation continued in another one, and only that", () => {
@@ -1124,12 +1127,14 @@ describe("Claude Code hooks", () => {
     const turn = { type: "user", message: {} };
     const moved = { type: "continued-in", continuedInSessionId: "cc-1" };
     write("old", turn, { type: "cost-state" }, moved);
+    write("went-on", turn, { type: "continued-in", continuedInSessionId: "cc-2" });
+    write("unnamed", turn, { type: "continued-in", continuedInSessionId: "../x" });
     write("resumed", moved, { type: "attachment" }, turn);
     write("plain", turn, { type: "system" });
     const other = (id: string, dirOf = "/home/demo/Projects/shop") => store.upsertSession({ id, provider: "Claude Code", project: { name: "shop", dir: dirOf } });
     handleHook(event("SessionStart", {}), ctx(store));
     const project = store.getSession("cc-1")?.project.dir ?? "";
-    for (const id of ["old", "resumed", "plain", "no-transcript"]) other(id, project);
+    for (const id of ["old", "went-on", "unnamed", "resumed", "plain", "no-transcript"]) other(id, project);
     write("elsewhere", turn, moved);
     other("elsewhere");
     store.upsertAgent("old", "stuck", { state: "working" });
@@ -1137,6 +1142,10 @@ describe("Claude Code hooks", () => {
     handleHook(event("Stop", { last_assistant_message: "Done.", transcript_path: path.join(dir, "cc-1.jsonl") }), ctx(store));
     assert.equal(store.getSession("old")?.state, "ended");
     assert.equal(store.getSession("old")?.endedAsking, undefined, "nothing to look at: it goes on in the other session");
+    // The conversation goes on: what the old id was sent is still read under the id it continued as.
+    assert.equal(store.getSession("old")?.continuedAs, "cc-1");
+    assert.equal(store.getSession("went-on")?.continuedAs, "cc-2", "the id its transcript names, not the one whose hook found it");
+    assert.equal(store.getSession("unnamed")?.continuedAs, "cc-1", "no valid id named: the one whose hook found it");
     assert.equal(store.listAgents("old")[0]?.state, "done");
     assert.equal(store.listQuestions().find((q) => q.id === open.id)?.status, "dismissed");
     for (const id of ["resumed", "plain", "no-transcript", "elsewhere"]) assert.notEqual(store.getSession(id)?.state, "ended", id);

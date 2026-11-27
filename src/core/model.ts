@@ -75,6 +75,8 @@ export function readSession(value: unknown, where = "session"): Session {
     startedAt: isoTime(f.startedAt, `${where}.startedAt`),
     updatedAt: isoTime(f.updatedAt, `${where}.updatedAt`),
     endedAt: optional(f.endedAt, `${where}.endedAt`, isoTime),
+    goneSince: optional(f.goneSince, `${where}.goneSince`, isoTime),
+    continuedAs: optional(f.continuedAs, `${where}.continuedAs`, id),
     process: optional(f.process, `${where}.process`, readProcess),
     terminal: optional(f.terminal, `${where}.terminal`, label),
     tmux: optional(f.tmux, `${where}.tmux`, readTmux),

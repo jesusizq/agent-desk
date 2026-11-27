@@ -86,7 +86,7 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
       // Started again (resumed, or the plugins reloaded): what its last end left no longer holds, the
       // shell command its last reply asked for included. Once compacted, its suggested instructions too.
       const compacted = optional(f.source, "hook input.source", (v, w) => text(v, w, 100)) === "compact";
-      store.endCompaction(sid, { compacted }, ({ endedAt: _endedAt, endedAsking: _endedAsking, shellSuggestion: _shell, compactInstructions, ...s }) => {
+      store.endCompaction(sid, { compacted }, ({ endedAt: _endedAt, endedAsking: _endedAsking, continuedAs: _continuedAs, shellSuggestion: _shell, compactInstructions, ...s }) => {
         // An automatic compaction comes mid-turn, and the turn goes on after it; one the developer asked for comes while it waits.
         const midTurn = compacted && s.state === "working" && s.compacting?.trigger !== "manual";
         return compact({ ...s, state: midTurn ? ("working" as const) : ("waiting" as const), compactInstructions: compacted ? undefined : compactInstructions });
@@ -222,7 +222,8 @@ function dispatch(input: Common, ctx: HookContext, problems: string[]): HookOutp
 
 /**
  * A conversation sent to the background goes on under a new session id, and the old one never gets
- * a SessionEnd: its terminal stays open. Its transcript says so; the session is ended here.
+ * a SessionEnd: its terminal stays open. Its transcript says so; the session is ended here, recording
+ * the id it continued as: the conversation still reads what the old one was sent.
  */
 function retireContinued(input: Common, ctx: HookContext, problems: string[]): void {
   const { store } = ctx;
@@ -231,29 +232,35 @@ function retireContinued(input: Common, ctx: HookContext, problems: string[]): v
   const dir = workDir(input, ctx);
   for (const s of store.listSessions(problems)) {
     if (s.id === input.sessionId || s.state === "ended" || (s.project.worktree ?? s.project.dir) !== dir) continue;
-    if (!continuedElsewhere(path.join(path.dirname(transcript), `${s.id}.jsonl`))) continue;
+    const continuedAs = continuedElsewhere(path.join(path.dirname(transcript), `${s.id}.jsonl`), input.sessionId);
+    if (continuedAs === undefined) continue;
     store.withdrawInbox(s.id);
     store.closeOpen(s.id, { status: "dismissed", problems });
     for (const agent of store.listAgents(s.id)) {
       if (agent.state === "working") store.updateAgent(s.id, agent.name, { state: "done", activity: "The session continued elsewhere" });
     }
-    store.updateSession(s.id, (old) => ({ ...old, state: "ended", endedAt: new Date().toISOString() }));
+    store.updateSession(s.id, (old) => ({ ...old, state: "ended", endedAt: new Date().toISOString(), continuedAs }));
   }
 }
 
-/** Whether the transcript's last word is that it continued elsewhere: a conversation resumed since has written on. */
-function continuedElsewhere(transcript: string): boolean {
+/**
+ * The session id the transcript's last word says it continued in, when that is its last word (a
+ * conversation resumed since has written on). A line naming no valid id names `finder`, whose hook found it.
+ */
+function continuedElsewhere(transcript: string, finder: string): string | undefined {
   for (const line of readTail(transcript, 8192).split("\n").reverse()) {
-    let type: unknown;
+    let parsed: unknown;
     try {
-      type = (JSON.parse(line) as { type?: unknown }).type;
+      parsed = JSON.parse(line);
     } catch {
       continue; // the blank last line, or the first one, cut by the tail
     }
-    if (type === "continued-in") return true;
-    if (type === "user" || type === "assistant") return false;
+    const entry: Fields = typeof parsed === "object" && parsed !== null ? (parsed as Fields) : {};
+    const next = entry.continuedInSessionId;
+    if (entry.type === "continued-in") return typeof next === "string" && ID_PATTERN.test(next) ? next : finder;
+    if (entry.type === "user" || entry.type === "assistant") return undefined;
   }
-  return false;
+  return undefined;
 }
 
 /** The project's pending handoffs, read again where one may have been written or loaded (see resumes.ts). */

@@ -743,6 +743,261 @@ describe("archive", () => {
     assert.equal(store.getQuestion(openQ.id)?.status, "open");
     assert.ok(store.getSession("live"));
   });
+
+  it("archives a session whose process is gone 60 days after it was first found gone, not after its last write", () => {
+    let now = Date.parse("2026-01-01T00:00:00.000Z");
+    const store = new Store(tempHome(), () => new Date(now));
+    addSession(store, "gone");
+    // Its last write in January, its process gone since (the machine rebooted), no end recorded.
+    store.updateSession("gone", (s) => ({ ...s, process: { pid: process.pid, start: "0", ancestors: [] } }));
+    now = Date.parse("2026-03-15T00:00:00.000Z");
+    const problems: string[] = [];
+    assert.equal(store.archiveOlderThan(new Date("2026-03-01T00:00:00.000Z"), problems).sessions, 0, "found gone only now");
+    assert.deepEqual(problems, []);
+    assert.equal(store.getSession("gone")?.goneSince, new Date(now).toISOString(), "recorded by the archive pass itself");
+    now = Date.parse("2026-05-15T00:00:00.000Z");
+    assert.equal(store.archiveOlderThan(new Date("2026-03-14T00:00:00.000Z"), problems).sessions, 0, "found gone after the cutoff");
+    assert.equal(store.archiveOlderThan(new Date("2026-03-16T00:00:00.000Z"), problems).sessions, 1, "found gone before it");
+    assert.deepEqual(problems, []);
+    assert.equal(store.getSession("gone"), undefined);
+  });
+
+  it("keeps a session ended over 60 days ago while the conversation it continued as runs, and archives it once the last of them ended", () => {
+    let now = Date.parse("2026-01-01T00:00:00.000Z");
+    const store = new Store(tempHome(), () => new Date(now));
+    for (const id of ["first", "next"]) addSession(store, id);
+    const image = store.addImage(PNG);
+    store.addMessage({ sessionId: "first", from: "developer", text: "see", via: "desk", images: [image] });
+    store.updateSession("first", (s) => ({ ...s, state: "ended", endedAt: new Date(now).toISOString(), continuedAs: "next" }));
+    now = Date.parse("2026-03-15T00:00:00.000Z");
+    const old = Date.parse("2026-01-01T00:00:00.000Z") / 1000;
+    fs.utimesSync(store.imageFile(image)?.file ?? "", old, old);
+    const cutoff = new Date("2026-03-01T00:00:00.000Z");
+    const problems: string[] = [];
+    assert.deepEqual(store.archiveOlderThan(cutoff, problems), { questions: 0, results: 0, sessions: 0, images: 0 });
+    assert.deepEqual(problems, []);
+    assert.ok(store.getSession("first"), "it goes on as a session still running");
+    assert.equal(store.listMessages("first").length, 1, "and so does what it was sent");
+    assert.ok(store.imageFile(image), "with its images");
+    store.updateSession("next", (s) => ({ ...s, state: "ended", endedAt: "2026-02-01T00:00:00.000Z" }));
+    assert.deepEqual(store.archiveOlderThan(cutoff, problems), { questions: 0, results: 0, sessions: 2, images: 1 });
+    assert.deepEqual(problems, []);
+    assert.equal(store.getSession("first"), undefined, "the last of them ended before the cutoff");
+    assert.equal(store.getSession("next"), undefined);
+    assert.equal(store.imageFile(image), undefined, "what nothing live shows any more goes with them");
+  });
+
+  it("moves no image while a record that could show one cannot be read, and says which", () => {
+    const store = new Store(tempHome(), () => new Date("2026-03-15T00:00:00.000Z"));
+    addSession(store, "live");
+    const image = store.addImage(PNG);
+    const old = Date.parse("2026-01-01T00:00:00.000Z") / 1000;
+    fs.utimesSync(store.imageFile(image)?.file ?? "", old, old);
+    const broken = path.join(store.paths.messageDir("live"), "m-bad.json");
+    fs.mkdirSync(path.dirname(broken), { recursive: true });
+    fs.writeFileSync(broken, '{"id": "m-bad", "sess');
+    const problems: string[] = [];
+    assert.equal(store.archiveOlderThan(new Date("2026-03-01T00:00:00.000Z"), problems).images, 0);
+    assert.ok(store.imageFile(image), "it may be the image that message shows");
+    assert.ok(problems.some((p) => p.includes(broken) && /not valid JSON/.test(p)), problems.join("\n"));
+    assert.ok(problems.some((p) => p.startsWith("no image archived:") && p.includes(store.paths.messageDir("live"))), problems.join("\n"));
+    fs.rmSync(broken);
+    assert.equal(store.archiveOlderThan(new Date("2026-03-01T00:00:00.000Z"), []).images, 1, "readable again: an image nothing shows goes");
+  });
+});
+
+describe("images attached to what an ended session received", () => {
+  const NOW = Date.parse("2026-03-03T00:00:00.000Z");
+  const CUTOFF = new Date(NOW - 24 * 3600_000);
+  const hoursAgo = (hours: number) => new Date(NOW - hours * 3600_000).toISOString();
+
+  /** A store at NOW whose session "old" ended 25 h ago, "recent" 23 h ago, and "live" still runs. */
+  function stores(): { store: Store; at: (iso: string) => void; attach: (sessionId: string, ...ids: string[]) => void } {
+    let now = NOW - 30 * 3600_000;
+    const store = new Store(tempHome(), () => new Date(now));
+    for (const id of ["old", "recent", "live"]) addSession(store, id);
+    const attach = (sessionId: string, ...ids: string[]) => void store.addMessage({ sessionId, from: "developer", text: "see", via: "desk", images: ids });
+    return { store, at: (iso) => (now = Date.parse(iso)), attach };
+  }
+  const end = (store: Store, id: string, endedAt: string) => store.updateSession(id, (s) => ({ ...s, state: "ended", endedAt }));
+
+  it("deletes for good an image once every answer and message showing it belongs to a session ended over 24 hours ago, and keeps the rest", () => {
+    const { store, at, attach } = stores();
+    const dir = tempHome();
+    fs.writeFileSync(path.join(dir, "shot.png"), PNG);
+    const shot = store.addResult({ sessionId: "old", title: "Done", images: [{ path: path.join(dir, "shot.png") }] }).images[0]?.id ?? "";
+    const [ofOld, ofRecent, alsoLive, unsent, answeredOld, answeredRecent] = Array.from({ length: 6 }, () => store.addImage(PNG));
+    attach("old", ofOld ?? "", shot, alsoLive ?? "");
+    attach("recent", ofRecent ?? "");
+    attach("live", alsoLive ?? "");
+    // An answer's image counts by its question's session: the copy in the conversation is removed, the question alone shows it.
+    const asked: string[] = [];
+    for (const [sessionId, image] of [["old", answeredOld], ["recent", answeredRecent]] as const) {
+      const stop = store.listen(sessionId);
+      asked.push(store.answerFromDesk(store.ask({ sessionId, kind: "question", text: "Which?" }).id, "this one", [image ?? ""]).id);
+      store.takeInbox(sessionId);
+      stop();
+      const copy = store.listMessages(sessionId).find((m) => m.images?.includes(image ?? ""));
+      fs.rmSync(store.paths.message(sessionId, copy?.id ?? ""));
+    }
+    at(hoursAgo(25));
+    end(store, "old", hoursAgo(25));
+    at(hoursAgo(23));
+    end(store, "recent", hoursAgo(23));
+    at(new Date(NOW).toISOString());
+
+    const problems: string[] = [];
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 2);
+    assert.deepEqual(problems, []);
+    assert.equal(store.imageFile(ofOld ?? ""), undefined, "an image of a message to a session ended 25 h ago is deleted");
+    assert.equal(store.imageFile(answeredOld ?? ""), undefined, "an image of an answer to a question of a session ended 25 h ago is deleted");
+    assert.ok(store.imageFile(ofRecent ?? ""), "a session ended 23 h ago keeps its images");
+    assert.ok(store.imageFile(answeredRecent ?? ""), "and its answers' images");
+    assert.ok(store.imageFile(shot), "a result's image stays, also when an ended session's message shows it");
+    assert.ok(store.imageFile(alsoLive ?? ""), "an image a running session's message also shows stays");
+    assert.ok(store.imageFile(unsent ?? ""), "an image attached and never sent is the archive's");
+    assert.ok(!fs.existsSync(store.paths.archived(store.paths.imagesDir)), "deleted, not moved to archive/");
+    assert.deepEqual(store.listMessages("old").at(0)?.images, [ofOld, shot, alsoLive], "the history keeps the ids, so it knows an image was there");
+    assert.deepEqual(store.getQuestion(asked[0] ?? "")?.answer?.images, [answeredOld], "and its answer's");
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 0, "run again, nothing more to delete");
+    assert.deepEqual(problems, []);
+  });
+
+  it("counts a session whose process is gone from when it was first found gone, not from its last write, until it runs again", () => {
+    const { store, at, attach } = stores();
+    const own = procInfo(process.pid);
+    const runs = (live: boolean) => ({ pid: process.pid, start: live ? (own?.start ?? "") : "0", ancestors: [] });
+    const [ofGone, ofResumed, ofRevived] = [store.addImage(PNG), store.addImage(PNG), store.addImage(PNG)];
+    for (const [id, image] of [["gone", ofGone], ["resumed", ofResumed], ["revived", ofRevived]] as const) {
+      addSession(store, id);
+      attach(id, image);
+    }
+    // Idle for 3 days, its process gone (the machine rebooted): the desk last heard from it then.
+    at(hoursAgo(72));
+    for (const id of ["gone", "resumed", "revived"]) store.updateSession(id, (s) => ({ ...s, process: runs(false) }));
+    const lastWrite = store.getSession("gone")?.updatedAt;
+    at(new Date(NOW).toISOString());
+    const problems: string[] = [];
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 0, "found gone now: 24 h from now");
+    assert.deepEqual(problems, []);
+    for (const image of [ofGone, ofResumed, ofRevived]) assert.ok(store.imageFile(image));
+    assert.equal(store.getSession("gone")?.goneSince, new Date(NOW).toISOString());
+    assert.equal(store.getSession("gone")?.updatedAt, lastWrite, "its last write stays what the page shows");
+    assert.equal(store.getSession("gone")?.endedAt, undefined, "not ended: the page reads no end");
+
+    at(new Date(NOW + 2 * 3600_000).toISOString());
+    // Resumed: its adapter registers the process it runs as; or its record names a running process again.
+    store.upsertSession({ id: "resumed", provider: "Test", project: { name: "shop", dir: "/work/shop" }, process: runs(true) });
+    assert.equal(store.getSession("resumed")?.goneSince, undefined, "a registered process runs now");
+    store.updateSession("revived", (s) => ({ ...s, process: runs(true) }));
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 0);
+    assert.equal(store.getSession("revived")?.goneSince, undefined, "seen running again: dropped");
+    store.updateSession("revived", (s) => ({ ...s, process: runs(false) }));
+
+    at(new Date(NOW + 25 * 3600_000).toISOString());
+    const later = new Date(NOW + 3600_000);
+    assert.equal(store.deleteImagesOfEndedSessions(later, problems), 1);
+    assert.deepEqual(problems, []);
+    assert.equal(store.imageFile(ofGone), undefined, "found gone 25 h ago: deleted");
+    assert.ok(store.imageFile(ofResumed), "resumed, running: kept");
+    assert.ok(store.imageFile(ofRevived), "gone again only now: kept");
+    assert.equal(store.getSession("revived")?.goneSince, new Date(NOW + 25 * 3600_000).toISOString());
+  });
+
+  it("keeps what a session was sent while its live record cannot be read, whatever an archived copy of it says", () => {
+    const { store, at, attach } = stores();
+    const image = store.addImage(PNG);
+    attach("live", image);
+    at(hoursAgo(25));
+    end(store, "live", hoursAgo(25));
+    // An older run of the same id was archived; it was resumed since, and its live record is now broken.
+    const archived = store.paths.archived(store.paths.sessionsDir);
+    fs.mkdirSync(archived, { recursive: true });
+    fs.copyFileSync(store.paths.session("live"), path.join(archived, "live.json"));
+    fs.writeFileSync(store.paths.session("live"), "{");
+    at(new Date(NOW).toISOString());
+    const problems: string[] = [];
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 0);
+    assert.ok(store.imageFile(image));
+    assert.ok(problems.some((p) => p.includes(store.paths.session("live"))), problems.join("\n"));
+    // Archived with no live file left: its archived record is the one there is.
+    fs.rmSync(store.paths.session("live"));
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, []), 1);
+    assert.equal(store.imageFile(image), undefined);
+  });
+
+  it("keeps what a session was sent while the conversation it continued as runs, and deletes it a day after the last of them ended", () => {
+    const { store, at, attach } = stores();
+    const [ofOld, ofLost, ofLooped] = [store.addImage(PNG), store.addImage(PNG), store.addImage(PNG)];
+    for (const id of ["next", "lost", "loop-a", "loop-b"]) addSession(store, id);
+    attach("old", ofOld);
+    attach("lost", ofLost);
+    attach("loop-a", ofLooped);
+    at(hoursAgo(72));
+    const ended = (id: string, continuedAs: string) => store.updateSession(id, (s) => ({ ...s, state: "ended", endedAt: hoursAgo(72), continuedAs }));
+    ended("old", "next");
+    ended("lost", "never-recorded");
+    ended("loop-a", "loop-b");
+    ended("loop-b", "loop-a");
+    at(new Date(NOW).toISOString());
+    const problems: string[] = [];
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 1);
+    assert.deepEqual(problems, []);
+    assert.ok(store.imageFile(ofOld), "ended 3 days ago, but it goes on as a session still running");
+    assert.ok(store.imageFile(ofLost), "the session it continued as is not known: kept");
+    assert.equal(store.imageFile(ofLooped), undefined, "a loop of ended sessions ends, and is over");
+    end(store, "next", hoursAgo(23));
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 0, "its successor ended 23 h ago");
+    end(store, "next", hoursAgo(25));
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 1);
+    assert.equal(store.imageFile(ofOld), undefined, "its successor ended 25 h ago");
+    assert.deepEqual(problems, []);
+  });
+
+  it("reports an image it cannot delete, with its path and why, and deletes the others", () => {
+    const { store, at, attach } = stores();
+    const [stuck, other] = [store.addImage(PNG), store.addImage(PNG)];
+    attach("old", stuck, other);
+    const file = store.imageFile(stuck)?.file ?? "";
+    fs.rmSync(file);
+    fs.mkdirSync(file);
+    fs.writeFileSync(path.join(file, "inside"), "");
+    at(hoursAgo(25));
+    end(store, "old", hoursAgo(25));
+    at(new Date(NOW).toISOString());
+    const problems: string[] = [];
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 1);
+    assert.equal(store.imageFile(other), undefined);
+    assert.equal(problems.length, 1);
+    assert.ok(problems[0]?.includes(file) && /EISDIR|directory/.test(problems[0]), problems[0]);
+  });
+
+  it("reports unreadable records without stopping, and deletes nothing while one could still show an image", () => {
+    const { store, at, attach } = stores();
+    const image = store.addImage(PNG);
+    attach("old", image);
+    at(hoursAgo(25));
+    end(store, "old", hoursAgo(25));
+    at(new Date(NOW).toISOString());
+    const unreadable = (file: string) => (fs.mkdirSync(path.dirname(file), { recursive: true }), fs.writeFileSync(file, '{"id": "x", "sess'), file);
+    fs.writeFileSync(path.join(store.paths.sessionsDir, "broken.json"), "{");
+
+    for (const file of [unreadable(path.join(store.paths.questionDir("closed"), "q-bad.json")), unreadable(path.join(store.paths.messageDir("live"), "m-bad.json")), unreadable(path.join(store.paths.resultsDir, "r-bad.json"))]) {
+      const problems: string[] = [];
+      assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 0, `${file} may show it`);
+      assert.ok(store.imageFile(image));
+      assert.ok(problems.some((p) => p.includes(file) && /not valid JSON/.test(p)), problems.join("\n"));
+      assert.ok(problems.some((p) => /no image deleted/.test(p)), problems.join("\n"));
+      fs.rmSync(file);
+    }
+    // One of the ended session's own messages: whatever it shows is that session's, so the rest goes on.
+    const own = unreadable(path.join(store.paths.messageDir("old"), "m-bad.json"));
+    const problems: string[] = [];
+    assert.equal(store.deleteImagesOfEndedSessions(CUTOFF, problems), 1);
+    assert.equal(store.imageFile(image), undefined);
+    assert.ok(problems.some((p) => p.includes(own)) && problems.some((p) => p.includes("broken.json")), problems.join("\n"));
+    assert.ok(!problems.some((p) => /no image deleted/.test(p)));
+  });
 });
 
 describe("forgetting a session", () => {
@@ -1213,7 +1468,7 @@ describe("decisions", () => {
     addSession(store, "old");
     decide(store, "old", "Old choice?", "Keep it");
     store.addResult({ sessionId: "old", title: "Old result", url: "http://localhost:5173", decisions: ["Kept"] });
-    store.updateSession("old", (s) => ({ ...s, state: "ended" }));
+    store.updateSession("old", (s) => ({ ...s, state: "ended", endedAt: new Date(now).toISOString() }));
     now = Date.parse("2026-04-01T00:00:00.000Z");
     assert.deepEqual(store.archiveOlderThan(new Date("2026-03-01T00:00:00.000Z")), { questions: 1, results: 1, sessions: 1, images: 0 });
     assert.deepEqual(texts(store.decisions({ project: { dir: "/work/shop" }, limit: 10 })), ["Old result", "Old choice?"]);
